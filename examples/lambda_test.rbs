@@ -1,0 +1,5 @@
+module TopLevel
+  def test_lambda_basic: () -> Integer
+  def test_lambda_multi_args: () -> Integer
+  def test_lambda_no_args: () -> Integer
+end

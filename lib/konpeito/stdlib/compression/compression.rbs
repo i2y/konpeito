@@ -1,0 +1,60 @@
+# KonpeitoCompression - Data compression using zlib
+#
+# Usage:
+#   # Gzip format (common for HTTP compression, file archives)
+#   compressed = KonpeitoCompression.gzip("Hello, World!")
+#   original = KonpeitoCompression.gunzip(compressed)
+#
+#   # Raw deflate (no header, for custom protocols)
+#   compressed = KonpeitoCompression.deflate("Hello", nil)
+#   original = KonpeitoCompression.inflate(compressed)
+#
+#   # Zlib format (with checksum header)
+#   compressed = KonpeitoCompression.zlib_compress("Hello")
+#   original = KonpeitoCompression.zlib_decompress(compressed, nil)
+
+module KonpeitoCompression
+  # Compress data using gzip format (RFC 1952)
+  # @param data [String] Data to compress
+  # @return [String] Gzip-compressed data (binary string)
+  # @raise [RuntimeError] if compression fails
+  def self.gzip: (String data) -> String
+
+  # Decompress gzip data (RFC 1952)
+  # Also accepts zlib format (auto-detected)
+  # @param data [String] Gzip-compressed data
+  # @return [String] Decompressed data
+  # @raise [RuntimeError] if decompression fails
+  def self.gunzip: (String data) -> String
+
+  # Compress data using raw deflate (RFC 1951, no header)
+  # @param data [String] Data to compress
+  # @param level [Integer?] Compression level (0-9, nil for default)
+  # @return [String] Deflate-compressed data (binary string)
+  # @raise [RuntimeError] if compression fails
+  def self.deflate: (String data, Integer? level) -> String
+
+  # Decompress raw deflate data (RFC 1951, no header)
+  # @param data [String] Deflate-compressed data
+  # @return [String] Decompressed data
+  # @raise [RuntimeError] if decompression fails
+  def self.inflate: (String data) -> String
+
+  # Compress data using zlib format (RFC 1950, with header)
+  # @param data [String] Data to compress
+  # @return [String] Zlib-compressed data (binary string)
+  # @raise [RuntimeError] if compression fails
+  def self.zlib_compress: (String data) -> String
+
+  # Decompress zlib data (RFC 1950, with header)
+  # @param data [String] Zlib-compressed data
+  # @param max_size [Integer?] Maximum decompressed size (nil for 100MB default)
+  # @return [String] Decompressed data
+  # @raise [RuntimeError] if decompression fails or exceeds max_size
+  def self.zlib_decompress: (String data, Integer? max_size) -> String
+
+  # Compression level constants
+  BEST_SPEED: Integer          # Fastest compression (level 1)
+  BEST_COMPRESSION: Integer    # Best compression ratio (level 9)
+  DEFAULT_COMPRESSION: Integer # Default compression (level 6)
+end

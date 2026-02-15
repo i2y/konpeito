@@ -1,0 +1,247 @@
+# KonpeitoUI - Native UI runtime module (SDL3 + Skia)
+#
+# All methods take a handle (Integer) as the first argument,
+# which is the opaque pointer to the KUIContext C struct.
+
+%a{ffi: "konpeito_ui"}
+module KonpeitoUI
+  # --- Event type constants ---
+  EVENT_NONE: Integer         # 0
+  EVENT_MOUSE_DOWN: Integer   # 1
+  EVENT_MOUSE_UP: Integer     # 2
+  EVENT_MOUSE_MOVE: Integer   # 3
+  EVENT_MOUSE_WHEEL: Integer  # 4
+  EVENT_KEY_DOWN: Integer     # 5
+  EVENT_KEY_UP: Integer       # 6
+  EVENT_TEXT_INPUT: Integer   # 7
+  EVENT_RESIZE: Integer       # 8
+  EVENT_IME_PREEDIT: Integer  # 9
+  EVENT_QUIT: Integer         # 10
+
+  # --- Modifier constants ---
+  MOD_SHIFT: Integer    # 1
+  MOD_CONTROL: Integer  # 2
+  MOD_ALT: Integer      # 4
+  MOD_SUPER: Integer    # 8
+
+  # --- Window management ---
+  %a{cfunc: "kui_create_window"}
+  def self.create_window: (String title, Integer width, Integer height) -> Integer
+
+  %a{cfunc: "kui_destroy_window"}
+  def self.destroy_window: (Integer handle) -> void
+
+  %a{cfunc: "kui_step"}
+  def self.step: (Integer handle) -> void
+
+  # --- Event access ---
+  %a{cfunc: "kui_has_event"}
+  def self.has_event: (Integer handle) -> bool
+
+  %a{cfunc: "kui_event_type"}
+  def self.event_type: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_event_x"}
+  def self.event_x: (Integer handle) -> Float
+
+  %a{cfunc: "kui_event_y"}
+  def self.event_y: (Integer handle) -> Float
+
+  %a{cfunc: "kui_event_dx"}
+  def self.event_dx: (Integer handle) -> Float
+
+  %a{cfunc: "kui_event_dy"}
+  def self.event_dy: (Integer handle) -> Float
+
+  %a{cfunc: "kui_event_button"}
+  def self.event_button: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_event_key_code"}
+  def self.event_key_code: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_event_modifiers"}
+  def self.event_modifiers: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_event_text"}
+  def self.event_text: (Integer handle) -> String
+
+  %a{cfunc: "kui_event_ime_sel_start"}
+  def self.event_ime_sel_start: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_event_ime_sel_end"}
+  def self.event_ime_sel_end: (Integer handle) -> Integer
+
+  %a{cfunc: "kui_consume_event"}
+  def self.consume_event: (Integer handle) -> void
+
+  # --- Frame management ---
+  %a{cfunc: "kui_begin_frame"}
+  def self.begin_frame: (Integer handle) -> void
+
+  %a{cfunc: "kui_end_frame"}
+  def self.end_frame: (Integer handle) -> void
+
+  # --- Drawing primitives ---
+  %a{cfunc: "kui_clear"}
+  def self.clear: (Integer handle, Integer color) -> void
+
+  %a{cfunc: "kui_fill_rect"}
+  def self.fill_rect: (Integer handle, Float x, Float y, Float w, Float h, Integer color) -> void
+
+  %a{cfunc: "kui_stroke_rect"}
+  def self.stroke_rect: (Integer handle, Float x, Float y, Float w, Float h, Integer color, Float stroke_width) -> void
+
+  %a{cfunc: "kui_fill_round_rect"}
+  def self.fill_round_rect: (Integer handle, Float x, Float y, Float w, Float h, Float r, Integer color) -> void
+
+  %a{cfunc: "kui_stroke_round_rect"}
+  def self.stroke_round_rect: (Integer handle, Float x, Float y, Float w, Float h, Float r, Integer color, Float stroke_width) -> void
+
+  %a{cfunc: "kui_fill_circle"}
+  def self.fill_circle: (Integer handle, Float cx, Float cy, Float r, Integer color) -> void
+
+  %a{cfunc: "kui_stroke_circle"}
+  def self.stroke_circle: (Integer handle, Float cx, Float cy, Float r, Integer color, Float stroke_width) -> void
+
+  %a{cfunc: "kui_draw_line"}
+  def self.draw_line: (Integer handle, Float x1, Float y1, Float x2, Float y2, Integer color, Float width) -> void
+
+  %a{cfunc: "kui_fill_arc"}
+  def self.fill_arc: (Integer handle, Float cx, Float cy, Float r, Float start_angle, Float sweep_angle, Integer color) -> void
+
+  %a{cfunc: "kui_stroke_arc"}
+  def self.stroke_arc: (Integer handle, Float cx, Float cy, Float r, Float start_angle, Float sweep_angle, Integer color, Float stroke_width) -> void
+
+  %a{cfunc: "kui_fill_triangle"}
+  def self.fill_triangle: (Integer handle, Float x1, Float y1, Float x2, Float y2, Float x3, Float y3, Integer color) -> void
+
+  # --- Text ---
+  %a{cfunc: "kui_draw_text"}
+  def self.draw_text: (Integer handle, String text, Float x, Float y, String font_family, Float font_size, Integer color) -> void
+
+  %a{cfunc: "kui_draw_text_styled"}
+  def self.draw_text_styled: (Integer handle, String text, Float x, Float y, String font_family, Float font_size, Integer color, Integer weight, Integer slant) -> void
+
+  %a{cfunc: "kui_measure_text_width"}
+  def self.measure_text_width: (Integer handle, String text, String font_family, Float font_size) -> Float
+
+  %a{cfunc: "kui_measure_text_height"}
+  def self.measure_text_height: (Integer handle, String font_family, Float font_size) -> Float
+
+  %a{cfunc: "kui_get_text_ascent"}
+  def self.get_text_ascent: (Integer handle, String font_family, Float font_size) -> Float
+
+  # --- Path drawing ---
+  %a{cfunc: "kui_begin_path"}
+  def self.begin_path: (Integer handle) -> void
+
+  %a{cfunc: "kui_path_move_to"}
+  def self.path_move_to: (Integer handle, Float x, Float y) -> void
+
+  %a{cfunc: "kui_path_line_to"}
+  def self.path_line_to: (Integer handle, Float x, Float y) -> void
+
+  %a{cfunc: "kui_close_fill_path"}
+  def self.close_fill_path: (Integer handle, Integer color) -> void
+
+  %a{cfunc: "kui_fill_path"}
+  def self.fill_path: (Integer handle, Integer color) -> void
+
+  # --- Canvas state ---
+  %a{cfunc: "kui_save"}
+  def self.save: (Integer handle) -> void
+
+  %a{cfunc: "kui_restore"}
+  def self.restore: (Integer handle) -> void
+
+  %a{cfunc: "kui_translate"}
+  def self.translate: (Integer handle, Float dx, Float dy) -> void
+
+  %a{cfunc: "kui_clip_rect"}
+  def self.clip_rect: (Integer handle, Float x, Float y, Float w, Float h) -> void
+
+  # --- Image operations ---
+  %a{cfunc: "kui_load_image"}
+  def self.load_image: (Integer handle, String path) -> Integer
+
+  %a{cfunc: "kui_load_net_image"}
+  def self.load_net_image: (Integer handle, String url) -> Integer
+
+  %a{cfunc: "kui_draw_image"}
+  def self.draw_image: (Integer handle, Integer image_id, Float x, Float y, Float w, Float h) -> void
+
+  %a{cfunc: "kui_get_image_width"}
+  def self.get_image_width: (Integer handle, Integer image_id) -> Float
+
+  %a{cfunc: "kui_get_image_height"}
+  def self.get_image_height: (Integer handle, Integer image_id) -> Float
+
+  # --- Color utilities ---
+  %a{cfunc: "kui_interpolate_color"}
+  def self.interpolate_color: (Integer c1, Integer c2, Float t) -> Integer
+
+  %a{cfunc: "kui_with_alpha"}
+  def self.with_alpha: (Integer color, Integer alpha) -> Integer
+
+  %a{cfunc: "kui_lighten_color"}
+  def self.lighten_color: (Integer color, Float amount) -> Integer
+
+  %a{cfunc: "kui_darken_color"}
+  def self.darken_color: (Integer color, Float amount) -> Integer
+
+  # --- Window queries ---
+  %a{cfunc: "kui_get_width"}
+  def self.get_width: (Integer handle) -> Float
+
+  %a{cfunc: "kui_get_height"}
+  def self.get_height: (Integer handle) -> Float
+
+  %a{cfunc: "kui_get_scale"}
+  def self.get_scale: (Integer handle) -> Float
+
+  %a{cfunc: "kui_is_dark_mode"}
+  def self.is_dark_mode: (Integer handle) -> bool
+
+  %a{cfunc: "kui_request_frame"}
+  def self.request_frame: (Integer handle) -> void
+
+  %a{cfunc: "kui_mark_dirty"}
+  def self.mark_dirty: (Integer handle) -> void
+
+  # --- IME / Text Input ---
+  %a{cfunc: "kui_set_text_input_enabled"}
+  def self.set_text_input_enabled: (Integer handle, bool enabled) -> void
+
+  %a{cfunc: "kui_set_text_input_rect"}
+  def self.set_text_input_rect: (Integer handle, Integer x, Integer y, Integer w, Integer h) -> void
+
+  # --- Clipboard ---
+  %a{cfunc: "kui_get_clipboard_text"}
+  def self.get_clipboard_text: (Integer handle) -> String
+
+  %a{cfunc: "kui_set_clipboard_text"}
+  def self.set_clipboard_text: (Integer handle, String text) -> void
+
+  # --- Utilities ---
+  %a{cfunc: "kui_current_time_millis"}
+  def self.current_time_millis: () -> Integer
+
+  %a{cfunc: "kui_number_to_string"}
+  def self.number_to_string: (Float value) -> String
+
+  # --- Math helpers ---
+  %a{cfunc: "kui_math_cos"}
+  def self.math_cos: (Float radians) -> Float
+
+  %a{cfunc: "kui_math_sin"}
+  def self.math_sin: (Float radians) -> Float
+
+  %a{cfunc: "kui_math_sqrt"}
+  def self.math_sqrt: (Float value) -> Float
+
+  %a{cfunc: "kui_math_atan2"}
+  def self.math_atan2: (Float y, Float x) -> Float
+
+  %a{cfunc: "kui_math_abs"}
+  def self.math_abs: (Float value) -> Float
+end

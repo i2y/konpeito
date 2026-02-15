@@ -1,0 +1,21 @@
+# @ffi "libm" - Link with libm (math library)
+module MathLib
+  %a{cfunc}  def self.sin: (Float) -> Float
+
+  %a{cfunc}  def self.cos: (Float) -> Float
+
+  %a{cfunc}  def self.sqrt: (Float) -> Float
+
+  %a{cfunc}  def self.pow: (Float, Float) -> Float
+
+  %a{cfunc}  def self.exp: (Float) -> Float
+
+  %a{cfunc}  def self.log: (Float) -> Float
+end
+
+module TopLevel
+  def demo_trig: (Float angle) -> Float
+  def demo_power: (Float base, Float exp) -> Float
+  def calculate_circle_area: (Float radius) -> Float
+  def calculate_hypotenuse: (Float a, Float b) -> Float
+end

@@ -1,0 +1,57 @@
+# KonpeitoHTTP - Fast HTTP client using libcurl
+#
+# Usage:
+#   # Simple GET (returns body only)
+#   body = KonpeitoHTTP.get("https://example.com")
+#
+#   # Simple POST (returns body only)
+#   body = KonpeitoHTTP.post("https://api.example.com/data", '{"key": "value"}')
+#
+#   # GET with full response
+#   response = KonpeitoHTTP.get_response("https://example.com")
+#   response[:status]   # => 200
+#   response[:body]     # => "<!doctype html>..."
+#   response[:headers]  # => {"Content-Type" => "text/html", ...}
+#
+#   # Generic request with custom headers
+#   response = KonpeitoHTTP.request("PUT", "https://api.example.com/resource",
+#                                    '{"data": "value"}',
+#                                    {"Authorization" => "Bearer token"})
+
+module KonpeitoHTTP
+  # Perform HTTP GET request (simple, returns body only)
+  # @param url [String] URL to fetch
+  # @return [String] Response body
+  # @raise [RuntimeError] if request fails
+  def self.get: (String url) -> String
+
+  # Perform HTTP POST request (simple, returns body only)
+  # @param url [String] URL to post to
+  # @param body [String] Request body
+  # @return [String] Response body
+  # @raise [RuntimeError] if request fails
+  def self.post: (String url, String body) -> String
+
+  # Perform HTTP GET request with full response
+  # @param url [String] URL to fetch
+  # @return [Hash] Response with :status (Integer), :body (String), :headers (Hash)
+  # @raise [RuntimeError] if request fails
+  def self.get_response: (String url) -> Hash[Symbol, untyped]
+
+  # Perform HTTP POST request with full response
+  # @param url [String] URL to post to
+  # @param body [String] Request body
+  # @param content_type [String?] Content-Type header (optional)
+  # @return [Hash] Response with :status (Integer), :body (String), :headers (Hash)
+  # @raise [RuntimeError] if request fails
+  def self.post_response: (String url, String body, String? content_type) -> Hash[Symbol, untyped]
+
+  # Perform HTTP request with custom method and headers
+  # @param method [String] HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD)
+  # @param url [String] URL
+  # @param body [String?] Request body (optional)
+  # @param headers [Hash?] Custom headers (optional)
+  # @return [Hash] Response with :status (Integer), :body (String), :headers (Hash)
+  # @raise [RuntimeError] if request fails
+  def self.request: (String method, String url, String? body, Hash[String, String]? headers) -> Hash[Symbol, untyped]
+end

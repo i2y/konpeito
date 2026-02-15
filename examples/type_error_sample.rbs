@@ -1,0 +1,6 @@
+# RBS type definitions for type_error_sample.rb
+
+module TopLevel
+  def add_numbers: (Integer a, Integer b) -> Integer
+  def greet: (String name) -> String
+end

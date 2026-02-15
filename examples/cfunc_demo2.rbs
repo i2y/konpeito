@@ -1,0 +1,15 @@
+# @cfunc demo with detailed output
+class LibM
+  %a{cfunc: "sin"}  def self.sin: (Float) -> Float
+
+  %a{cfunc: "cos"}  def self.cos: (Float) -> Float
+
+  %a{cfunc: "sqrt"}  def self.sqrt: (Float) -> Float
+end
+
+module TopLevel
+  def demo_sin: (Float angle) -> Float
+  def demo_cos: (Float angle) -> Float
+  def demo_sqrt: (Float value) -> Float
+  def calculate_distance: (Float x, Float y) -> Float
+end

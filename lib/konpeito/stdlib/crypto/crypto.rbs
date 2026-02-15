@@ -1,0 +1,74 @@
+# KonpeitoCrypto - Cryptographic operations using OpenSSL
+#
+# Usage:
+#   # Hash functions
+#   hash = KonpeitoCrypto.sha256("hello")  # => "2cf24dba5fb0a30e..."
+#   hash = KonpeitoCrypto.sha512("hello")  # => "9b71d224bd62f378..."
+#
+#   # HMAC
+#   mac = KonpeitoCrypto.hmac_sha256("secret", "message")
+#
+#   # Random bytes
+#   bytes = KonpeitoCrypto.random_bytes(32)   # => 32 random bytes (binary)
+#   hex = KonpeitoCrypto.random_hex(16)       # => 32 char hex string
+#
+#   # Secure comparison (timing-attack safe)
+#   KonpeitoCrypto.secure_compare(hash1, hash2)
+
+module KonpeitoCrypto
+  # Compute SHA256 hash (hex output)
+  # @param data [String] Data to hash
+  # @return [String] Hex-encoded SHA256 hash (64 characters)
+  def self.sha256: (String data) -> String
+
+  # Compute SHA256 hash (binary output)
+  # @param data [String] Data to hash
+  # @return [String] Binary SHA256 hash (32 bytes)
+  def self.sha256_binary: (String data) -> String
+
+  # Compute SHA512 hash (hex output)
+  # @param data [String] Data to hash
+  # @return [String] Hex-encoded SHA512 hash (128 characters)
+  def self.sha512: (String data) -> String
+
+  # Compute SHA512 hash (binary output)
+  # @param data [String] Data to hash
+  # @return [String] Binary SHA512 hash (64 bytes)
+  def self.sha512_binary: (String data) -> String
+
+  # Compute HMAC-SHA256 (hex output)
+  # @param key [String] Secret key
+  # @param data [String] Data to authenticate
+  # @return [String] Hex-encoded HMAC-SHA256 (64 characters)
+  def self.hmac_sha256: (String key, String data) -> String
+
+  # Compute HMAC-SHA256 (binary output)
+  # @param key [String] Secret key
+  # @param data [String] Data to authenticate
+  # @return [String] Binary HMAC-SHA256 (32 bytes)
+  def self.hmac_sha256_binary: (String key, String data) -> String
+
+  # Compute HMAC-SHA512 (hex output)
+  # @param key [String] Secret key
+  # @param data [String] Data to authenticate
+  # @return [String] Hex-encoded HMAC-SHA512 (128 characters)
+  def self.hmac_sha512: (String key, String data) -> String
+
+  # Generate cryptographically secure random bytes
+  # @param count [Integer] Number of bytes to generate
+  # @return [String] Binary string of random bytes
+  # @raise [RuntimeError] if random generation fails
+  def self.random_bytes: (Integer count) -> String
+
+  # Generate cryptographically secure random bytes as hex string
+  # @param count [Integer] Number of bytes to generate (output will be 2x this length)
+  # @return [String] Hex-encoded random bytes
+  # @raise [RuntimeError] if random generation fails
+  def self.random_hex: (Integer count) -> String
+
+  # Constant-time comparison of two strings (prevents timing attacks)
+  # @param a [String] First string
+  # @param b [String] Second string
+  # @return [bool] true if strings are equal, false otherwise
+  def self.secure_compare: (String a, String b) -> bool
+end

@@ -1,0 +1,16 @@
+# Type definitions for Konpeito HTTP Server example
+
+module TopLevel
+  # Note: parse_method and parse_path return String | nil because String#[] returns String | nil
+  def parse_method: (String line) -> String?
+  def parse_path: (String line) -> String?
+  def build_ok_response: (String content_type, String body) -> String
+  def build_404_response: (String body) -> String
+  def handle_root: () -> String
+  def handle_api_status: () -> String
+  def handle_not_found: () -> String
+  def read_headers: (untyped socket) -> Integer
+  def handle_connection_simple: (untyped socket) -> void
+  def run_server: (Integer port) -> void
+  def bench_parse: (Integer iterations) -> Integer
+end

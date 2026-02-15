@@ -1,0 +1,4 @@
+module TopLevel
+  def add: (Integer a, Integer b) -> Integer
+  def compute: () -> Integer
+end

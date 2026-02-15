@@ -1,0 +1,33 @@
+# KonpeitoJSON - Fast JSON parsing using yyjson
+#
+# Usage:
+#   obj = KonpeitoJSON.parse('{"name": "Alice", "age": 30}')
+#   json = KonpeitoJSON.generate(obj)
+
+module KonpeitoJSON
+  # Parse JSON string to Ruby object
+  # @param json_string [String] JSON string to parse
+  # @return [untyped] Ruby object (Hash, Array, String, Integer, Float, true, false, nil)
+  # @raise [ArgumentError] if JSON is invalid
+  def self.parse: (String json_string) -> untyped
+
+  # Generate JSON string from Ruby object
+  # @param obj [untyped] Ruby object to convert
+  # @return [String] JSON string
+  def self.generate: (untyped obj) -> String
+
+  # Generate pretty-printed JSON string from Ruby object
+  # @param obj [untyped] Ruby object to convert
+  # @param indent [Integer] indentation spaces (note: yyjson uses fixed 4-space indent)
+  # @return [String] pretty-printed JSON string
+  def self.generate_pretty: (untyped obj, Integer indent) -> String
+
+  # Parse flag: Allow JavaScript-style comments
+  ALLOW_COMMENTS: Integer
+
+  # Parse flag: Allow trailing commas in arrays and objects
+  ALLOW_TRAILING_COMMAS: Integer
+
+  # Parse flag: Allow Infinity and NaN values
+  ALLOW_INF_NAN: Integer
+end

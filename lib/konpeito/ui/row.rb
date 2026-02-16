@@ -74,7 +74,17 @@ class Row < Layout
 
   #: (untyped painter) -> void
   def relocate_children(painter)
-    remaining = @width
+    # Account for padding
+    inner_w = @width - @pad_left - @pad_right
+    inner_h = @height - @pad_top - @pad_bottom
+    if inner_w < 0.0
+      inner_w = 0.0
+    end
+    if inner_h < 0.0
+      inner_h = 0.0
+    end
+
+    remaining = inner_w
     expanding_total_flex = 0
 
     # First pass: measure FIXED/CONTENT children, collect EXPANDING
@@ -84,11 +94,11 @@ class Row < Layout
       if c.get_width_policy != EXPANDING
         # Set height before measure so height-dependent layouts work
         if c.get_height_policy == EXPANDING
-          c.resize_wh(c.get_width, @height)
+          c.resize_wh(c.get_width, inner_h)
         end
         cs = c.measure(painter)
         if c.get_height_policy == EXPANDING
-          c.resize_wh(cs.width, @height)
+          c.resize_wh(cs.width, inner_h)
         else
           c.resize_wh(cs.width, cs.height)
         end
@@ -105,7 +115,7 @@ class Row < Layout
     end
 
     # Second pass: distribute remaining space, position all
-    cx = @x
+    cx = @x + @pad_left
     if @is_scrollable
       cx = cx - @scroll_offset
     end
@@ -118,13 +128,13 @@ class Row < Layout
         if expanding_total_flex > 0 && remaining > 0.0
           w = remaining * c.get_flex / expanding_total_flex
         end
-        c.resize_wh(w, @height)
+        c.resize_wh(w, inner_h)
       else
         if c.get_height_policy == EXPANDING
-          c.resize_wh(c.get_width, @height)
+          c.resize_wh(c.get_width, inner_h)
         end
       end
-      c.move_xy(cx, @y)
+      c.move_xy(cx, @y + @pad_top)
       cx = cx + c.get_width + @spacing
       total_content_w = total_content_w + c.get_width
       total_content_w = total_content_w + @spacing if i > 0
@@ -134,7 +144,7 @@ class Row < Layout
 
     # Auto-scroll to end when pinned
     if @pin_right && @is_scrollable
-      max_scroll = @content_width - @width
+      max_scroll = @content_width - inner_w
       if max_scroll > 0.0
         @scroll_offset = max_scroll
       end
@@ -143,9 +153,21 @@ class Row < Layout
 
   #: (untyped painter, bool completely) -> void
   def redraw(painter, completely)
+    saved_bg = $__bg_clear_color
+    if @custom_bg && is_dirty
+      parent_bg = saved_bg
+      if parent_bg == nil || parent_bg == 0
+        parent_bg = $theme.bg_canvas
+      end
+      painter.fill_rect(0.0, 0.0, @width, @height, parent_bg)
+      set_dirty(false)
+      completely = true
+    end
+    draw_visual_background(painter)
     relocate_children(painter)
     redraw_children(painter, completely)
     draw_scrollbar(painter) if @is_scrollable
+    $__bg_clear_color = saved_bg
   end
 
   #: (untyped painter) -> void

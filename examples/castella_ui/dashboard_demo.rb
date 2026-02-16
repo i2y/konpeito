@@ -38,7 +38,7 @@ class Dashboard < Component
 
       # Charts row
       row(spacing: 12.0) {
-        container(bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0, expanding_width: true) {
+        column(expanding_width: true, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
           bar_chart(
             ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
             [[32.0, 45.0, 28.0, 52.0, 41.0, 58.0], [20.0, 30.0, 22.0, 38.0, 35.0, 42.0]],
@@ -46,7 +46,7 @@ class Dashboard < Component
           ).title("Monthly Overview").fixed_height(220.0)
         }
 
-        container(bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0, width: 280.0) {
+        column(width: 280.0, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
           pie_chart(
             ["Desktop", "Mobile", "Tablet", "Other"],
             [45.0, 32.0, 18.0, 5.0]
@@ -56,7 +56,7 @@ class Dashboard < Component
 
       # Bottom row
       row(spacing: 12.0) {
-        container(bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0, expanding_width: true) {
+        column(expanding_width: true, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
           line_chart(
             ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             [[120.0, 180.0, 150.0, 210.0, 190.0, 240.0, 220.0]],
@@ -64,24 +64,20 @@ class Dashboard < Component
           ).title("Weekly Activity").fixed_height(200.0)
         }
 
-        container(bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0, expanding_width: true) {
-          column {
-            text("Recent Orders", font_size: 15.0, color: $theme.accent, bold: true)
-            spacer.fixed_height(8.0)
-            data_table(table_headers, table_widths, table_rows).fixed_height(200.0)
-          }
+        column(expanding_width: true, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
+          text("Recent Orders", font_size: 15.0, color: $theme.accent, bold: true)
+          spacer.fixed_height(8.0)
+          data_table(table_headers, table_widths, table_rows).fixed_height(200.0)
         }
       }
     }
   end
 
   def kpi_card(label, value, change, color)
-    container(bg_color: $theme.bg_primary, border_radius: 10.0, padding: 16.0, expanding_width: true) {
-      column(spacing: 6.0) {
-        text(label, font_size: 12.0, color: $theme.text_secondary)
-        text(value, font_size: 24.0, color: $theme.text_primary, bold: true)
-        text(change, font_size: 13.0, color: color)
-      }
+    column(spacing: 6.0, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 16.0, expanding_width: true) {
+      text(label, font_size: 12.0, color: $theme.text_secondary)
+      text(value, font_size: 24.0, color: $theme.text_primary, bold: true)
+      text(change, font_size: 13.0, color: color)
     }
   end
 end

@@ -77,23 +77,34 @@ class Column < Layout
 
   #: (untyped painter) -> void
   def relocate_children(painter)
-    remaining = @height
+    # Account for padding
+    inner_w = @width - @pad_left - @pad_right
+    inner_h = @height - @pad_top - @pad_bottom
+    if inner_w < 0.0
+      inner_w = 0.0
+    end
+    if inner_h < 0.0
+      inner_h = 0.0
+    end
+
+    remaining = inner_h
     expanding_total_flex = 0
 
     # First pass: measure FIXED/CONTENT children, collect EXPANDING
+    # In a Column, non-FIXED children fill the column width (for centering, word-wrap, etc.)
     i = 0
     while i < @children.length
       c = @children[i]
       if c.get_height_policy != EXPANDING
         # Set width before measure so word-wrapping can calculate line count
-        if c.get_width_policy == EXPANDING
-          c.resize_wh(@width, c.get_height)
+        if c.get_width_policy != FIXED
+          c.resize_wh(inner_w, c.get_height)
         end
         cs = c.measure(painter)
-        if c.get_width_policy == EXPANDING
-          c.resize_wh(@width, cs.height)
-        else
+        if c.get_width_policy == FIXED
           c.resize_wh(cs.width, cs.height)
+        else
+          c.resize_wh(inner_w, cs.height)
         end
         remaining = remaining - cs.height
       else
@@ -108,7 +119,7 @@ class Column < Layout
     end
 
     # Second pass: distribute remaining space to EXPANDING children, position all
-    cy = @y
+    cy = @y + @pad_top
     if @is_scrollable
       cy = cy - @scroll_offset
     end
@@ -121,14 +132,14 @@ class Column < Layout
         if expanding_total_flex > 0 && remaining > 0.0
           h = remaining * c.get_flex / expanding_total_flex
         end
-        c.resize_wh(@width, h)
+        c.resize_wh(inner_w, h)
       else
-        # Set width for non-expanding too
-        if c.get_width_policy == EXPANDING
-          c.resize_wh(@width, c.get_height)
+        # In a Column, non-FIXED children fill the column width
+        if c.get_width_policy != FIXED
+          c.resize_wh(inner_w, c.get_height)
         end
       end
-      c.move_xy(@x, cy)
+      c.move_xy(@x + @pad_left, cy)
       cy = cy + c.get_height + @spacing
       total_content_h = total_content_h + c.get_height
       total_content_h = total_content_h + @spacing if i > 0
@@ -138,7 +149,7 @@ class Column < Layout
 
     # Auto-scroll to bottom when pinned
     if @pin_bottom && @is_scrollable
-      max_scroll = @content_height - @height
+      max_scroll = @content_height - inner_h
       if max_scroll > 0.0
         @scroll_offset = max_scroll
       end
@@ -147,9 +158,24 @@ class Column < Layout
 
   #: (untyped painter, bool completely) -> void
   def redraw(painter, completely)
+    saved_bg = $__bg_clear_color
+    # When this layout has a custom background and is dirty, we handle clearing
+    # ourselves to preserve rounded corners. Clear dirty flag so redraw_children
+    # won't overwrite with a solid fill_rect.
+    if @custom_bg && is_dirty
+      parent_bg = saved_bg
+      if parent_bg == nil || parent_bg == 0
+        parent_bg = $theme.bg_canvas
+      end
+      painter.fill_rect(0.0, 0.0, @width, @height, parent_bg)
+      set_dirty(false)
+      completely = true
+    end
+    draw_visual_background(painter)
     relocate_children(painter)
     redraw_children(painter, completely)
     draw_scrollbar(painter) if @is_scrollable
+    $__bg_clear_color = saved_bg
   end
 
   #: (untyped painter) -> void

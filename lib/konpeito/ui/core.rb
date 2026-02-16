@@ -1864,6 +1864,51 @@ class Layout < Widget
   def initialize
     super
     @children = []
+    # Visual properties (background, border)
+    @bg_color_val = 0
+    @border_color_val = 0
+    @custom_bg = false
+    @custom_border = false
+    @border_radius_val = 0.0
+    @border_width_val = 1.0
+    @bg_clear_color = nil
+  end
+
+  # --- Visual Properties (method chaining) ---
+
+  #: (Integer c) -> Layout
+  def bg_color(c)
+    @bg_color_val = c
+    @custom_bg = true
+    self
+  end
+
+  #: (Integer c) -> Layout
+  def border_color(c)
+    @border_color_val = c
+    @custom_border = true
+    self
+  end
+
+  #: (Float r) -> Layout
+  def border_radius(r)
+    @border_radius_val = r
+    self
+  end
+
+  #: (Float w) -> Layout
+  def border_width(w)
+    @border_width_val = w
+    self
+  end
+
+  # Draw background and border if visual properties are set.
+  #: (untyped painter) -> void
+  def draw_visual_background(painter)
+    if @custom_bg
+      painter.fill_round_rect(0.0, 0.0, @width, @height, @border_radius_val, @bg_color_val)
+      @bg_clear_color = @bg_color_val
+    end
   end
 
   #: () -> Array

@@ -3739,6 +3739,11 @@ module Konpeito
       # Remove fields from child classes that are already declared on a parent class.
       # Must run AFTER all classes are registered (register_class_info) since the
       # HIR class order may register children before parents.
+      #
+      # Type conflict detection: when a child class assigns a concrete but different type
+      # to a field that the parent typed narrowly (e.g. parent :i64, child :string), widen
+      # the parent's field to :value (Object) to prevent runtime NPE.
+      # If the child type is :value (unresolved/unknown), keep the parent's concrete type.
       def dedup_inherited_fields
         @class_info.each do |class_name, info|
           parent = info[:super_name]
@@ -3749,6 +3754,16 @@ module Konpeito
             if parent_info[:fields]
               parent_info[:fields].each_key do |fname|
                 if info[:fields].key?(fname)
+                  child_type = info[:fields][fname]
+                  parent_type = parent_info[:fields][fname]
+                  # Only widen when both types are concrete but different.
+                  # If child is :value (unknown), trust the parent's type.
+                  # If parent is :value, trust it (already wide enough).
+                  if child_type != parent_type && child_type != :value && parent_type != :value
+                    warn "[konpeito] JVM field type conflict: #{parent_name}##{fname} is :#{parent_type}, " \
+                         "but subclass #{class_name} uses :#{child_type}. Widening to :value (Object)."
+                    parent_info[:fields][fname] = :value
+                  end
                   info[:fields].delete(fname)
                 end
               end

@@ -135,43 +135,83 @@ The JVM backend supports seamless Java interop — call Java libraries directly 
 
 ## Castella UI
 
-Castella is a reactive GUI framework that runs on the JVM backend, powered by [JWM](https://github.com/nicenote/jwm) + [Skija](https://github.com/nicenote/skija) for cross-platform rendering. Based on a port of [Castella for Python](https://github.com/i2y/castella).
+A reactive GUI framework for the JVM backend, powered by [JWM](https://github.com/nicenote/jwm) + [Skija](https://github.com/nicenote/skija). Ruby's block syntax becomes a beautiful UI DSL — layouts nest naturally, just like your markup would, but with the full power of Ruby.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Analytics Dashboard" width="720" />
+</p>
+
+The dashboard above is pure Ruby — no XML, no templates, no separate layout files:
 
 ```ruby
-class CounterApp < Component
+def view
+  column(padding: 20.0, spacing: 16.0) {
+    row(spacing: 12.0) {
+      text("Analytics Dashboard", font_size: 26.0, bold: true)
+      spacer
+      button("Refresh", width: 90.0) {}
+    }.fixed_height(40.0)
+
+    # KPI Cards — extract a method, and it's a reusable component
+    row(spacing: 12.0) {
+      kpi_card("Revenue", "$48,250", "+12.5%", $theme.accent)
+      kpi_card("Users",   "3,842",   "+8.1%",  $theme.success)
+      kpi_card("Orders",  "1,205",   "-2.3%",  $theme.error)
+    }
+
+    # Charts, tables, and layouts compose with blocks
+    row(spacing: 12.0) {
+      column(expanding_width: true, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
+        bar_chart(labels, data, ["Revenue", "Costs"]).title("Monthly Overview").fixed_height(220.0)
+      }
+      column(expanding_width: true, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 14.0) {
+        data_table(headers, widths, rows).fixed_height(200.0)
+      }
+    }
+  }
+end
+
+# A Ruby method is a reusable component
+def kpi_card(label, value, change, color)
+  column(spacing: 6.0, bg_color: $theme.bg_primary, border_radius: 10.0, padding: 16.0, expanding_width: true) {
+    text(label, font_size: 12.0, color: $theme.text_secondary)
+    text(value, font_size: 24.0, bold: true)
+    text(change, font_size: 13.0, color: color)
+  }
+end
+```
+
+Reactive state is built in — `state(0)` creates an observable value, and the UI re-renders automatically when it changes:
+
+<p align="center">
+  <img src="docs/screenshots/counter.png" alt="Counter App" width="320" />
+</p>
+
+```ruby
+class Counter < Component
   def initialize
     super
     @count = state(0)
   end
 
   def view
-    label = "Count: " + @count.value.to_s
-    Column(
-      Text(label).font_size(32),
-      Row(
-        Button("  -  ").on_click { @count -= 1 },
-        Button("  +  ").on_click { @count += 1 }
-      )
-    )
+    column(padding: 16.0) {
+      spacer
+      text "Count: #{@count}", font_size: 32.0, align: :center
+      spacer.fixed_height(24.0)
+      row(spacing: 8.0) {
+        spacer
+        button(" - ", width: 80.0) { @count -= 1 }
+        button(" + ", width: 80.0) { @count += 1 }
+        spacer
+      }
+      spacer
+    }
   end
 end
 ```
 
-A block-based DSL is also available:
-
-```ruby
-def view
-  column(padding: 16.0) do
-    text "Counter: #{@count}", font_size: 24.0, color: 0xFFC0CAF5
-    row(spacing: 8.0) do
-      button("-", width: 60.0) { @count -= 1 }
-      button("+", width: 60.0) { @count += 1 }
-    end
-  end
-end
-```
-
-Available widgets: `Text`, `Button`, `TextInput`, `MultilineText`, `Column`, `Row`, `Image`, `Checkbox`, `Slider`, `ProgressBar`, `Tabs`, `DataTable`, `TreeView`, `BarChart`, `Markdown`, and more.
+An OOP-style API (`Column(...)`, `Row(...)`) is also available. Widgets include `Text`, `Button`, `TextInput`, `MultilineText`, `Column`, `Row`, `Image`, `Checkbox`, `Slider`, `ProgressBar`, `Tabs`, `DataTable`, `TreeView`, `BarChart`, `LineChart`, `PieChart`, `Markdown`, and more.
 
 ## Performance
 

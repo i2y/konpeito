@@ -244,6 +244,8 @@ This project was developed collaboratively between a human director ([Yasushi It
 
 Konpeito is in an early stage. Bugs and undocumented limitations should be expected. Actively improving — bug reports and feedback are very welcome.
 
+The JVM backend might be more mature than the LLVM/CRuby backend at this point. If you're getting started, try the JVM backend first (`--target jvm`).
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.

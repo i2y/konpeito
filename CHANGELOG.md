@@ -5,6 +5,20 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-02-16
+
+### Fixed
+- JVM backend: detect and resolve field type conflicts in `dedup_inherited_fields` to prevent runtime NPE when parent/child classes use same ivar with different types
+- JVM backend: UI layout fixes for Castella dashboard (`.class` dispatch, `attr_accessor` field access, scrollbar thumb rendering, etc.)
+- Remove duplicate `source_code_uri` from gemspec metadata
+- Remove debug `puts` from data_table widget
+
+### Added
+- Castella UI: visual properties (`bg_color`, `border_radius`, `border_color`, `border_width`) directly on Column/Row layouts, eliminating Container wrapper boilerplate
+
+### Changed
+- Documentation: note that JVM backend might be more mature than LLVM backend
+
 ## [0.1.0] - 2026-02-13
 
 ### Added
@@ -72,4 +86,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.1.1]: https://github.com/i2y/konpeito/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/i2y/konpeito/releases/tag/v0.1.0

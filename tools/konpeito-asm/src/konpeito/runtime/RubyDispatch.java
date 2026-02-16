@@ -56,6 +56,9 @@ public class RubyDispatch {
         RUBY_NAME_ALIASES.put("to_s", new String[]{"toString"});
         RUBY_NAME_ALIASES.put("to_a", new String[]{"toArray_"});
 
+        // Reserved name aliases (jvm_method_name mangles these)
+        RUBY_NAME_ALIASES.put("k_class", new String[]{"getClass"});
+
         // Hash: keys/values → Ruby-specific methods returning KArray
         RUBY_NAME_ALIASES.put("keys", new String[]{"rubyKeys"});
         RUBY_NAME_ALIASES.put("values", new String[]{"rubyValues"});

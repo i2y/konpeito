@@ -187,6 +187,10 @@ module Konpeito
         # Classes are generated before main class, so we need this early.
         prescan_top_level_constants(hir_program)
 
+        # Pre-scan: register global variable static fields early so that
+        # global variables referenced inside blocks have fields available.
+        prescan_global_variables(hir_program)
+
         # Generate module interfaces FIRST (before classes that may implement them)
         hir_program.modules.each do |module_def|
           @block_methods = []
@@ -294,17 +298,43 @@ module Konpeito
         }
       end
 
+      # Yield every instruction in basic_blocks, recursing into block bodies
+      # attached to HIR::Call nodes.
+      def each_instruction_recursive(basic_blocks, &blk)
+        basic_blocks.each do |bb|
+          bb.instructions.each do |inst|
+            blk.call(inst)
+            if inst.is_a?(HIR::Call) && inst.block
+              each_instruction_recursive(inst.block.body, &blk)
+            end
+          end
+        end
+      end
+
       # Pre-scan top-level StoreConstant instructions to populate @constant_fields early.
       # This is needed because user classes are generated before the main class, and
       # class constructors may reference top-level constants (e.g. EXPANDING = 1).
+      # Recurses into block bodies so constants defined inside lambdas are also found.
       def prescan_top_level_constants(hir_program)
         hir_program.functions.each do |func|
           next if func.owner_class || func.owner_module
-          func.body.each do |bb|
-            bb.instructions.each do |inst|
-              if inst.is_a?(HIR::StoreConstant) && inst.scope.nil?
-                @constant_fields << inst.name.to_s
-              end
+          each_instruction_recursive(func.body) do |inst|
+            if inst.is_a?(HIR::StoreConstant) && inst.scope.nil?
+              @constant_fields << inst.name.to_s
+            end
+          end
+        end
+      end
+
+      # Pre-scan all functions for global variable access (LoadGlobalVar/StoreGlobalVar)
+      # and register the corresponding static fields early. This ensures global variables
+      # referenced inside blocks have their fields available during code generation.
+      def prescan_global_variables(hir_program)
+        hir_program.functions.each do |func|
+          each_instruction_recursive(func.body) do |inst|
+            if inst.is_a?(HIR::LoadGlobalVar) || inst.is_a?(HIR::StoreGlobalVar)
+              field_name = inst.name.sub(/^\$/, "GLOBAL_")
+              register_global_field(field_name)
             end
           end
         end
@@ -5189,8 +5219,13 @@ module Konpeito
                     end
         instructions = []
 
-        # Load self
-        instructions << { "op" => "aload", "var" => 0 }
+        # Load self — use @block_self_slot if inside a block that captured self
+        self_slot = @block_self_slot || 0
+        instructions << { "op" => "aload", "var" => self_slot }
+        # If self was captured as Object, checkcast to the expected class
+        if @block_self_slot
+          instructions << { "op" => "checkcast", "type" => jvm_class }
+        end
 
         # Prefer registered descriptor for consistency with method definition
         registered = @method_descriptors["#{@current_class_name}##{method_name}"]
@@ -6478,13 +6513,16 @@ module Konpeito
         instructions
       end
 
-      # Check if a block body accesses instance variables (needs self reference).
+      # Check if a block body accesses instance variables or calls methods on
+      # implicit self (receiver-less calls like `kpi_card(label, value)`).
       # Recursively checks nested blocks (e.g., on_click inside a yield block)
       # so that outer blocks capture self when inner blocks need it.
       def block_needs_self?(block_def)
         block_def.body.any? do |bb|
           bb.instructions.any? { |inst|
             if inst.is_a?(HIR::LoadInstanceVar) || inst.is_a?(HIR::StoreInstanceVar)
+              true
+            elsif inst.is_a?(HIR::Call) && (inst.receiver.nil? || inst.receiver.is_a?(HIR::SelfRef))
               true
             elsif inst.is_a?(HIR::Call) && inst.block
               block_needs_self?(inst.block)

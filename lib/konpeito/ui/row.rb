@@ -87,7 +87,11 @@ class Row < Layout
           c.resize_wh(c.get_width, @height)
         end
         cs = c.measure(painter)
-        c.resize_wh(cs.width, @height)
+        if c.get_height_policy == EXPANDING
+          c.resize_wh(cs.width, @height)
+        else
+          c.resize_wh(cs.width, cs.height)
+        end
         remaining = remaining - cs.width
       else
         expanding_total_flex = expanding_total_flex + c.get_flex

@@ -90,7 +90,11 @@ class Column < Layout
           c.resize_wh(@width, c.get_height)
         end
         cs = c.measure(painter)
-        c.resize_wh(@width, cs.height)
+        if c.get_width_policy == EXPANDING
+          c.resize_wh(@width, cs.height)
+        else
+          c.resize_wh(cs.width, cs.height)
+        end
         remaining = remaining - cs.height
       else
         expanding_total_flex = expanding_total_flex + c.get_flex

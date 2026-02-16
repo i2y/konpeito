@@ -2072,12 +2072,14 @@ module Konpeito
             # Check if this is a keyword hash argument
             if arg.node.is_a?(Prism::KeywordHashNode)
               # Extract keyword arguments from the hash
-              arg.node.elements.each do |elem|
+              # arg.children are typed AssocNode wrappers; each has children[0]=key, children[1]=value
+              arg.node.elements.each_with_index do |elem, ei|
                 if elem.is_a?(Prism::AssocNode) && elem.key.is_a?(Prism::SymbolNode)
                   key_name = elem.key.unescaped.to_sym
-                  # Find the typed value from the children
-                  value_typed = arg.children.find { |c| c.node == elem.value }
-                  if value_typed
+                  # Navigate through the typed AssocNode to get the typed value child
+                  typed_assoc = arg.children[ei]
+                  if typed_assoc && typed_assoc.children && typed_assoc.children.size >= 2
+                    value_typed = typed_assoc.children[1]
                     keyword_args[key_name] = visit(value_typed)
                   else
                     # Fallback: create typed node for the value

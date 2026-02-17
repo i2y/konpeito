@@ -230,6 +230,59 @@ column(spacing: 12.0) {
 }
 ```
 
+### Calculator Demo
+
+A port of the original Python Castella calculator. Flex layout, button kinds (`KIND_DANGER`, `KIND_WARNING`, `KIND_SUCCESS`), and reactive `state()` — all in ~90 lines:
+
+<p align="center">
+  <img src="docs/screenshots/calc.png" alt="Calculator" width="320" />
+</p>
+
+```ruby
+class Calc < Component
+  def initialize
+    super
+    @display = state("0")
+    @lhs = 0.0
+    @current_op = ""
+    @is_refresh = true
+  end
+
+  def view
+    grid = Style.new.spacing(4.0)
+    btn  = Style.new.font_size(32.0)
+    op   = btn + Style.new.kind(KIND_WARNING)
+    ac   = btn + Style.new.kind(KIND_DANGER).flex(3)
+    eq   = btn + Style.new.kind(KIND_SUCCESS)
+    wide = btn + Style.new.flex(2)
+
+    column(spacing: 4.0, padding: 4.0) {
+      text @display.value, font_size: 48.0, align: :right, kind: KIND_INFO, height: 72.0
+      row(grid) {
+        button("AC", ac) { all_clear }
+        button("\u00F7", op) { press_operator("\u00F7") }
+      }
+      row(grid) {
+        button("7", btn) { press_number("7") }
+        button("8", btn) { press_number("8") }
+        button("9", btn) { press_number("9") }
+        button("\u00D7", op) { press_operator("\u00D7") }
+      }
+      # ... digit rows 4-5-6, 1-2-3
+      row(grid) {
+        button("0", wide) { press_number("0") }
+        button(".", btn) { press_dot }
+        button("=", eq) { press_operator("=") }
+      }
+    }
+  end
+end
+
+frame = JWMFrame.new("Castella Calculator", 320, 480)
+app = App.new(frame, Calc.new)
+app.run
+```
+
 ## Performance
 
 Konpeito shines in compute-heavy, typed loops where unboxed arithmetic and backend optimizations kick in. All benchmarks compare against Ruby 4.0.1 with YJIT enabled on Apple M4 Max.

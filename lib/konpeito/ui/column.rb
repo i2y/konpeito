@@ -87,13 +87,19 @@ class Column < Layout
     max_w = 0.0
     i = 0
     while i < @children.length
-      cs = @children[i].measure(painter)
-      total_h = total_h + cs.height
+      c = @children[i]
+      cs = c.measure(painter)
+      if c.get_height_policy == FIXED
+        child_h = c.get_height
+      else
+        child_h = cs.height
+      end
+      total_h = total_h + child_h
       total_h = total_h + @spacing if i > 0
       max_w = cs.width if cs.width > max_w
       i = i + 1
     end
-    Size.new(max_w, total_h)
+    Size.new(max_w + @pad_left + @pad_right, total_h + @pad_top + @pad_bottom)
   end
 
   # Unified layout: two-pass flex distribution + scroll offset.

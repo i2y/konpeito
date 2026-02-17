@@ -84,13 +84,24 @@ class Row < Layout
     max_h = 0.0
     i = 0
     while i < @children.length
-      cs = @children[i].measure(painter)
-      total_w = total_w + cs.width
+      c = @children[i]
+      cs = c.measure(painter)
+      if c.get_width_policy == FIXED
+        child_w = c.get_width
+      else
+        child_w = cs.width
+      end
+      total_w = total_w + child_w
       total_w = total_w + @spacing if i > 0
-      max_h = cs.height if cs.height > max_h
+      if c.get_height_policy == FIXED
+        child_h = c.get_height
+      else
+        child_h = cs.height
+      end
+      max_h = child_h if child_h > max_h
       i = i + 1
     end
-    Size.new(total_w, max_h)
+    Size.new(total_w + @pad_left + @pad_right, max_h + @pad_top + @pad_bottom)
   end
 
   # Unified layout: two-pass flex distribution + scroll offset.

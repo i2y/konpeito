@@ -485,9 +485,8 @@ Container functions (`column`, `row`, `box`, `container`) take a block and auto-
 column(padding: 16.0) {
   text "Count: #{@count}", font_size: 32.0, color: 0xFFC0CAF5, align: :center
   row(spacing: 8.0) {
-    button(" - ", width: 80.0) { @count -= 1 }
-    spacer
-    button(" + ", width: 80.0) { @count += 1 }
+    button(" - ") { @count -= 1 }
+    button(" + ") { @count += 1 }
   }
 }
 ```
@@ -540,21 +539,15 @@ class CounterComponent < Component
     label = "Count: " + count.value.to_s
 
     Column(
-      Spacer(),
       Text(label).font_size(32).color(0xFFC0CAF5).align(TEXT_ALIGN_CENTER),
-      Spacer().fixed_height(24.0),
       Row(
-        Spacer(),
         Button("  -  ").font_size(24).on_click {
           count.set(count.value - 1)
         },
-        Spacer().fixed_width(24.0),
         Button("  +  ").font_size(24).on_click {
           count.set(count.value + 1)
-        },
-        Spacer()
-      ).fixed_height(60.0),
-      Spacer()
+        }
+      )
     )
   end
 end

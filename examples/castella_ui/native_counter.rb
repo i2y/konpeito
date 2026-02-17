@@ -19,21 +19,15 @@ class CounterComponent < Component
     label = "Count: " + @count.value.to_s
 
     Column(
-      Spacer(),
       Text(label).font_size(32).color(0xFFC0CAF5).align(TEXT_ALIGN_CENTER),
-      Spacer().fixed_height(24.0),
       Row(
-        Spacer(),
         Button("  -  ").font_size(24).on_click {
           @count -= 1
         },
-        Spacer().fixed_width(24.0),
         Button("  +  ").font_size(24).on_click {
           @count += 1
-        },
-        Spacer()
-      ).fixed_height(60.0),
-      Spacer()
+        }
+      )
     )
   end
 end

@@ -135,7 +135,11 @@ The JVM backend supports seamless Java interop — call Java libraries directly 
 
 ## Castella UI
 
-A reactive GUI framework for the JVM backend, powered by [JWM](https://github.com/nicenote/jwm) + [Skija](https://github.com/nicenote/skija). Ruby's block syntax becomes a beautiful UI DSL — layouts nest naturally, just like your markup would, but with the full power of Ruby.
+A reactive GUI framework for the JVM backend, powered by [JWM](https://github.com/nicenote/jwm) + [Skija](https://github.com/nicenote/skija).
+
+### DSL
+
+Ruby's block syntax becomes a UI DSL — `column`, `row`, `text`, `button` etc. nest naturally with keyword arguments. A plain Ruby method is a reusable component.
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="Analytics Dashboard" width="720" />
@@ -179,7 +183,9 @@ def kpi_card(label, value, change, color)
 end
 ```
 
-Reactive state is built in — `state(0)` creates an observable value, and the UI re-renders automatically when it changes:
+### Reactive State
+
+`state(0)` creates an observable value, and the UI re-renders automatically when it changes:
 
 <p align="center">
   <img src="docs/screenshots/counter.png" alt="Counter App" width="320" />
@@ -193,23 +199,36 @@ class Counter < Component
   end
 
   def view
-    column(padding: 16.0) {
-      spacer
+    column(padding: 16.0, spacing: 8.0) {
       text "Count: #{@count}", font_size: 32.0, align: :center
-      spacer.fixed_height(24.0)
       row(spacing: 8.0) {
-        spacer
-        button(" - ", width: 80.0) { @count -= 1 }
-        button(" + ", width: 80.0) { @count += 1 }
-        spacer
+        button(" - ") { @count -= 1 }
+        button(" + ") { @count += 1 }
       }
-      spacer
     }
   end
 end
 ```
 
-An OOP-style API (`Column(...)`, `Row(...)`) is also available. Widgets include `Text`, `Button`, `TextInput`, `MultilineText`, `Column`, `Row`, `Image`, `Checkbox`, `Slider`, `ProgressBar`, `Tabs`, `DataTable`, `TreeView`, `BarChart`, `LineChart`, `PieChart`, `Markdown`, and more.
+An OOP-style API (`Column(...)`, `Row(...)`) is also available. Available widgets: `Text`, `Button`, `TextInput`, `MultilineText`, `Column`, `Row`, `Image`, `Checkbox`, `Slider`, `ProgressBar`, `Tabs`, `DataTable`, `TreeView`, `BarChart`, `LineChart`, `PieChart`, `Markdown`, and more.
+
+### Style Composition
+
+Styles are first-class objects — store them in variables and compose with `+`:
+
+<p align="center">
+  <img src="docs/screenshots/style_composition.png" alt="Style Composition" width="480" />
+</p>
+
+```ruby
+card = Style.new.bg_color($theme.bg_primary).border_radius(10.0).padding(16.0)
+green_card = card + Style.new.border_color($theme.success)
+
+column(spacing: 12.0) {
+  container(card)       { text "Default card" }
+  container(green_card) { text "Green border variant" }
+}
+```
 
 ## Performance
 

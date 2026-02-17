@@ -15,18 +15,12 @@ class DslCounterComponent < Component
   end
 
   def view
-    column(padding: 16.0) {
-      spacer
+    column(padding: 16.0, spacing: 8.0) {
       text "Count: #{@count}", font_size: 32.0, color: 0xFFC0CAF5, align: :center
-      spacer.fixed_height(24.0)
       row(spacing: 8.0) {
-        spacer
-        button(" - ", width: 80.0) { @count -= 1 }
-        spacer.fixed_width(24.0)
-        button(" + ", width: 80.0) { @count += 1 }
-        spacer
+        button(" - ") { @count -= 1 }
+        button(" + ") { @count += 1 }
       }
-      spacer
     }
   end
 end

@@ -186,6 +186,9 @@ module Konpeito
         elsif singleton_value_compatible?(t1, t2)
           # ClassSingleton (value constant like EXPANDING) is compatible with its base type.
           # e.g., singleton(EXPANDING) ↔ Integer when EXPANDING = 2
+        elsif literal_compatible?(t1, t2)
+          # Literals are subtypes of their base type (e.g., Literal(1) <: Integer, Literal("x") <: String)
+          # Unions of same-type literals are also compatible (e.g., -1 | 0 | 1 <: Integer)
         else
           raise UnificationError.new(t1, t2)
         end
@@ -205,6 +208,38 @@ module Konpeito
       def singleton_value_compatible?(t1, t2)
         (t1.is_a?(Types::ClassSingleton) && t2.is_a?(Types::ClassInstance)) ||
         (t2.is_a?(Types::ClassSingleton) && t1.is_a?(Types::ClassInstance))
+      end
+
+      # Check if a literal type (or union of literals) is compatible with its base class type.
+      # e.g., Literal(1) <: Integer, Literal("hello") <: String, Literal(1.0) <: Float
+      #        Union(Literal(-1), Literal(0), Literal(1)) <: Integer
+      def literal_compatible?(t1, t2)
+        (literal_subtype_of_class?(t1, t2)) || (literal_subtype_of_class?(t2, t1))
+      end
+
+      def literal_subtype_of_class?(literal_side, class_side)
+        return false unless class_side.is_a?(Types::ClassInstance)
+
+        if literal_side.is_a?(Types::Literal)
+          literal_base_type_name(literal_side.value) == class_side.name
+        elsif literal_side.is_a?(Types::Union)
+          literal_side.types.all? do |sub|
+            sub.is_a?(Types::Literal) && literal_base_type_name(sub.value) == class_side.name
+          end
+        else
+          false
+        end
+      end
+
+      # Map a Ruby literal value to its base type name
+      def literal_base_type_name(value)
+        case value
+        when Integer then :Integer
+        when Float then :Float
+        when String then :String
+        when Symbol then :Symbol
+        when true, false then :Bool
+        end
       end
 
       # Check if `from` can be widened to `to` (Java/Kotlin-style widening primitive conversion).

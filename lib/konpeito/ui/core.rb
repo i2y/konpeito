@@ -1658,6 +1658,16 @@ class Widget
     @enable_to_detach = false
   end
 
+  #: (bool v) -> void
+  def set_cached(v)
+    @cached = v
+  end
+
+  #: () -> bool
+  def is_cached
+    @cached
+  end
+
   # --- Observer Protocol ---
 
   #: (untyped o) -> void
@@ -1923,6 +1933,9 @@ class Layout < Widget
 
   #: (untyped w) -> Layout
   def add(w)
+    if w == nil
+      return self
+    end
     # Remove from old parent if needed
     old_parent = w.get_parent
     if old_parent != nil && old_parent != self
@@ -2103,9 +2116,144 @@ class Layout < Widget
   end
 end
 
+# ===== BuildOwner =====
+# Port of ~/castella/castella/build_owner.py BuildOwner
+# Batches multiple state changes into a single rebuild pass.
+#
+# Usage:
+#   owner = BuildOwner.get
+#   owner.build_scope {
+#     state1.set(value1)
+#     state2.set(value2)
+#   }
+#   # → Only ONE rebuild for all affected components
+
+class BuildOwner
+  @@instance = nil
+
+  #: () -> BuildOwner
+  def self.get
+    if @@instance == nil
+      @@instance = BuildOwner.new
+    end
+    @@instance
+  end
+
+  #: () -> void
+  def self.reset
+    @@instance = nil
+  end
+
+  def initialize
+    @dirty_components = []
+    @in_build_scope = false
+    @scope_depth = 0
+  end
+
+  #: () -> bool
+  def is_in_build_scope
+    @in_build_scope
+  end
+
+  # Schedule a component for rebuild. Deduplicates.
+  # Inside build_scope: just adds to dirty list.
+  # Outside build_scope: immediate mode (backward compatibility).
+  #: (untyped component) -> void
+  def schedule_build_for(component)
+    # Dedup: skip if already in dirty list
+    i = 0
+    while i < @dirty_components.length
+      if @dirty_components[i] == component
+        return
+      end
+      i = i + 1
+    end
+
+    if !@in_build_scope
+      # Immediate mode: mark and trigger redraw now (don't accumulate)
+      component.mark_pending_rebuild
+      app = App.current
+      if app != nil
+        app.post_update(component)
+      end
+    else
+      # Batched mode: just add to dirty list for flush_builds
+      @dirty_components << component
+    end
+  end
+
+  # Execute a block with batched rebuilds.
+  # Supports nesting: only the outermost scope triggers flush.
+  #: () -> void
+  def build_scope
+    @scope_depth = @scope_depth + 1
+    @in_build_scope = true
+    yield
+    @scope_depth = @scope_depth - 1
+    if @scope_depth == 0
+      @in_build_scope = false
+      flush_builds
+    end
+  end
+
+  # Process all pending rebuilds: mark as pending, trigger one redraw.
+  # Components are sorted by depth (parents before children) so parent
+  # rebuilds don't cause redundant child rebuilds.
+  #: () -> void
+  def flush_builds
+    while @dirty_components.length > 0
+      # Sort by depth (parents first)
+      sorted = sort_by_depth(@dirty_components)
+      @dirty_components = []
+
+      # Mark all as pending rebuild
+      i = 0
+      while i < sorted.length
+        sorted[i].mark_pending_rebuild
+        i = i + 1
+      end
+
+      # Trigger single redraw
+      if sorted.length > 0
+        app = App.current
+        if app != nil
+          app.post_update(sorted[0])
+        end
+      end
+    end
+  end
+
+  private
+
+  # Insertion sort by widget depth (ascending)
+  #: (Array components) -> Array
+  def sort_by_depth(components)
+    result = []
+    i = 0
+    while i < components.length
+      result << components[i]
+      i = i + 1
+    end
+    i = 1
+    while i < result.length
+      j = i
+      while j > 0
+        if result[j].get_depth < result[j - 1].get_depth
+          tmp = result[j]
+          result[j] = result[j - 1]
+          result[j - 1] = tmp
+        end
+        j = j - 1
+      end
+      i = i + 1
+    end
+    result
+  end
+end
+
 # ===== Component =====
 # Port of ~/castella/castella/core.py Component
-# Now with pending_rebuild flag and proper detach on rebuild
+# Now with cache() for widget reuse and BuildOwner integration
 
 class Component < Layout
   def initialize
@@ -2114,6 +2262,8 @@ class Component < Layout
     @height_policy = EXPANDING
     @child = nil
     @pending_rebuild = false
+    @cache_data = []     # Array of [keys_array, widgets_array] pairs per cache() call
+    @cache_counter = 0   # Reset each view() call
   end
 
   # Helper: create State + auto-attach
@@ -2130,22 +2280,116 @@ class Component < Layout
     nil
   end
 
-  # State change notification -> schedule rebuild
+  # Cache widget instances across view() rebuilds.
+  # Returns an array of widgets, reusing existing ones for matching items.
+  # Items are matched by == comparison.
+  #
+  # Usage in view():
+  #   widgets = cache(items) { |item| Text.new(item.label) }
+  #   i = 0
+  #   while i < widgets.length
+  #     embed(widgets[i])
+  #     i = i + 1
+  #   end
+  #
+  #: (Array items) -> Array
+  def cache(items)
+    slot = @cache_counter
+    @cache_counter = @cache_counter + 1
+
+    # Get old cache for this slot
+    old_keys = nil
+    old_widgets = nil
+    if slot < @cache_data.length
+      entry = @cache_data[slot]
+      if entry != nil
+        old_keys = entry[0]
+        old_widgets = entry[1]
+      end
+    end
+
+    new_keys = []
+    new_widgets = []
+
+    i = 0
+    while i < items.length
+      item = items[i]
+      # Look up in old cache by == comparison
+      found = nil
+      if old_keys != nil
+        j = 0
+        while j < old_keys.length
+          if old_keys[j] != nil && old_keys[j] == item
+            found = old_widgets[j]
+            old_keys[j] = nil  # Mark as used
+            break
+          end
+          j = j + 1
+        end
+      end
+
+      if found != nil
+        found.set_cached(true)  # Safety: prevent do_unmount if somehow reached
+        new_keys << item
+        new_widgets << found
+      else
+        widget = yield(item)
+        new_keys << item
+        new_widgets << widget
+      end
+      i = i + 1
+    end
+
+    # Old widgets not reused will be detached when old tree is destroyed.
+    # Clear cached flag so they can be properly cleaned up.
+    if old_keys != nil
+      j = 0
+      while j < old_keys.length
+        if old_keys[j] != nil
+          old_widgets[j].set_cached(false)
+        end
+        j = j + 1
+      end
+    end
+
+    # Store updated cache
+    while @cache_data.length <= slot
+      @cache_data << nil
+    end
+    @cache_data[slot] = [new_keys, new_widgets]
+
+    new_widgets
+  end
+
+  # Mark this component as needing rebuild (called by BuildOwner)
   #: () -> void
-  def on_notify
+  def mark_pending_rebuild
     @pending_rebuild = true
     mark_paint_dirty
-    app = App.current
-    if app != nil
-      app.post_update(self)
-    end
+  end
+
+  # State change notification -> route to BuildOwner for batched rebuild
+  #: () -> void
+  def on_notify
+    owner = BuildOwner.get
+    owner.schedule_build_for(self)
   end
 
   #: (untyped painter, bool completely) -> void
   def redraw(painter, completely)
-    # Handle pending rebuild
+    needs_build = false
     if @pending_rebuild
       @pending_rebuild = false
+      needs_build = true
+    end
+    if @child == nil
+      needs_build = true
+    end
+
+    if needs_build
+      # Reset cache counter for view()
+      @cache_counter = 0
+
       # Save focused widget's tab_index
       saved_focus_tab = -1
       app = App.current
@@ -2156,34 +2400,36 @@ class Component < Layout
         end
       end
 
-      # Destroy old tree, build new tree
+      # Build new tree FIRST (cache() may reuse widgets from old tree).
+      # Reused widgets are removed from old tree by Layout#add() when
+      # they are added to the new tree, so they won't be affected by
+      # the subsequent old tree destruction.
+      new_child = view
+
+      # Destroy old tree (cached widgets already removed from it)
       if @child != nil
         remove(@child)
         @child.detach
         @child = nil
       end
-      @child = view
+
+      # Install new tree
+      @child = new_child
       if @child != nil
         add(@child)
         completely = true
       end
 
       # Restore focus (text restoration not needed — InputState persists)
-      if saved_focus_tab > 0 && app != nil
-        focus_target = find_focusable_by_tab_index(@child, saved_focus_tab)
-        if focus_target != nil
-          app.set_focused(focus_target)
-          focus_target.restore_focus
+      if saved_focus_tab > 0
+        app = App.current
+        if app != nil
+          focus_target = find_focusable_by_tab_index(@child, saved_focus_tab)
+          if focus_target != nil
+            app.set_focused(focus_target)
+            focus_target.restore_focus
+          end
         end
-      end
-    end
-
-    # Build view if needed
-    if @child == nil
-      @child = view
-      if @child != nil
-        add(@child)
-        completely = true
       end
     end
 

@@ -179,6 +179,12 @@ class Tree < Widget
     update
   end
 
+  def measure(painter)
+    rebuild_visible
+    h = @visible_nodes.length * 1.0 * TREE_ROW_HEIGHT
+    Size.new(@width, h)
+  end
+
   def get_scrollable
     @scrollable_flag
   end

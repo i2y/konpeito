@@ -16,8 +16,6 @@ class Checkbox < Widget
     @custom_check = false
     @custom_text = false
     @hovered = false
-    @width_policy = CONTENT
-    @height_policy = CONTENT
   end
 
   def checked(v)

@@ -42,6 +42,24 @@ class Container < Layout
     self
   end
 
+  def measure(painter)
+    if @children.length > 0
+      c = @children[0]
+      inner_w = @width - @pad_left - @pad_right
+      if inner_w < 0.0
+        inner_w = 0.0
+      end
+      # Set child width before measuring for word-wrap support
+      if c.get_width_policy != FIXED
+        c.resize_wh(inner_w, c.get_height)
+      end
+      cs = c.measure(painter)
+      Size.new(cs.width + @pad_left + @pad_right, cs.height + @pad_top + @pad_bottom)
+    else
+      Size.new(@pad_left + @pad_right, @pad_top + @pad_bottom)
+    end
+  end
+
   def relocate_children(painter)
     if @children.length > 0
       c = @children[0]

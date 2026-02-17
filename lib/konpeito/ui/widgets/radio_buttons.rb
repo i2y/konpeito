@@ -10,8 +10,6 @@ class RadioButtons < Widget
     @selected = 0
     @change_handler = nil
     @hovered_index = -1
-    @width_policy = EXPANDING
-    @height_policy = CONTENT
     # Colors (Tokyo Night)
     @text_color = 0xFFC0CAF5
     @ring_color = 0xFF565F89

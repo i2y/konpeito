@@ -6,8 +6,6 @@ class Switch < Widget
     super()
     @on = false
     @change_handler = nil
-    @width_policy = CONTENT
-    @height_policy = CONTENT
     # Colors (Tokyo Night)
     @on_color = 0xFF7AA2F7
     @off_color = 0xFF414868

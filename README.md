@@ -141,8 +141,6 @@ A reactive GUI framework for the JVM backend, powered by [JWM](https://github.co
   <img src="docs/screenshots/dashboard.png" alt="Analytics Dashboard" width="720" />
 </p>
 
-The dashboard above is pure Ruby — no XML, no templates, no separate layout files:
-
 ```ruby
 def view
   column(padding: 20.0, spacing: 16.0) {

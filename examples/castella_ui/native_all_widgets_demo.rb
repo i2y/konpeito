@@ -125,8 +125,7 @@ class AllWidgetsDemo < Component
         Spacer().fixed_width(6.0),
         Button("Warning").kind(3),
         Spacer().fixed_width(6.0),
-        Button("Danger").kind(4),
-        Spacer()
+        Button("Danger").kind(4)
       ).fixed_height(36.0),
       Spacer().fixed_height(8.0),
       Divider(),
@@ -136,14 +135,9 @@ class AllWidgetsDemo < Component
       Row(
         Button("-").on_click { counter_ref -= 1 },
         Spacer().fixed_width(8.0),
-        Column(
-          Spacer(),
-          Text(count_text).font_size(20.0).color(0xFF9ECE6A).bold,
-          Spacer()
-        ).fixed_width(40.0),
+        Text(count_text).font_size(20.0).color(0xFF9ECE6A).bold.align(TEXT_ALIGN_CENTER),
         Spacer().fixed_width(8.0),
-        Button("+").kind(1).on_click { counter_ref += 1 },
-        Spacer()
+        Button("+").kind(1).on_click { counter_ref += 1 }
       ).fixed_height(36.0),
       Spacer()
     ).spacing(2.0).scrollable
@@ -263,8 +257,7 @@ class AllWidgetsDemo < Component
       Row(
         Button("Expand All").on_click { ts.expand_all },
         Spacer().fixed_width(6.0),
-        Button("Collapse All").on_click { ts.collapse_all },
-        Spacer()
+        Button("Collapse All").on_click { ts.collapse_all }
       ).fixed_height(36.0),
       Tree(ts),
       Spacer().fixed_height(12.0),
@@ -324,10 +317,10 @@ class AllWidgetsDemo < Component
     ab = @anim_bounce
 
     Column(
-      Text("Animation").font_size(18.0).color(0xFFC0CAF5).bold,
-      Text("Click the button to animate bars with different easing").font_size(12.0).color(0xFF565F89),
+      Text("Animation").font_size(18.0).color(0xFFC0CAF5).bold.fixed_height(24.0),
+      Text("Click the button to animate bars with different easing").font_size(12.0).color(0xFF565F89).fixed_height(16.0),
       Spacer().fixed_height(8.0),
-      Button("Animate!").kind(1).on_click {
+      Button("Animate!").kind(1).fixed_height(36.0).on_click {
         if @anim_toggled
           al.set(0.0)
           ai.set(0.0)

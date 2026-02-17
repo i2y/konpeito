@@ -101,8 +101,7 @@ class ThemeModeDemo < Component
           $theme = theme_catppuccin
           apply_font(fidx)
           t_ref.set(5)
-        },
-        Spacer()
+        }
       ).fixed_height(36.0),
 
       Spacer().fixed_height(6.0),
@@ -122,8 +121,7 @@ class ThemeModeDemo < Component
           $theme = material_theme
           apply_font(fidx)
           t_ref.set(2)
-        },
-        Spacer()
+        }
       ).fixed_height(36.0),
 
       Spacer().fixed_height(8.0),
@@ -153,8 +151,7 @@ class ThemeModeDemo < Component
         Button("Georgia").on_click {
           $theme.font_family = "Georgia"
           f_ref.set(3)
-        },
-        Spacer()
+        }
       ).fixed_height(36.0),
 
       Spacer().fixed_height(8.0),
@@ -178,8 +175,7 @@ class ThemeModeDemo < Component
               Spacer().fixed_width(6.0),
               Button("Warning").kind(3),
               Spacer().fixed_width(6.0),
-              Button("Danger").kind(4),
-              Spacer()
+              Button("Danger").kind(4)
             ).fixed_height(36.0),
             Spacer().fixed_height(8.0),
             Input("Type something here..."),

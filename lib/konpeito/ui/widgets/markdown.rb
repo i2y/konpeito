@@ -11,8 +11,6 @@ class Markdown < Widget
     @ast = nil
     @content_height = 0.0
     @padding_val = 12.0
-    @width_policy = EXPANDING
-    @height_policy = CONTENT
   end
 
   def padding(p)

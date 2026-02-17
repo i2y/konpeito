@@ -3148,6 +3148,22 @@ module Konpeito
             ensure_slot(result_var, ret_type)
             instructions << store_instruction(result_var, ret_type)
             @variable_types[result_var] = ret_type
+
+            # Propagate class type so subsequent method chains resolve the receiver.
+            # Without this, `Button("Animate!").kind(1)` fails because the receiver
+            # class of `.kind(1)` is unknown after the static call to `Button()`.
+            if ret_type.is_a?(Symbol) && ret_type.to_s.start_with?("class:")
+              cls = ret_type.to_s.sub("class:", "")
+              @variable_class_types[result_var] = cls if @class_info.key?(cls)
+            end
+            # Also check HM-inferred type from the call instruction
+            if !@variable_class_types[result_var] && inst.respond_to?(:type) && inst.type
+              call_type = inst.type
+              call_type = call_type.prune if call_type.respond_to?(:prune)
+              if call_type.is_a?(TypeChecker::Types::ClassInstance) && @class_info.key?(call_type.name.to_s)
+                @variable_class_types[result_var] = call_type.name.to_s
+              end
+            end
           end
         end
 
@@ -5114,8 +5130,16 @@ module Konpeito
           # checkcast when return type is a user class (descriptor returns Object but actual is specific class)
           if ret_type == :value
             rbs_class = resolve_rbs_return_class_name(owner_class, method_name)
-            # Also check inferred return class from function_return_type (self-returning methods)
-            rbs_class ||= inferred_return_class
+            # When function returns self (SelfRef), preserve the receiver's actual class type.
+            # RBS annotations declare the defining class (e.g., Widget#fixed_height → Widget)
+            # but `self` at runtime is the receiver's class (e.g., Button). Without this,
+            # method chains like Button(...).fixed_height(36.0).on_click { ... } break because
+            # the receiver type narrows to Widget and on_click (defined on Button) is not found.
+            if inferred_return_class
+              rbs_class = inferred_return_class
+            else
+              rbs_class ||= inferred_return_class
+            end
             if rbs_class && @class_info.key?(rbs_class)
               instructions << { "op" => "checkcast", "type" => @class_info[rbs_class][:jvm_name] }
               @variable_class_types[result_var] = rbs_class

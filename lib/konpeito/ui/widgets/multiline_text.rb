@@ -14,8 +14,6 @@ class MultilineText < Widget
     @line_spacing = 4.0
     @wrap_enabled = false
     @border_width_val = 1.0
-    @width_policy = EXPANDING
-    @height_policy = CONTENT
     @cached_lines = []
   end
 

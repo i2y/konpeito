@@ -15,8 +15,6 @@ class Button < Widget
     @radius = 4.0
     @hovered = false
     @click_handler = nil
-    @width_policy = CONTENT
-    @height_policy = CONTENT
     @pad_top = 8.0
     @pad_right = 16.0
     @pad_bottom = 8.0
@@ -76,8 +74,10 @@ class Button < Widget
     painter.fill_round_rect(0.0, 0.0, @width, @height, @radius, bg_c)
     ascent = painter.get_text_ascent($theme.font_family, @font_size_val)
     th = painter.measure_text_height($theme.font_family, @font_size_val)
+    tw = painter.measure_text_width(@label, $theme.font_family, @font_size_val)
+    text_x = (@width - tw) / 2.0
     text_y = (@height - th) / 2.0 + ascent
-    painter.draw_text(@label, @pad_left, text_y, $theme.font_family, @font_size_val, tc)
+    painter.draw_text(@label, text_x, text_y, $theme.font_family, @font_size_val, tc)
   end
 
   def mouse_up(ev)

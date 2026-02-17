@@ -14,8 +14,6 @@ class ImageWidget < Widget
     @img_width = 0.0
     @img_height = 0.0
     @fit_mode = IMAGE_FIT_CONTAIN
-    @width_policy = CONTENT
-    @height_policy = CONTENT
   end
 
   def fit(mode)

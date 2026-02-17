@@ -18,8 +18,6 @@ class Text < Widget
     @text_align = TEXT_ALIGN_LEFT
     @font_weight = 0
     @font_slant = 0
-    @width_policy = CONTENT
-    @height_policy = CONTENT
   end
 
   def font_size(s)
@@ -85,6 +83,16 @@ class Text < Widget
   def redraw(painter, completely)
     ff = resolved_font_family
     ascent = painter.get_text_ascent(ff, @font_size_val)
+    th = painter.measure_text_height(ff, @font_size_val)
+
+    # Vertical centering when widget is taller than text
+    if @height > th
+      y_offset = (@height - th) / 2.0 + ascent
+    else
+      y_offset = ascent
+    end
+
+    # Horizontal alignment
     x_offset = 0.0
     if @text_align == TEXT_ALIGN_CENTER
       text_w = painter.measure_text_width(@text, ff, @font_size_val)
@@ -100,7 +108,7 @@ class Text < Widget
       end
     end
     c = @custom_color ? @color_val : $theme.text_color_for_kind(@kind_val)
-    painter.draw_text(@text, x_offset, ascent, ff, @font_size_val, c, @font_weight, @font_slant)
+    painter.draw_text(@text, x_offset, y_offset, ff, @font_size_val, c, @font_weight, @font_slant)
   end
 end
 

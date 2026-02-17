@@ -1429,6 +1429,10 @@ module Konpeito
       # Score how well an argument type matches an RBS parameter type
       def overload_match_score(arg_type, rbs_param_type)
         case rbs_param_type
+        when RBS::Types::Alias
+          # Resolve common aliases: ::int -> Integer, ::string -> String, etc.
+          resolved = resolve_rbs_alias(rbs_param_type)
+          return overload_match_score(arg_type, resolved) if resolved
         when RBS::Types::ClassInstance
           param_name = rbs_param_type.name.name
           if arg_type.is_a?(Types::ClassInstance)
@@ -1442,6 +1446,24 @@ module Konpeito
         end
 
         0
+      end
+
+      # Resolve RBS type aliases to their underlying ClassInstance types
+      def resolve_rbs_alias(alias_type)
+        alias_name = alias_type.name.name
+        class_name = case alias_name
+                     when :int then :Integer
+                     when :string then :String
+                     when :float then :Float
+                     when :bool then :Bool
+                     when :boolish then :Bool
+                     end
+        return nil unless class_name
+        RBS::Types::ClassInstance.new(
+          name: RBS::TypeName.new(name: class_name, namespace: RBS::Namespace.root),
+          args: [],
+          location: alias_type.location
+        )
       end
 
       def numeric_compatible?(arg_name, param_name)

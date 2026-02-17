@@ -10,7 +10,7 @@ require_relative "../../lib/konpeito/ui/castella"
 $theme = Theme.new
 
 # Constants (DAWD_ prefix to avoid name collision)
-DAWD_MD_TEXT = "# Castella UI\n\nA cross-platform **desktop UI framework** built with Konpeito.\n\n## Features\n\n- Reactive state management\n- Rich widget library\n- Theme support\n\n## Code Example\n\n```ruby\nbutton(\"Click me\", nil) { count += 1 }\n```\n\n## Flowchart\n\n```mermaid\ngraph LR\n    A[Ruby Code] --> B(Konpeito Compiler)\n    B --> C[JVM Bytecode]\n    C --> D{JWM + Skija}\n    D --> E[Desktop App]\n```\n\nBuilt with Konpeito + JWM + Skija."
+DAWD_MD_TEXT = "# Castella UI\n\nA cross-platform **desktop UI framework** built with Konpeito.\n\n## Features\n\n- Reactive state management\n- Rich widget library\n- Theme support\n\n## Code Example\n\n```ruby\nbutton(\"Click me\") { count += 1 }\n```\n\n## Flowchart\n\n```mermaid\ngraph LR\n    A[Ruby Code] --> B(Konpeito Compiler)\n    B --> C[JVM Bytecode]\n    C --> D{JWM + Skija}\n    D --> E[Desktop App]\n```\n\nBuilt with Konpeito + JWM + Skija."
 
 DAWD_IMAGE_URL = "https://picsum.photos/id/237/280/180"
 
@@ -101,53 +101,44 @@ class DslAllWidgetsDemo < Component
     counter_ref = @counter
     count_text = @counter.value.to_s
 
-    # Reusable text styles
-    section_title = s.font_size(18.0).color(0xFFC0CAF5).bold
-
-    column(s.spacing(2.0)) {
-      text("Text Styles", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Text Styles", font_size: 18.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      text("Large heading text", s.font_size(20.0).color(0xFF7AA2F7))
-      text("Normal body text with default styling", s.font_size(14.0))
-      text("Small muted text", s.font_size(11.0).color(0xFF565F89))
+      text("Large heading text", font_size: 20.0, color: 0xFF7AA2F7)
+      text("Normal body text with default styling", font_size: 14.0)
+      text("Small muted text", font_size: 11.0, color: 0xFF565F89)
       spacer.fixed_height(8.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("Button Kinds", section_title)
+      text("Button Kinds", font_size: 18.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      row(nil) {
-        button("Normal", nil)
+      row(height: 36.0) {
+        button("Normal")
         spacer.fixed_width(6.0)
-        button("Info", s.kind(1))
+        button("Info", kind: 1)
         spacer.fixed_width(6.0)
-        button("Success", s.kind(2))
+        button("Success", kind: 2)
         spacer.fixed_width(6.0)
-        button("Warning", s.kind(3))
+        button("Warning", kind: 3)
         spacer.fixed_width(6.0)
-        button("Danger", s.kind(4))
-        spacer
-      }.fixed_height(36.0)
+        button("Danger", kind: 4)
+      }
       spacer.fixed_height(8.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("Counter", section_title)
+      text("Counter", font_size: 18.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      row(nil) {
-        button("-", nil).on_click { counter_ref -= 1 }
+      row(height: 36.0) {
+        button("-") { counter_ref -= 1 }
         spacer.fixed_width(8.0)
-        column(s.width(40.0)) {
-          spacer
-          text(count_text, s.font_size(20.0).color(0xFF9ECE6A).bold)
-          spacer
-        }
+        text(count_text, font_size: 20.0, color: 0xFF9ECE6A, bold: true, align: :center)
         spacer.fixed_width(8.0)
-        button("+", s.kind(1)).on_click { counter_ref += 1 }
-        spacer
-      }.fixed_height(36.0)
+        button("+", kind: 1) { counter_ref += 1 }
+      }
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 2: Input ──
@@ -155,107 +146,100 @@ class DslAllWidgetsDemo < Component
     is = @input_state
     ms = @mli_state
 
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
-    column(s.spacing(2.0)) {
-      text("Single-line Input", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Single-line Input", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      text_input(is, nil).tab_index(1)
+      text_input(is).tab_index(1)
       spacer.fixed_height(12.0)
 
-      text("Multi-line Input", section_title)
+      text("Multi-line Input", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      multiline_input(ms, nil).font_size(14).wrap_text(true).fixed_height(100.0).tab_index(2)
+      multiline_input(ms).font_size(14).wrap_text(true).fixed_height(100.0).tab_index(2)
       spacer.fixed_height(12.0)
 
-      text("Checkbox", section_title)
+      text("Checkbox", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      checkbox("Enable notifications", nil).checked(true)
-      checkbox("Dark mode", nil)
+      checkbox("Enable notifications").checked(true)
+      checkbox("Dark mode")
       spacer.fixed_height(12.0)
 
-      text("Radio Buttons", section_title)
+      text("Radio Buttons", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      radio_buttons(["Small", "Medium", "Large"], nil)
+      radio_buttons(["Small", "Medium", "Large"])
       spacer.fixed_height(12.0)
 
-      text("Switch", section_title)
+      text("Switch", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       switch_toggle
       spacer.fixed_height(12.0)
 
-      text("Slider", section_title)
+      text("Slider", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      slider(0.0, 100.0, nil).with_value(50.0)
+      slider(0.0, 100.0).with_value(50.0)
       spacer.fixed_height(12.0)
 
-      text("Progress Bar", section_title)
+      text("Progress Bar", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       progress_bar.with_value(0.4)
       spacer.fixed_height(4.0)
       progress_bar.with_value(0.75).fill_color(0xFF9ECE6A)
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 3: Layout ──
   def build_layout_tab
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
-    column(s.spacing(2.0)) {
-      text("Row / Column Nesting", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Row / Column Nesting", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      row(s.spacing(8.0).height(120.0)) {
-        container(nil) {
-          column(s.spacing(4.0)) {
-            text("Left Column", s.font_size(13.0).color(0xFF7AA2F7))
-            text("Item A", s.font_size(12.0))
-            text("Item B", s.font_size(12.0))
-            text("Item C", s.font_size(12.0))
+      row(spacing: 8.0, height: 120.0) {
+        container {
+          column(spacing: 4.0) {
+            text("Left Column", font_size: 13.0, color: 0xFF7AA2F7)
+            text("Item A", font_size: 12.0)
+            text("Item B", font_size: 12.0)
+            text("Item C", font_size: 12.0)
           }
         }
         spacer.fixed_width(8.0)
-        container(nil) {
-          column(s.spacing(4.0)) {
-            text("Right Column", s.font_size(13.0).color(0xFF7AA2F7))
-            text("Item X", s.font_size(12.0))
-            text("Item Y", s.font_size(12.0))
-            text("Item Z", s.font_size(12.0))
+        container {
+          column(spacing: 4.0) {
+            text("Right Column", font_size: 13.0, color: 0xFF7AA2F7)
+            text("Item X", font_size: 12.0)
+            text("Item Y", font_size: 12.0)
+            text("Item Z", font_size: 12.0)
           }
         }
       }
       spacer.fixed_height(12.0)
 
-      text("Spacer (push apart)", section_title)
+      text("Spacer (push apart)", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      container(nil) {
-        row(s.height(30.0)) {
-          text("Left", s.font_size(14.0))
+      container {
+        row(height: 30.0) {
+          text("Left", font_size: 14.0)
           spacer
-          text("Right", s.font_size(14.0))
+          text("Right", font_size: 14.0)
         }
       }
       spacer.fixed_height(12.0)
 
-      text("Container with border", section_title)
+      text("Container with border", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      container(nil) {
-        column(s.spacing(4.0)) {
-          text("This content is wrapped in a Container.", s.font_size(13.0))
-          text("Containers add a rounded border and padding.", s.font_size(13.0).color(0xFF565F89))
+      container {
+        column(spacing: 4.0) {
+          text("This content is wrapped in a Container.", font_size: 13.0)
+          text("Containers add a rounded border and padding.", font_size: 13.0, color: 0xFF565F89)
         }
       }
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 4: Data ──
   def build_data_tab
     ts = @tree_state
     cs = @cal_state
-
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-    muted = s.font_size(11.0).color(0xFF565F89)
 
     col_names = ["Name", "Dept", "Role", "Salary"]
     col_widths = [130.0, 100.0, 130.0, 80.0]
@@ -272,75 +256,72 @@ class DslAllWidgetsDemo < Component
       ["Jack Moore", "Sales", "Account Exec", "70000"]
     ]
 
-    column(s.spacing(2.0)) {
-      text("DataTable", section_title)
-      text("Click headers to sort", muted)
+    column(spacing: 2.0, scrollable: true) {
+      text("DataTable", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
+      text("Click headers to sort", font_size: 11.0, color: 0xFF565F89)
       spacer.fixed_height(4.0)
-      data_table(col_names, col_widths, rows, nil).fixed_height(280.0)
+      data_table(col_names, col_widths, rows).fixed_height(280.0)
       spacer.fixed_height(12.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("Tree", section_title)
-      text("Click nodes to select, arrows to expand", muted)
-      row(s.height(36.0)) {
-        button("Expand All", nil).on_click(-> { ts.expand_all })
+      text("Tree", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
+      text("Click nodes to select, arrows to expand", font_size: 11.0, color: 0xFF565F89)
+      row(height: 36.0) {
+        button("Expand All") { ts.expand_all }
         spacer.fixed_width(6.0)
-        button("Collapse All", nil).on_click(-> { ts.collapse_all })
-        spacer
+        button("Collapse All") { ts.collapse_all }
       }
       tree(ts)
       spacer.fixed_height(12.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("Calendar", section_title)
-      text("Click a date to select", muted)
+      text("Calendar", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
+      text("Click a date to select", font_size: 11.0, color: 0xFF565F89)
       spacer.fixed_height(4.0)
-      row(s.height(310.0)) {
+      row(height: 310.0) {
         spacer
         calendar(cs)
         spacer
       }
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 5: Content ──
   def build_content_tab
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
-    modal_body = column(nil) {
-      text("Hello from a Modal!", section_title)
+    modal_body = column(spacing: 4.0) {
+      text("Hello from a Modal!", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(8.0)
-      text("Click X or backdrop to close.", s.font_size(13.0).color(0xFF565F89))
+      text("Click X or backdrop to close.", font_size: 13.0, color: 0xFF565F89)
       spacer.fixed_height(8.0)
-      text_input(InputState.new("Modal input field..."), nil)
-    }.spacing(4.0)
+      text_input(InputState.new("Modal input field..."))
+    }
     m = Modal.new(modal_body).title("Sample Dialog").dialog_size(320, 200)
 
-    main = column(s.spacing(2.0)) {
-      text("Markdown", section_title)
+    main = column(spacing: 2.0, scrollable: true) {
+      text("Markdown", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      markdown_text(DAWD_MD_TEXT, nil)
+      markdown_text(DAWD_MD_TEXT)
       spacer.fixed_height(12.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("NetImage (from URL)", section_title)
+      text("NetImage (from URL)", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      net_image(DAWD_IMAGE_URL, nil)
+      net_image(DAWD_IMAGE_URL)
       spacer.fixed_height(12.0)
       divider
       spacer.fixed_height(8.0)
 
-      text("Modal Dialog", section_title)
+      text("Modal Dialog", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      button("Open Modal", nil).on_click { m.open_modal }
+      button("Open Modal") { m.open_modal }
       spacer
-    }.scrollable
+    }
 
-    box(nil) {
+    box {
       embed(main)
       embed(m)
     }
@@ -356,11 +337,11 @@ class DslAllWidgetsDemo < Component
     aco = @anim_cubic_out
     ab = @anim_bounce
 
-    column(s.spacing(8.0)) {
-      text("Animation", s.font_size(18.0).color(0xFFC0CAF5).bold)
-      text("Click the button to animate bars with different easing", s.font_size(12.0).color(0xFF565F89))
+    column(spacing: 8.0) {
+      text("Animation", font_size: 18.0, color: 0xFFC0CAF5, bold: true, height: 24.0)
+      text("Click the button to animate bars with different easing", font_size: 12.0, color: 0xFF565F89, height: 16.0)
       spacer.fixed_height(8.0)
-      button("Animate!", s.kind(1)).on_click {
+      button("Animate!", kind: 1, height: 36.0) {
         if @anim_toggled
           al.set(0.0)
           ai.set(0.0)
@@ -394,8 +375,6 @@ class DslAllWidgetsDemo < Component
 
   # ── Tab 7: Charts 1 ──
   def build_charts1_tab
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
     sales = [120.0, 200.0, 150.0, 300.0, 250.0, 180.0]
     costs = [80.0, 120.0, 100.0, 180.0, 160.0, 140.0]
@@ -404,8 +383,8 @@ class DslAllWidgetsDemo < Component
     temp = [5.0, 7.0, 12.0, 18.0, 22.0, 26.0]
     rain = [40.0, 35.0, 45.0, 30.0, 25.0, 20.0]
 
-    column(s.spacing(2.0)) {
-      text("Bar Chart", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Bar Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       bar_chart(months, [sales, costs], ["Sales", "Costs"])
         .title("Monthly Sales vs Costs")
@@ -415,19 +394,17 @@ class DslAllWidgetsDemo < Component
       divider
       spacer.fixed_height(8.0)
 
-      text("Line Chart", section_title)
+      text("Line Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       line_chart(labels, [temp, rain], ["Temperature (C)", "Rainfall (mm)"])
         .title("Weather Trends")
         .fixed_height(280.0)
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 8: Charts 2 ──
   def build_charts2_tab
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
     pie_labels = ["Engineering", "Design", "Marketing", "Sales", "Ops"]
     pie_values = [35.0, 20.0, 18.0, 15.0, 12.0]
 
@@ -435,10 +412,10 @@ class DslAllWidgetsDemo < Component
     revenue = [120.0, 180.0, 150.0, 220.0]
     expenses = [80.0, 100.0, 90.0, 130.0]
 
-    column(s.spacing(2.0)) {
-      text("Pie Chart", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Pie Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      row(s.spacing(8.0).height(300.0)) {
+      row(spacing: 8.0, height: 300.0) {
         pie_chart(pie_labels, pie_values)
           .title("Budget")
           .fixed_height(280.0)
@@ -451,19 +428,17 @@ class DslAllWidgetsDemo < Component
       divider
       spacer.fixed_height(8.0)
 
-      text("Area Chart", section_title)
+      text("Area Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       area_chart(q_labels, [revenue, expenses], ["Revenue", "Expenses"])
         .title("Quarterly Financials")
         .fixed_height(280.0)
       spacer
-    }.scrollable
+    }
   end
 
   # ── Tab 9: Charts 3 ──
   def build_charts3_tab
-    section_title = s.font_size(16.0).color(0xFFC0CAF5).bold
-
     sc_x1 = [1.0, 2.5, 3.0, 4.5, 5.0, 6.5, 7.0]
     sc_y1 = [2.0, 4.0, 3.5, 7.0, 5.5, 8.0, 6.0]
     sc_x2 = [1.5, 3.0, 4.0, 5.5, 6.0, 7.5, 8.5]
@@ -483,8 +458,8 @@ class DslAllWidgetsDemo < Component
       [1.0, 2.0, 3.0, 6.0, 9.0]
     ]
 
-    column(s.spacing(2.0)) {
-      text("Scatter Chart", section_title)
+    column(spacing: 2.0, scrollable: true) {
+      text("Scatter Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       scatter_chart([sc_x1, sc_x2], [sc_y1, sc_y2], ["Series A", "Series B"])
         .title("Scatter Plot")
@@ -493,7 +468,7 @@ class DslAllWidgetsDemo < Component
       divider
       spacer.fixed_height(8.0)
 
-      text("Stacked Bar Chart", section_title)
+      text("Stacked Bar Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       stacked_bar_chart(quarters, [prod_a, prod_b, prod_c], ["Product A", "Product B", "Product C"])
         .title("Quarterly Sales (Stacked)")
@@ -503,9 +478,9 @@ class DslAllWidgetsDemo < Component
       divider
       spacer.fixed_height(8.0)
 
-      text("Gauge Charts", section_title)
+      text("Gauge Charts", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
-      row(s.spacing(8.0).height(230.0)) {
+      row(spacing: 8.0, height: 230.0) {
         gauge_chart(72.0, 0.0, 100.0)
           .title("CPU")
           .unit("%")
@@ -520,14 +495,14 @@ class DslAllWidgetsDemo < Component
       divider
       spacer.fixed_height(8.0)
 
-      text("Heatmap Chart", section_title)
+      text("Heatmap Chart", font_size: 16.0, color: 0xFFC0CAF5, bold: true)
       spacer.fixed_height(4.0)
       heatmap_chart(hm_x, hm_y, hm_data)
         .title("Activity Heatmap")
         .margins(40, 60, 50, 60)
         .fixed_height(260.0)
       spacer
-    }.scrollable
+    }
   end
 
   # ── Main View ──
@@ -545,7 +520,7 @@ class DslAllWidgetsDemo < Component
     labels = ["Basic", "Input", "Layout", "Data", "Content", "Animate", "Charts 1", "Charts 2", "Charts 3"]
     contents = [tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9]
 
-    column(nil) {
+    column {
       tabs(labels, contents)
     }
   end

@@ -25,6 +25,14 @@ class Column < Layout
   #: () -> Column
   def scrollable
     @is_scrollable = true
+    # Retroactively downgrade existing EXPANDING children to CONTENT
+    i = 0
+    while i < @children.length
+      if @children[i].get_height_policy == EXPANDING
+        @children[i].set_height_policy(CONTENT)
+      end
+      i = i + 1
+    end
     self
   end
 
@@ -60,6 +68,19 @@ class Column < Layout
     update
   end
 
+  # Override add: auto-downgrade EXPANDING height to CONTENT in scrollable Column
+  #: (untyped w) -> Column
+  def add(w)
+    if w == nil
+      return self
+    end
+    if @is_scrollable && w.get_height_policy == EXPANDING
+      w.set_height_policy(CONTENT)
+    end
+    super(w)
+    self
+  end
+
   #: (untyped painter) -> Size
   def measure(painter)
     total_h = 0.0
@@ -75,6 +96,9 @@ class Column < Layout
     Size.new(max_w, total_h)
   end
 
+  # Unified layout: two-pass flex distribution + scroll offset.
+  # With approach C (auto-downgrade), scrollable containers have no EXPANDING
+  # children, so flex distribution is a no-op and content stacks sequentially.
   #: (untyped painter) -> void
   def relocate_children(painter)
     # Account for padding
@@ -90,23 +114,28 @@ class Column < Layout
     remaining = inner_h
     expanding_total_flex = 0
 
-    # First pass: measure FIXED/CONTENT children, collect EXPANDING
-    # In a Column, non-FIXED children fill the column width (for centering, word-wrap, etc.)
+    # First pass: measure CONTENT/FIXED children, collect EXPANDING flex totals
     i = 0
     while i < @children.length
       c = @children[i]
       if c.get_height_policy != EXPANDING
-        # Set width before measure so word-wrapping can calculate line count
+        # Set width before measure (for word-wrap, centering, etc.)
         if c.get_width_policy != FIXED
           c.resize_wh(inner_w, c.get_height)
         end
         cs = c.measure(painter)
-        if c.get_width_policy == FIXED
-          c.resize_wh(cs.width, cs.height)
+        # Use explicit height for FIXED, measured height for CONTENT
+        if c.get_height_policy == FIXED
+          child_h = c.get_height
         else
-          c.resize_wh(inner_w, cs.height)
+          child_h = cs.height
         end
-        remaining = remaining - cs.height
+        if c.get_width_policy == FIXED
+          c.resize_wh(cs.width, child_h)
+        else
+          c.resize_wh(inner_w, child_h)
+        end
+        remaining = remaining - child_h
       else
         expanding_total_flex = expanding_total_flex + c.get_flex
       end
@@ -118,7 +147,7 @@ class Column < Layout
       remaining = 0.0
     end
 
-    # Second pass: distribute remaining space to EXPANDING children, position all
+    # Second pass: distribute remaining space to EXPANDING, position all
     cy = @y + @pad_top
     if @is_scrollable
       cy = cy - @scroll_offset

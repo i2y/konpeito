@@ -23,8 +23,6 @@ class Input < Widget
     @use_theme = true
     @radius = 4.0
     @focusable = true
-    @width_policy = EXPANDING
-    @height_policy = CONTENT
     @pad_top = 8.0
     @pad_right = 12.0
     @pad_bottom = 8.0

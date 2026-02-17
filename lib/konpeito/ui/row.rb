@@ -22,6 +22,14 @@ class Row < Layout
   #: () -> Row
   def scrollable
     @is_scrollable = true
+    # Retroactively downgrade existing EXPANDING children to CONTENT
+    i = 0
+    while i < @children.length
+      if @children[i].get_width_policy == EXPANDING
+        @children[i].set_width_policy(CONTENT)
+      end
+      i = i + 1
+    end
     self
   end
 
@@ -57,6 +65,19 @@ class Row < Layout
     update
   end
 
+  # Override add: auto-downgrade EXPANDING width to CONTENT in scrollable Row
+  #: (untyped w) -> Row
+  def add(w)
+    if w == nil
+      return self
+    end
+    if @is_scrollable && w.get_width_policy == EXPANDING
+      w.set_width_policy(CONTENT)
+    end
+    super(w)
+    self
+  end
+
   #: (untyped painter) -> Size
   def measure(painter)
     total_w = 0.0
@@ -72,6 +93,9 @@ class Row < Layout
     Size.new(total_w, max_h)
   end
 
+  # Unified layout: two-pass flex distribution + scroll offset.
+  # With approach C (auto-downgrade), scrollable containers have no EXPANDING
+  # width children, so flex distribution is a no-op and content stacks sequentially.
   #: (untyped painter) -> void
   def relocate_children(painter)
     # Account for padding
@@ -87,22 +111,28 @@ class Row < Layout
     remaining = inner_w
     expanding_total_flex = 0
 
-    # First pass: measure FIXED/CONTENT children, collect EXPANDING
+    # First pass: measure CONTENT/FIXED children, collect EXPANDING flex totals
     i = 0
     while i < @children.length
       c = @children[i]
       if c.get_width_policy != EXPANDING
         # Set height before measure so height-dependent layouts work
-        if c.get_height_policy == EXPANDING
+        if c.get_height_policy != FIXED
           c.resize_wh(c.get_width, inner_h)
         end
         cs = c.measure(painter)
-        if c.get_height_policy == EXPANDING
-          c.resize_wh(cs.width, inner_h)
+        # Use explicit width for FIXED, measured width for CONTENT
+        if c.get_width_policy == FIXED
+          child_w = c.get_width
         else
-          c.resize_wh(cs.width, cs.height)
+          child_w = cs.width
         end
-        remaining = remaining - cs.width
+        if c.get_height_policy == FIXED
+          c.resize_wh(child_w, c.get_height)
+        else
+          c.resize_wh(child_w, inner_h)
+        end
+        remaining = remaining - child_w
       else
         expanding_total_flex = expanding_total_flex + c.get_flex
       end
@@ -114,7 +144,7 @@ class Row < Layout
       remaining = 0.0
     end
 
-    # Second pass: distribute remaining space, position all
+    # Second pass: distribute remaining space to EXPANDING, position all
     cx = @x + @pad_left
     if @is_scrollable
       cx = cx - @scroll_offset
@@ -130,7 +160,8 @@ class Row < Layout
         end
         c.resize_wh(w, inner_h)
       else
-        if c.get_height_policy == EXPANDING
+        # In a Row, non-FIXED height children fill the row height
+        if c.get_height_policy != FIXED
           c.resize_wh(c.get_width, inner_h)
         end
       end

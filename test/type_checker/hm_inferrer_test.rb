@@ -133,6 +133,47 @@ class HMInferrerTest < Minitest::Test
   end
 
   # ==============================================
+  # Overload resolution: RBS alias (::int, ::string) handling
+  # ==============================================
+
+  def test_overload_array_index_assignment
+    # Array#[]= has overloads with ::int (RBS alias) as first param.
+    # The correct overload (int, Elem) should be selected over (Range, Array).
+    code = <<-RUBY
+      arr = [nil, nil, nil]
+      arr[0] = [1, 2]
+    RUBY
+    hm, _env = infer(code)
+    assert_empty hm.errors
+  end
+
+  # ==============================================
+  # Literal type compatibility
+  # ==============================================
+
+  def test_integer_literal_compatible_with_integer
+    # Integer literals (e.g., from <=>) should be compatible with Integer
+    code = <<-RUBY
+      def compare(a, b)
+        cmp = (a <=> b)
+        if cmp == nil
+          cmp = 0
+        end
+        cmp
+      end
+    RUBY
+    hm, _env = infer(code)
+    assert_empty hm.errors
+  end
+
+  def test_string_literal_type
+    # String literal values should be compatible with String
+    hm, env = infer('x = "hello"')
+    assert_equal Konpeito::TypeChecker::Types::STRING, hm.finalize(env[:x].type)
+    assert_empty hm.errors
+  end
+
+  # ==============================================
   # Flow-sensitive type narrowing tests
   # ==============================================
 

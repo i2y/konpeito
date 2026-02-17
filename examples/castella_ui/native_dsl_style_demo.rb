@@ -30,58 +30,46 @@ class StyleDemoComponent < Component
     card_body_space = Style.new.spacing(8.0)
     card_body = card_body_pad + card_body_space
 
-    heading = s.font_size(16.0).color(0xFF7AA2F7)
-    body_text = s.font_size(14.0).color(0xFFC0CAF5)
-    body_muted = s.font_size(13.0).color(0xFFA9B1D6)
-    muted = s.font_size(12.0).color(0xFF565F89)
-    accent = s.font_size(14.0).color(0xFFBB9AF7)
-    badge_green = s.font_size(12.0).color(0xFF9ECE6A)
-
     header_row = Style.new.fixed_height(32.0)
     action_row = Style.new.fixed_height(40.0)
 
     scroll_style = Style.new.scrollable
     scroll_page = page_style + scroll_style
     column(scroll_page) {
-      text("Style Composition Demo", s.font_size(22.0).color(0xFFC0CAF5))
-      text("Styles combined with + operator", s.font_size(13.0).color(0xFF565F89))
+      text("Style Composition Demo", font_size: 22.0, color: 0xFFC0CAF5)
+      text("Styles combined with + operator", font_size: 13.0, color: 0xFF565F89)
 
       divider
 
       container(card_style) {
         column(card_body) {
           row(header_row) {
-            text("Profile", heading)
+            text("Profile", font_size: 16.0, color: 0xFF7AA2F7)
             spacer
-            text("Active", badge_green)
+            text("Active", font_size: 12.0, color: 0xFF9ECE6A)
           }
           divider
-          text("Taro Yamada", body_text)
-          text("Ruby developer", muted)
+          text("Taro Yamada", font_size: 14.0, color: 0xFFC0CAF5)
+          text("Ruby developer", font_size: 12.0, color: 0xFF565F89)
         }
       }
 
       container(card_style) {
         column(card_body) {
           row(header_row) {
-            text("Stats", heading)
+            text("Stats", font_size: 16.0, color: 0xFF7AA2F7)
             spacer
           }
           divider
-          row(nil) {
-            text("Likes:", body_muted)
+          row {
+            text("Likes:", font_size: 13.0, color: 0xFFA9B1D6)
             spacer.fixed_width(8.0)
-            text(likes_text, accent)
+            text(likes_text, font_size: 14.0, color: 0xFFBB9AF7)
           }
           row(action_row) {
-            button(" +1 ", s.font_size(14.0)).on_click {
-              @likes += 1
-            }
+            button(" +1 ", font_size: 14.0) { @likes += 1 }
             spacer.fixed_width(8.0)
-            button(" Reset ", s.font_size(14.0)).on_click {
-              @likes.set(0)
-            }
-            spacer
+            button(" Reset ", font_size: 14.0) { @likes.set(0) }
           }
         }
       }
@@ -90,11 +78,11 @@ class StyleDemoComponent < Component
       green_card = card_style + green_border
       container(green_card) {
         column(card_body) {
-          text("About", s.font_size(16.0).color(0xFF9ECE6A))
+          text("About", font_size: 16.0, color: 0xFF9ECE6A)
           divider
-          text("Styles are plain Style objects.", body_muted)
-          text("Combine them with + for reuse.", body_muted)
-          text("card_style + Style.border_color(green)", s.font_size(11.0).color(0xFF565F89))
+          text("Styles are plain Style objects.", font_size: 13.0, color: 0xFFA9B1D6)
+          text("Combine them with + for reuse.", font_size: 13.0, color: 0xFFA9B1D6)
+          text("card_style + Style.border_color(green)", font_size: 11.0, color: 0xFF565F89)
         }
       }
 

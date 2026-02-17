@@ -135,7 +135,7 @@ The JVM backend supports seamless Java interop — call Java libraries directly 
 
 ## Castella UI
 
-A reactive GUI framework for the JVM backend, powered by [JWM](https://github.com/nicenote/jwm) + [Skija](https://github.com/nicenote/skija).
+A reactive GUI framework for the JVM backend, powered by [JWM](https://github.com/HumbleUI/JWM) + [Skija](https://github.com/HumbleUI/Skija).
 
 ### DSL
 

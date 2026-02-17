@@ -137,7 +137,7 @@ class AllWidgetsDemo < Component
         Spacer().fixed_width(8.0),
         Text(count_text).font_size(20.0).color(0xFF9ECE6A).bold.align(TEXT_ALIGN_CENTER),
         Spacer().fixed_width(8.0),
-        Button("+").kind(1).on_click { counter_ref += 1 }
+        Button("+").on_click { counter_ref += 1 }
       ).fixed_height(36.0),
       Spacer()
     ).spacing(2.0).scrollable

@@ -50,7 +50,7 @@ class Theme
     @text_on_danger = 0xFF1A1B26
 
     # Kind-specific hover colors
-    @hover_normal = 0xFF414868
+    @hover_normal = 0xFF89B4FA
     @hover_info = 0xFF89B4FA
     @hover_success = 0xFFB9F27C
     @hover_warning = 0xFFFFD280
@@ -462,7 +462,7 @@ def theme_light
   t.hover_success = 0xFF567236
   t.hover_warning = 0xFFA87020
   t.hover_danger = 0xFFA35060
-  t.hover_normal = 0xFFC4C5CB
+  t.hover_normal = 0xFF4A6EA0
   t.scrollbar_bg = 0xFFC4C5CB
   t.scrollbar_fg = 0xFF9699A3
   t.bg_selected = 0x8034548A
@@ -496,7 +496,7 @@ def theme_nord
   t.hover_success = 0xFFB4D89C
   t.hover_warning = 0xFFF5D9A0
   t.hover_danger = 0xFFD08770
-  t.hover_normal = 0xFF4C566A
+  t.hover_normal = 0xFF9DD0DE
   t
 end
 
@@ -527,7 +527,7 @@ def theme_dracula
   t.hover_success = 0xFF69FF94
   t.hover_warning = 0xFFFFFFA5
   t.hover_danger = 0xFFFF6E6E
-  t.hover_normal = 0xFF6272A4
+  t.hover_normal = 0xFFD0ABFF
   t
 end
 
@@ -558,6 +558,6 @@ def theme_catppuccin
   t.hover_success = 0xFFB9F0B4
   t.hover_warning = 0xFFFFF0CC
   t.hover_danger = 0xFFFFA0B8
-  t.hover_normal = 0xFF585B70
+  t.hover_normal = 0xFFDEC0FF
   t
 end

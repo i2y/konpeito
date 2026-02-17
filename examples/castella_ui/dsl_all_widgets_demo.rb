@@ -135,7 +135,7 @@ class DslAllWidgetsDemo < Component
         spacer.fixed_width(8.0)
         text(count_text, font_size: 20.0, color: 0xFF9ECE6A, bold: true, align: :center)
         spacer.fixed_width(8.0)
-        button("+", kind: 1) { counter_ref += 1 }
+        button("+") { counter_ref += 1 }
       }
       spacer
     }

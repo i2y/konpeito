@@ -232,7 +232,7 @@ column(spacing: 12.0) {
 
 ### Calculator Demo
 
-A port of the original Python Castella calculator. Flex layout, button kinds (`KIND_DANGER`, `KIND_WARNING`, `KIND_SUCCESS`), and reactive `state()` — all in ~90 lines:
+A port of the original Python Castella calculator. Flex layout, button kinds (`KIND_DANGER`, `KIND_WARNING`, `KIND_SUCCESS`), reactive `state()`, and class methods called from instance method callbacks — all in ~130 lines:
 
 <p align="center">
   <img src="docs/screenshots/calc.png" alt="Calculator" width="320" />
@@ -247,6 +247,80 @@ class Calc < Component
     @current_op = ""
     @is_refresh = true
   end
+
+  # --- Calculator logic ---
+
+  def press_number(label)
+    if @display.value == "0" || @is_refresh
+      @display.set(label)
+    else
+      @display.set(@display.value + label)
+    end
+    @is_refresh = false
+  end
+
+  def press_dot
+    if @is_refresh
+      @display.set("0.")
+      @is_refresh = false
+      return
+    end
+    if !@display.value.include?(".")
+      @display.set(@display.value + ".")
+    end
+  end
+
+  def all_clear
+    @display.set("0")
+    @lhs = 0.0
+    @current_op = ""
+    @is_refresh = true
+  end
+
+  def self.calc(lhs, op, rhs)
+    if op == "+"
+      lhs + rhs
+    elsif op == "-"
+      lhs - rhs
+    elsif op == "\u00D7"
+      lhs * rhs
+    elsif op == "\u00F7"
+      if rhs == 0.0
+        0.0
+      else
+        lhs / rhs
+      end
+    else
+      rhs
+    end
+  end
+
+  def self.format_result(val)
+    if val == val.to_i.to_f
+      val.to_i.to_s
+    else
+      val.to_s
+    end
+  end
+
+  def press_operator(new_op)
+    rhs = @display.value.to_f
+    if @current_op != ""
+      result = Calc.calc(@lhs, @current_op, rhs)
+      @display.set(Calc.format_result(result))
+      @lhs = result
+    else
+      @lhs = rhs
+    end
+    if new_op == "="
+      @current_op = ""
+    else
+      @current_op = new_op
+    end
+    @is_refresh = true
+  end
+
+  # --- View ---
 
   def view
     grid = Style.new.spacing(4.0)
@@ -268,7 +342,18 @@ class Calc < Component
         button("9", btn) { press_number("9") }
         button("\u00D7", op) { press_operator("\u00D7") }
       }
-      # ... digit rows 4-5-6, 1-2-3
+      row(grid) {
+        button("4", btn) { press_number("4") }
+        button("5", btn) { press_number("5") }
+        button("6", btn) { press_number("6") }
+        button("-", op) { press_operator("-") }
+      }
+      row(grid) {
+        button("1", btn) { press_number("1") }
+        button("2", btn) { press_number("2") }
+        button("3", btn) { press_number("3") }
+        button("+", op) { press_operator("+") }
+      }
       row(grid) {
         button("0", wide) { press_number("0") }
         button(".", btn) { press_dot }

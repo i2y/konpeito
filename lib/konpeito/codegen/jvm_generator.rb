@@ -3278,6 +3278,24 @@ module Konpeito
             instructions << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
                               "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
             type = :value
+          # Unbox Object to match expected primitive return type (static methods only).
+          # Instance method descriptors are always normalized to Object return, so
+          # unboxing would be incorrect — the value might not be the expected wrapper type.
+          elsif !@generating_instance_method && @current_function_return_type == :double && type == :value
+            instructions << { "op" => "checkcast", "type" => "java/lang/Double" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Double",
+                              "name" => "doubleValue", "descriptor" => "()D" }
+            type = :double
+          elsif !@generating_instance_method && @current_function_return_type == :i64 && type == :value
+            instructions << { "op" => "checkcast", "type" => "java/lang/Long" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Long",
+                              "name" => "longValue", "descriptor" => "()J" }
+            type = :i64
+          elsif !@generating_instance_method && @current_function_return_type == :i8 && type == :value
+            instructions << { "op" => "checkcast", "type" => "java/lang/Boolean" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
+                              "name" => "booleanValue", "descriptor" => "()Z" }
+            type = :i8
           end
 
           instructions << case type
@@ -4029,6 +4047,33 @@ module Konpeito
 
           @method_descriptors[key] = "(#{params_desc})#{type_to_descriptor(ret_type)}"
         end
+
+        # Pre-register singleton (class) method descriptors
+        (class_def.singleton_methods || []).each do |method_name|
+          key = "#{class_name}.#{method_name}"
+          next if @method_descriptors.key?(key)
+
+          func = find_class_singleton_method(class_name, method_name.to_s)
+          next unless func
+
+          rbs_param_types = resolve_rbs_param_types(class_name, method_name.to_s, true)
+          params_desc = func.params.each_with_index.map do |p, i|
+            rbs_t = rbs_param_types && i < rbs_param_types.size ? rbs_param_types[i] : nil
+            t = (rbs_t && rbs_t != :value) ? rbs_t : param_type(p)
+            t = :value if t == :void
+            type_to_descriptor(t)
+          end.join
+
+          rbs_ret = resolve_rbs_return_type(class_name, method_name.to_s, true)
+          if rbs_ret && rbs_ret != :value
+            ret_type = rbs_ret
+          else
+            frt = function_return_type(func)
+            ret_type = (frt == :void) ? :value : frt
+          end
+
+          @method_descriptors[key] = "(#{params_desc})#{type_to_descriptor(ret_type)}"
+        end
       end
 
       def resolve_class_fields(class_def)
@@ -4407,9 +4452,17 @@ module Konpeito
         @current_generating_func_name = func.name.to_s
         reset_function_state(func)
 
-        # Pre-determine return type so generate_return knows if method returns Object
-        pre_ret = function_return_type(func)
-        @current_function_return_type = (pre_ret == :void) ? :value : pre_ret
+        # Pre-determine return type so generate_return knows if method returns Object.
+        # If a descriptor was pre-registered (from RBS), use its return type to ensure
+        # the generated return instruction matches the pre-registered descriptor.
+        pre_registered = @method_descriptors["#{class_def.name}.#{func.name}"]
+        if pre_registered
+          pre_ret = parse_descriptor_return_type(pre_registered)
+        else
+          pre_ret = function_return_type(func)
+          pre_ret = :value if pre_ret == :void
+        end
+        @current_function_return_type = pre_ret
 
         # Try to resolve param types from RBS if HIR types are unresolved
         rbs_param_types = resolve_rbs_param_types(class_def.name.to_s, func.name.to_s, true)
@@ -4435,9 +4488,36 @@ module Konpeito
           instructions << default_return(ret_type)
         end
 
-        # Build descriptor from actual param types (which may have been corrected from RBS)
-        params_desc = func.params.map { |p| type_to_descriptor(@variable_types[p.name.to_s] || :value) }.join
-        descriptor = "(#{params_desc})#{type_to_descriptor(ret_type)}"
+        # Build descriptor: if pre-registered, use that descriptor directly for consistency.
+        # The pre-registered descriptor was computed from param_type/RBS before code gen,
+        # matching what the call site will use. The code-gen-derived descriptor may differ
+        # because detect_return_type_from_instructions can miss returns in branching code.
+        if pre_registered
+          descriptor = pre_registered
+          # Ensure final return instruction matches the pre-registered return type
+          pre_ret_type = parse_descriptor_return_type(pre_registered)
+          if pre_ret_type != :void && pre_ret_type != :value
+            # Replace trailing void return with typed default return if needed
+            if instructions.last && instructions.last["op"] == "return"
+              instructions.pop
+              case pre_ret_type
+              when :i64
+                instructions << { "op" => "lconst_0" }
+                instructions << { "op" => "lreturn" }
+              when :double
+                instructions << { "op" => "dconst_0" }
+                instructions << { "op" => "dreturn" }
+              when :i8
+                instructions << { "op" => "iconst_0" }
+                instructions << { "op" => "ireturn" }
+              end
+            end
+          end
+        else
+          # Build descriptor from actual param types (which may have been corrected from RBS)
+          params_desc = func.params.map { |p| type_to_descriptor(@variable_types[p.name.to_s] || :value) }.join
+          descriptor = "(#{params_desc})#{type_to_descriptor(ret_type)}"
+        end
 
         # When renaming for conflict avoidance, use prefixed JVM name
         jvm_name = if rename_prefix
@@ -5396,6 +5476,10 @@ module Konpeito
 
         return [] unless target_func
 
+        # Look up the registered descriptor first to determine expected param types
+        registered = @method_descriptors["#{class_name}.#{method_name}"]
+        registered_param_types = registered ? parse_descriptor_param_types(registered) : nil
+
         # Resolve param types: prefer RBS types over HIR types (which may be unresolved TypeVars)
         rbs_param_types = resolve_rbs_param_types(class_name, method_name, true)
 
@@ -5416,18 +5500,17 @@ module Konpeito
             end
             arg_types << :hash
           elsif i < args.size
-            param_t = param_type(param)
-            # Fallback to RBS type if param type is unresolved
-            if param_t == :value && rbs_param_types && i < rbs_param_types.size && rbs_param_types[i] != :value
-              # RBS resolved what HM couldn't — undo typevar fallback
-              @typevar_fallback_count -= 1 if @typevar_fallback_count > 0
-              param_t = rbs_param_types[i]
-            end
-            # Also try inferring from arg itself
-            if param_t == :value
-              arg_var = extract_var_name(args[i])
-              param_t = arg_var ? (@variable_types[arg_var] || :value) : (infer_type_from_hir(args[i]) || :value)
-            end
+            # Use registered descriptor's param type if available (most accurate)
+            param_t = if registered_param_types && i < registered_param_types.size
+                        registered_param_types[i]
+                      else
+                        pt = param_type(param)
+                        if pt == :value && rbs_param_types && i < rbs_param_types.size && rbs_param_types[i] != :value
+                          rbs_param_types[i]
+                        else
+                          pt
+                        end
+                      end
             instructions.concat(load_value(args[i], param_t))
             arg_types << param_t
           else
@@ -5439,7 +5522,6 @@ module Konpeito
         end
 
         # Build descriptor — prefer registered descriptor for consistency
-        registered = @method_descriptors["#{class_name}.#{method_name}"]
         if registered
           descriptor = registered
           ret_type = parse_descriptor_return_type(registered)

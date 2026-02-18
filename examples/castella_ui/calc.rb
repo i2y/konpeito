@@ -51,7 +51,7 @@ class Calc < Component
     @is_refresh = true
   end
 
-  def do_calc(lhs, op, rhs)
+  def self.calc(lhs, op, rhs)
     if op == "+"
       lhs + rhs
     elsif op == "-"
@@ -69,7 +69,7 @@ class Calc < Component
     end
   end
 
-  def format_result(val)
+  def self.format_result(val)
     if val == val.to_i.to_f
       val.to_i.to_s
     else
@@ -80,8 +80,8 @@ class Calc < Component
   def press_operator(new_op)
     rhs = @display.value.to_f
     if @current_op != ""
-      result = do_calc(@lhs, @current_op, rhs)
-      @display.set(format_result(result))
+      result = Calc.calc(@lhs, @current_op, rhs)
+      @display.set(Calc.format_result(result))
       @lhs = result
     else
       @lhs = rhs

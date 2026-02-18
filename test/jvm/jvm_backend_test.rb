@@ -771,6 +771,142 @@ class JVMBackendTest < Minitest::Test
     assert_equal "49", output
   end
 
+  # Class method called from instance method (descriptor pre-registration, with RBS)
+  def test_class_method_from_instance_method
+    source = <<~RUBY
+      class Calculator
+        def self.compute(a, b)
+          a + b
+        end
+
+        def run
+          result = Calculator.compute(10, 20)
+          puts result
+        end
+      end
+
+      c = Calculator.new
+      c.run
+    RUBY
+    rbs = <<~RBS
+      class Calculator
+        def self.compute: (Integer a, Integer b) -> Integer
+        def run: () -> void
+      end
+    RBS
+
+    success, output = compile_and_run(source, rbs: rbs, name: "class_method_from_instance")
+    assert success, "JAR should run successfully: #{output}"
+    assert_includes output.strip, "30"
+  end
+
+  # Class method called from instance method WITHOUT RBS
+  # Reproduces the Castella UI calculator pattern: instance fields (Float, String)
+  # are passed to a class method, causing descriptor mismatch without pre-registration.
+  def test_class_method_from_instance_method_no_rbs
+    source = <<~RUBY
+      class Calc
+        def initialize
+          @lhs = 0.0
+          @current_op = "+"
+        end
+
+        def self.calc(lhs, op, rhs)
+          if op == "+"
+            lhs + rhs
+          elsif op == "-"
+            lhs - rhs
+          else
+            rhs
+          end
+        end
+
+        def run
+          result = Calc.calc(@lhs, @current_op, 5.0)
+          puts result
+        end
+      end
+
+      c = Calc.new
+      c.run
+    RUBY
+
+    success, output = compile_and_run(source, name: "class_method_no_rbs")
+    assert success, "JAR should run successfully: #{output}"
+    assert_includes output.strip, "5.0"
+  end
+
+  # Class method with branching return + format helper (two class methods called from instance)
+  def test_class_method_chain_from_instance
+    source = <<~RUBY
+      class Calc
+        def initialize
+          @value = 10.0
+        end
+
+        def self.double_it(x)
+          x + x
+        end
+
+        def self.format_it(x)
+          x.to_s
+        end
+
+        def run
+          d = Calc.double_it(@value)
+          puts Calc.format_it(d)
+        end
+      end
+
+      c = Calc.new
+      c.run
+    RUBY
+
+    success, output = compile_and_run(source, name: "class_method_chain")
+    assert success, "JAR should run successfully: #{output}"
+    assert_includes output.strip, "20.0"
+  end
+
+  # Instance method returning String must not be unboxed as Double.
+  # Regression test: resolved_font_family returns String, not Double.
+  def test_instance_method_string_return_no_double_unbox
+    source = <<~RUBY
+      class Widget
+        def initialize
+          @font_family = nil
+          @font_size = 14.0
+        end
+
+        def font_family(f)
+          @font_family = f
+        end
+
+        def resolved_font_family
+          if @font_family != nil
+            @font_family
+          else
+            "default"
+          end
+        end
+
+        def describe
+          puts resolved_font_family
+        end
+      end
+
+      w = Widget.new
+      w.describe
+      w.font_family("Arial")
+      w.describe
+    RUBY
+
+    success, output = compile_and_run(source, name: "no_double_unbox")
+    assert success, "JAR should run successfully (no ClassCastException): #{output}"
+    lines = output.strip.split("\n")
+    assert_equal "default", lines[0]
+    assert_equal "Arial", lines[1]
+  end
+
   # J4.7: Basic inheritance
   def test_inheritance_basic
     source = <<~RUBY

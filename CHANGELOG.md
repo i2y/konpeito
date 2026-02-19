@@ -5,6 +5,19 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-19
+
+### Added
+- Inliner: keyword argument mapping for correct inlining of functions with keyword params
+- Inliner: ProcNew/BlockDef deep cloning with proper captured variable renaming
+- Vendor setup script (`scripts/setup_vendor.sh`) to download yyjson source files
+
+### Fixed
+- HIR builder: save/restore `@current_block` in NativeHashEach to emit into correct basic block
+- Inliner: ProcCall handler for proc_value and args renaming during inlining
+- JSON stdlib: add tracked `yyjson_wrapper.c` providing non-inline wrappers for LLVM-generated code (fixes SEGV in `parse_as`/`parse_array_as` tests)
+- CRuby backend: reference yyjson wrapper from tracked source location instead of vendor directory
+
 ## [0.1.3] - 2026-02-18
 
 ### Fixed
@@ -108,6 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.2.0]: https://github.com/i2y/konpeito/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/i2y/konpeito/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/i2y/konpeito/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/i2y/konpeito/compare/v0.1.0...v0.1.1

@@ -178,6 +178,17 @@ module Konpeito
             param_map[param.name] = call_inst.args[i]
           end
         end
+        # Also map keyword arguments by name
+        if call_inst.respond_to?(:keyword_args) && call_inst.has_keyword_args?
+          call_inst.keyword_args.each do |kw_name, kw_value|
+            # Find the callee param with matching name
+            callee.params.each do |param|
+              if param.name.to_s == kw_name.to_s
+                param_map[param.name] = kw_value
+              end
+            end
+          end
+        end
 
         # Clone and transform instructions from callee
         result_instructions = []
@@ -438,6 +449,11 @@ module Konpeito
           new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
           HIR::SuperCall.new(args: new_args, type: inst.type, result_var: new_result)
 
+        when HIR::ProcNew
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_block_def = clone_block_def(inst.block_def, prefix, param_map)
+          HIR::ProcNew.new(block_def: new_block_def, result_var: new_result)
+
         else
           # For other instructions, just return as-is with renamed result
           inst
@@ -477,6 +493,90 @@ module Konpeito
                      end
           new_var = HIR::LocalVar.new(name: var_name, type: TypeChecker::Types::UNTYPED)
           HIR::LoadLocal.new(var: new_var, type: TypeChecker::Types::UNTYPED, result_var: nil)
+        else
+          value
+        end
+      end
+
+      # Deep-clone a BlockDef, renaming captured (non-block-local) variables.
+      # Block parameters are NOT renamed (they are local to the closure).
+      def clone_block_def(block_def, prefix, param_map)
+        return block_def unless block_def
+
+        block_param_names = Set.new(block_def.params.map { |p| p.name.to_s })
+
+        new_body = block_def.body.map do |bb|
+          if bb.respond_to?(:instructions)
+            new_bb = HIR::BasicBlock.new(label: bb.label)
+            bb.instructions.each do |bi|
+              new_inst = clone_block_instruction(bi, prefix, param_map, block_param_names)
+              new_bb.add_instruction(new_inst) if new_inst
+            end
+            new_bb.set_terminator(bb.terminator) if bb.terminator
+            new_bb
+          else
+            clone_block_instruction(bb, prefix, param_map, block_param_names)
+          end
+        end
+
+        HIR::BlockDef.new(
+          params: block_def.params,
+          body: new_body,
+          captures: block_def.captures,
+          is_lambda: block_def.is_lambda
+        )
+      end
+
+      # Clone a single instruction inside a block body, renaming captured vars.
+      def clone_block_instruction(inst, prefix, param_map, block_param_names)
+        case inst
+        when HIR::LoadLocal
+          var_name = inst.var.name.to_s
+          if block_param_names.include?(var_name)
+            # Block-local parameter: don't rename
+            inst
+          else
+            # Captured variable: rename with prefix
+            new_var = HIR::LocalVar.new(
+              name: prefix + var_name,
+              type: inst.var.type
+            )
+            HIR::LoadLocal.new(var: new_var, type: inst.type, result_var: inst.result_var)
+          end
+        when HIR::StoreLocal
+          var_name = inst.var.name.to_s
+          new_value = clone_block_value(inst.value, prefix, param_map, block_param_names)
+          if block_param_names.include?(var_name)
+            HIR::StoreLocal.new(var: inst.var, value: new_value, type: inst.type)
+          else
+            new_var = HIR::LocalVar.new(name: prefix + var_name, type: inst.var.type)
+            HIR::StoreLocal.new(var: new_var, value: new_value, type: inst.type)
+          end
+        when HIR::Call
+          new_receiver = clone_block_value(inst.receiver, prefix, param_map, block_param_names)
+          new_args = inst.args.map { |a| clone_block_value(a, prefix, param_map, block_param_names) }
+          HIR::Call.new(
+            receiver: new_receiver, method_name: inst.method_name,
+            args: new_args, block: inst.block,
+            type: inst.type, result_var: inst.result_var
+          )
+        else
+          # Other instructions: return as-is (literals, etc.)
+          inst
+        end
+      end
+
+      # Clone a value reference inside a block, renaming captured variables.
+      def clone_block_value(value, prefix, param_map, block_param_names)
+        case value
+        when HIR::LoadLocal
+          var_name = value.var.name.to_s
+          if block_param_names.include?(var_name)
+            value
+          else
+            new_var = HIR::LocalVar.new(name: prefix + var_name, type: value.var.type)
+            HIR::LoadLocal.new(var: new_var, type: value.type, result_var: nil)
+          end
         else
           value
         end

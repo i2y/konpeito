@@ -893,7 +893,10 @@ module Konpeito
         yyjson_dir = File.expand_path("../../../vendor/yyjson", __dir__)
         yyjson_c = File.join(yyjson_dir, "yyjson.c")
         yyjson_obj = File.join(yyjson_dir, "yyjson.o")
-        wrapper_c = File.join(yyjson_dir, "yyjson_wrapper.c")
+
+        # Wrapper source is tracked in repo alongside JSON stdlib
+        json_stdlib_dir = File.expand_path("../stdlib/json", __dir__)
+        wrapper_c = File.join(json_stdlib_dir, "yyjson_wrapper.c")
         wrapper_obj = File.join(yyjson_dir, "yyjson_wrapper.o")
 
         return [] unless File.exist?(yyjson_c) && File.exist?(wrapper_c)
@@ -906,7 +909,7 @@ module Konpeito
           system(*cmd) or return []
         end
 
-        # Compile wrapper
+        # Compile wrapper (needs yyjson.h from vendor dir)
         unless File.exist?(wrapper_obj) && File.mtime(wrapper_obj) > File.mtime(wrapper_c)
           cmd = [cc, "-c", "-O3", "-fPIC", "-I#{yyjson_dir}", "-o", wrapper_obj, wrapper_c]
           system(*cmd) or return []

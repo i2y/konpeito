@@ -4038,13 +4038,15 @@ module Konpeito
         key_var = param_names[0] || "k"
         value_var = param_names[1] || "v"
 
-        # Build block body
+        # Build block body — save/restore @current_block so NativeHashEach
+        # is emitted into the original block, not the loop body block
+        saved_block = @current_block
         body_child = block_child.children.find { |c| c.node_type == :statements }
         block_body = []
 
         if body_child
           # Create a new basic block for the iteration body
-          loop_bb = BasicBlock.new(label: new_label("hash_each_body"))
+          loop_bb = BasicBlock.new(label: "hash_each_body_#{@block_counter}")
           @current_block = loop_bb
           block_body << loop_bb
 
@@ -4052,6 +4054,7 @@ module Konpeito
             visit(stmt)
           end
         end
+        @current_block = saved_block
 
         result_var = new_temp_var
         inst = NativeHashEach.new(

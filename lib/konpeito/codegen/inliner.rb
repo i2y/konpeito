@@ -454,6 +454,12 @@ module Konpeito
           new_block_def = clone_block_def(inst.block_def, prefix, param_map)
           HIR::ProcNew.new(block_def: new_block_def, result_var: new_result)
 
+        when HIR::ProcCall
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_proc = transform_value(inst.proc_value, prefix, param_map)
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::ProcCall.new(proc_value: new_proc, args: new_args, type: inst.type, result_var: new_result)
+
         else
           # For other instructions, just return as-is with renamed result
           inst

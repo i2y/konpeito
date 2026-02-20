@@ -36,7 +36,15 @@ spec/conformance/
     ├── logical_operators_spec.rb  # && ||
     ├── method_spec.rb         # def, return, args, keyword args
     ├── variables_spec.rb      # local, $global, compound assignment
-    └── block_spec.rb          # yield, block_given?, Array iteration
+    ├── block_spec.rb          # yield, block_given?, Array iteration
+    ├── string_spec.rb         # String#+, length, upcase, downcase, include?, etc.
+    ├── integer_float_spec.rb  # Integer/Float arithmetic, comparison, abs, even?, etc.
+    ├── string_interpolation_spec.rb  # "Hello #{name}" interpolation
+    ├── array_spec.rb          # Array#[], []=, length, push, first, last, etc.
+    ├── hash_spec.rb           # Hash#[], []=, size, keys, values, has_key?, etc.
+    ├── range_spec.rb          # Range#to_a, include?, size, each, first, last
+    ├── multi_assign_spec.rb   # a, b = [1, 2]; for loop
+    └── exception_spec.rb      # begin/rescue/else/ensure, raise
 ```
 
 ## Usage
@@ -154,33 +162,49 @@ Known failures are recorded in `tags/{native,jvm}/` as text files, one per spec.
 
 ### Current Status
 
-#### Native Backend
+#### Native Backend (12 MATCH, 2 DIFF, 3 ERROR / 17 specs)
 
 | Spec | Status | Cause |
 |------|--------|-------|
+| block_spec | MATCH | |
 | break_spec | MATCH | |
 | case_spec | MATCH | |
+| exception_spec | MATCH | |
+| if_spec | MATCH | |
+| logical_operators_spec | MATCH | |
+| method_spec | MATCH | |
 | next_spec | MATCH | |
+| range_spec | MATCH | |
+| string_spec | MATCH | |
 | variables_spec | MATCH | |
 | while_spec | MATCH | |
-| if_spec | DIFF (1) | Treats `if 0` as falsy (Ruby treats 0 as truthy) |
-| block_spec | ERROR | `LocalJumpError` — yield/block_given? block state issue |
-| logical_operators_spec | ERROR | `TypeError` — mixed bool/Integer phi node in `&&`/`||` |
-| method_spec | ERROR | LLVM IR error — keyword args + early return |
+| hash_spec | DIFF (1) | `Hash#[]=` overwrite returns wrong value |
+| integer_float_spec | DIFF (6) | Negative div/mod use C truncation semantics; comparison returns 0 instead of false |
+| array_spec | ERROR | `TypeError` — nil to integer conversion in compact/flatten |
+| multi_assign_spec | ERROR | `NoMethodError` — multi-assignment variable not initialized |
+| string_interpolation_spec | ERROR | SEGV — runtime crash |
 
-#### JVM Backend
+#### JVM Backend (8 MATCH, 1 DIFF, 8 ERROR / 17 specs)
 
 | Spec | Status | Cause |
 |------|--------|-------|
 | break_spec | MATCH | |
 | case_spec | MATCH | |
+| hash_spec | MATCH | |
+| if_spec | MATCH | |
+| logical_operators_spec | MATCH | |
+| method_spec | MATCH | |
 | next_spec | MATCH | |
 | while_spec | MATCH | |
-| if_spec | DIFF (1) | Treats `if 0` as falsy (same as Native) |
+| integer_float_spec | DIFF (2) | Negative div/mod use Java truncation semantics |
+| array_spec | ERROR | Runtime error |
 | block_spec | ERROR | ASM `NegativeArraySizeException` (stack frame type mismatch) |
-| logical_operators_spec | ERROR | ASM `NegativeArraySizeException` |
+| exception_spec | ERROR | Runtime error |
+| multi_assign_spec | ERROR | Runtime error |
+| range_spec | ERROR | Runtime error |
+| string_interpolation_spec | ERROR | Runtime error |
+| string_spec | ERROR | Runtime error |
 | variables_spec | ERROR | ASM `NegativeArraySizeException` |
-| method_spec | ERROR | `VerifyError` — operand stack type mismatch |
 
 ## Adding New Specs
 

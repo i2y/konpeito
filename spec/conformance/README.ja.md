@@ -37,7 +37,15 @@ spec/conformance/
     ├── logical_operators_spec.rb  # && ||
     ├── method_spec.rb         # def, return, args, keyword args
     ├── variables_spec.rb      # local, $global, compound assignment
-    └── block_spec.rb          # yield, block_given?, Array iteration
+    ├── block_spec.rb          # yield, block_given?, Array iteration
+    ├── string_spec.rb         # String#+, length, upcase, downcase, include? 等
+    ├── integer_float_spec.rb  # Integer/Float 算術、比較、abs, even? 等
+    ├── string_interpolation_spec.rb  # "Hello #{name}" 文字列補間
+    ├── array_spec.rb          # Array#[], []=, length, push, first, last 等
+    ├── hash_spec.rb           # Hash#[], []=, size, keys, values, has_key? 等
+    ├── range_spec.rb          # Range#to_a, include?, size, each, first, last
+    ├── multi_assign_spec.rb   # a, b = [1, 2]; for ループ
+    └── exception_spec.rb      # begin/rescue/else/ensure, raise
 ```
 
 ## 使い方
@@ -155,33 +163,49 @@ method_spec:
 
 ### 現在の状況
 
-#### Native バックエンド
+#### Native バックエンド（12 MATCH, 2 DIFF, 3 ERROR / 17 specs）
 
 | Spec | Status | 原因 |
 |------|--------|------|
+| block_spec | MATCH | |
 | break_spec | MATCH | |
 | case_spec | MATCH | |
+| exception_spec | MATCH | |
+| if_spec | MATCH | |
+| logical_operators_spec | MATCH | |
+| method_spec | MATCH | |
 | next_spec | MATCH | |
+| range_spec | MATCH | |
+| string_spec | MATCH | |
 | variables_spec | MATCH | |
 | while_spec | MATCH | |
-| if_spec | DIFF (1) | `if 0` を falsy として扱う（Ruby では truthy） |
-| block_spec | ERROR | `LocalJumpError` — yield/block_given? のブロック状態問題 |
-| logical_operators_spec | ERROR | `TypeError` — `&&`/`||` で bool/Integer 混在の phi node |
-| method_spec | ERROR | LLVM IR エラー — keyword args + early return |
+| hash_spec | DIFF (1) | `Hash#[]=` の上書きが誤った値を返す |
+| integer_float_spec | DIFF (6) | 負数の除算/剰余がC言語の切り捨てセマンティクス; 比較がfalseでなく0を返す |
+| array_spec | ERROR | `TypeError` — compact/flatten で nil→integer 変換エラー |
+| multi_assign_spec | ERROR | `NoMethodError` — 多重代入の変数が未初期化 |
+| string_interpolation_spec | ERROR | SEGV — 実行時クラッシュ |
 
-#### JVM バックエンド
+#### JVM バックエンド（8 MATCH, 1 DIFF, 8 ERROR / 17 specs）
 
 | Spec | Status | 原因 |
 |------|--------|------|
 | break_spec | MATCH | |
 | case_spec | MATCH | |
+| hash_spec | MATCH | |
+| if_spec | MATCH | |
+| logical_operators_spec | MATCH | |
+| method_spec | MATCH | |
 | next_spec | MATCH | |
 | while_spec | MATCH | |
-| if_spec | DIFF (1) | `if 0` を falsy として扱う（Native と同じ） |
+| integer_float_spec | DIFF (2) | 負数の除算/剰余がJavaの切り捨てセマンティクス |
+| array_spec | ERROR | 実行時エラー |
 | block_spec | ERROR | ASM `NegativeArraySizeException`（スタックフレーム型不整合） |
-| logical_operators_spec | ERROR | ASM `NegativeArraySizeException` |
+| exception_spec | ERROR | 実行時エラー |
+| multi_assign_spec | ERROR | 実行時エラー |
+| range_spec | ERROR | 実行時エラー |
+| string_interpolation_spec | ERROR | 実行時エラー |
+| string_spec | ERROR | 実行時エラー |
 | variables_spec | ERROR | ASM `NegativeArraySizeException` |
-| method_spec | ERROR | `VerifyError` — スタック型不一致 |
 
 ## 新しい spec の追加方法
 

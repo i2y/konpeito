@@ -1,0 +1,1 @@
+# NoMethodError: undefined method '+' for nil — multi-assignment variable not properly initialized

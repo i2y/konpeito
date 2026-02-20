@@ -1,0 +1,2 @@
+# String#each_line type mismatch (String | nil) causes compilation failure
+String#each_line with separator splits on the given separator

@@ -1,0 +1,3 @@
+# &&= does not short-circuit on nil/false (compiler limitation)
+&&= does not assign when variable is nil
+&&= does not assign when variable is false

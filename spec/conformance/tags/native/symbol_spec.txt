@@ -1,0 +1,3 @@
+# Mixed-type hash {name: "alice", age: 30} causes type mismatch error (compilation failure)
+symbol works as hash key
+symbol hash key returns correct value

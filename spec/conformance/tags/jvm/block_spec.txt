@@ -1,6 +1,6 @@
-# block_spec: JVM compilation error
-# Error: ASM NegativeArraySizeException in assert_equal_Integer_Nil_String
-# Cause: Monomorphized assert_equal with mixed types (J, Object, String) causes
-#        ASM Frame.merge to fail when computing stack map frames.
-#        The Integer(long) and Nil(Object) param types have incompatible slot sizes.
-COMPILE_ERROR: ASM NegativeArraySizeException in assert_equal monomorphization
+# block_spec: JVM VerifyError in block lambda
+# Error: Bad return type — lambda$block returns lreturn (long) but signature expects String
+# Cause: Block callback for yield_with_return { |x| x * 2 } infers x as long
+#        but the KBlock interface return type is resolved as String.
+#        The block body return type and the lambda signature are inconsistent.
+RUNTIME_ERROR: VerifyError Bad return type in lambda$block

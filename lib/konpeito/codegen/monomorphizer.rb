@@ -186,8 +186,15 @@ module Konpeito
         # Group call sites by (function, types)
         grouped = @call_sites.group_by { |cs| [cs[:target], cs[:types]] }
 
+        # Detect functions called with inconsistent arg types across call sites.
+        # If the same param position receives different types at different sites
+        # (e.g., assert_equal called with both Integer and String as first arg),
+        # monomorphization is not useful — skip the function entirely.
+        skip_functions = detect_inconsistent_call_sites
+
         grouped.each do |(func_name, types), sites|
           next if types.all? { |t| t == TypeChecker::Types::UNTYPED }
+          next if skip_functions.include?(func_name.to_s)
 
           type_suffix = types.map { |t| type_to_suffix(t) }.join("_")
           specialized = "#{func_name}_#{type_suffix}"
@@ -209,6 +216,30 @@ module Konpeito
 
         # Group union call sites by original call
         consolidate_union_dispatches
+      end
+
+      # Detect functions where different call sites pass different types for
+      # the same parameter position. These functions should not be monomorphized
+      # because specialized variants would have incompatible signatures.
+      def detect_inconsistent_call_sites
+        # Group non-union call sites by target function
+        by_func = @call_sites.reject { |cs| cs[:union_dispatch] }
+                             .group_by { |cs| cs[:target].to_s }
+
+        skip = Set.new
+        by_func.each do |func_name, sites|
+          next if sites.size <= 1
+          # Check each param position for type consistency
+          max_arity = sites.map { |s| s[:types].size }.max
+          max_arity.times do |i|
+            types_at_i = sites.map { |s| s[:types][i]&.to_s }.compact.uniq
+            if types_at_i.size > 1
+              skip.add(func_name)
+              break
+            end
+          end
+        end
+        skip
       end
 
       # Group union call sites by their original (pre-expansion) call

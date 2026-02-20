@@ -419,6 +419,7 @@ module Konpeito
         end
       end
 
+
       # Returns the complete JSON IR as a Hash
       def to_json_ir
         { "classes" => @class_defs }

@@ -2761,7 +2761,10 @@ module Konpeito
         # Skip direct call optimizations when splat args are present
         has_splat = inst.args.any? { |a| a.is_a?(HIR::SplatArg) }
 
-        unless has_splat
+        # Skip direct call when a block is passed — direct LLVM calls bypass
+        # CRuby's call frame, so rb_yield/rb_block_given_p inside the callee
+        # would fail with LocalJumpError. Use rb_block_call instead.
+        unless has_splat || inst.block
           # Check for monomorphized function call (direct call optimization)
           if (specialized_target = inst.instance_variable_get(:@specialized_target))
             result = generate_direct_call(inst, specialized_target)
@@ -2814,6 +2817,14 @@ module Konpeito
             @variables[inst.result_var] = result if inst.result_var
             return result
           end
+        end
+
+        # If a block is passed to a user-defined function, use rb_block_call
+        # so CRuby sets up the block context for rb_yield/rb_block_given_p.
+        if inst.block
+          result = generate_rb_block_call_for_user_func(inst)
+          @variables[inst.result_var] = result if inst.result_var
+          return result
         end
 
         # Get receiver as Ruby VALUE (box if needed)
@@ -3932,6 +3943,13 @@ module Konpeito
           loop_cond => default_result
         }
         @builder.phi(value_type, phi_incoming, "#{method_sym}_result")
+      end
+
+      # Generate rb_block_call for user-defined functions that receive a block.
+      # This ensures CRuby sets up the block context so rb_yield/rb_block_given_p
+      # work correctly inside the callee.
+      def generate_rb_block_call_for_user_func(inst)
+        generate_rb_block_call(inst, nil)
       end
 
       # Fallback: generate rb_block_call
@@ -6366,8 +6384,8 @@ module Konpeito
           # yield with no arguments - pass Qnil
           @builder.call(@rb_yield, @qnil)
         elsif inst.args.size == 1
-          # yield with single argument
-          arg_value = get_value(inst.args.first)
+          # yield with single argument — must be boxed VALUE for rb_yield
+          arg_value = get_value_as_ruby(inst.args.first)
           @builder.call(@rb_yield, arg_value)
         else
           # yield with multiple arguments - use rb_yield_values2
@@ -6377,7 +6395,7 @@ module Konpeito
           argv = @builder.alloca(LLVM::Array(value_type, inst.args.size))
 
           inst.args.each_with_index do |arg, i|
-            arg_value = get_value(arg)
+            arg_value = get_value_as_ruby(arg)
             ptr = @builder.gep(argv, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
             @builder.store(arg_value, ptr)
           end

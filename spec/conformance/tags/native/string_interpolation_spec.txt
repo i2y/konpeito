@@ -1,1 +1,0 @@
-# SEGV: string interpolation crashes at runtime

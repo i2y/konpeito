@@ -6151,7 +6151,8 @@ module Konpeito
 
       def visit_next(typed_node)
         if @loop_stack.any?
-          @current_block.set_terminator(Jump.new(target: @loop_stack.last[:cond_label]))
+          target = @loop_stack.last[:next_label] || @loop_stack.last[:cond_label]
+          @current_block.set_terminator(Jump.new(target: target))
           # Create unreachable block for any code after next
           set_current_block(new_block("after_next"))
         end
@@ -6159,42 +6160,124 @@ module Konpeito
       end
 
       def visit_for(typed_node)
-        # Desugar for loop to .each call with block
-        # for x in collection do body end
-        #   => collection.each { |x| body }
+        # Desugar for loop to index-based while loop:
+        #   for x in collection do body end
+        # =>
+        #   _for_arr = collection.to_a   (or collection if array)
+        #   _for_len = _for_arr.length
+        #   _for_idx = 0
+        #   while _for_idx < _for_len
+        #     x = _for_arr[_for_idx]
+        #     <body>
+        #     _for_idx = _for_idx + 1
+        #   end
+        #
+        # This supports break/next inside the for body (unlike block-based each).
 
         node = typed_node.node
 
         # Extract loop variable name from index (LocalVariableTargetNode)
         index_name = node.index.name.to_s
 
-        # Visit collection first (before changing scope)
+        # Visit collection
         collection_child = typed_node.children.find do |c|
           c.node_type != :local_variable_target && c.node_type != :statements
         end
         collection = visit(collection_child) if collection_child
 
-        # Build block for body using same pattern as visit_block_def
-        block_param = Param.new(name: index_name, type: TypeChecker::Types::UNTYPED)
+        # Convert to array via .to_a (handles Range and other Enumerables)
+        arr_var = new_temp_var
+        to_a_call = Call.new(
+          receiver: collection,
+          method_name: "to_a",
+          args: [],
+          type: TypeChecker::Types::UNTYPED,
+          result_var: arr_var
+        )
+        emit(to_a_call)
+        for_arr_var = LocalVar.new(name: "_for_arr", type: TypeChecker::Types::UNTYPED)
+        @local_vars["_for_arr"] = for_arr_var
+        emit(StoreLocal.new(var: for_arr_var, value: to_a_call, type: TypeChecker::Types::UNTYPED))
 
-        # Save current scope (including native_class_vars to prevent cross-block leakage)
-        saved_local_vars = @local_vars.dup
-        saved_native_class_vars = @native_class_vars.dup
-        saved_current_block = @current_block
-        saved_function = @current_function
+        # _for_len = _for_arr.length
+        len_var = new_temp_var
+        arr_load = LoadLocal.new(var: for_arr_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(arr_load)
+        len_call = Call.new(
+          receiver: arr_load,
+          method_name: "length",
+          args: [],
+          type: TypeChecker::Types::INTEGER,
+          result_var: len_var
+        )
+        emit(len_call)
+        for_len_var = LocalVar.new(name: "_for_len", type: TypeChecker::Types::INTEGER)
+        @local_vars["_for_len"] = for_len_var
+        emit(StoreLocal.new(var: for_len_var, value: len_call, type: TypeChecker::Types::INTEGER))
 
-        # Create a temporary container for block body
-        block_body = []
-        @block_counter += 1
-        entry = BasicBlock.new(label: "for_block_entry_#{@block_counter}")
-        block_body << entry
-        @current_block = entry
+        # _for_idx = 0
+        zero_lit = IntegerLit.new(value: 0, result_var: new_temp_var)
+        emit(zero_lit)
+        for_idx_var = LocalVar.new(name: "_for_idx", type: TypeChecker::Types::INTEGER)
+        @local_vars["_for_idx"] = for_idx_var
+        emit(StoreLocal.new(var: for_idx_var, value: zero_lit, type: TypeChecker::Types::INTEGER))
 
-        # Use BlockBodyCollector to collect blocks
-        @current_function = BlockBodyCollector.new(block_body)
+        # Create blocks
+        cond_block = new_block("for_cond")
+        body_block = new_block("for_body")
+        incr_block = new_block("for_incr")
+        exit_block = new_block("for_exit")
 
-        # Add loop variable to local scope
-        @local_vars[index_name] = LocalVar.new(name: index_name, type: TypeChecker::Types::UNTYPED)
+        @current_block.set_terminator(Jump.new(target: cond_block.label))
+
+        # Condition: _for_idx < _for_len
+        set_current_block(cond_block)
+        idx_load_cond = LoadLocal.new(var: for_idx_var, type: TypeChecker::Types::INTEGER, result_var: new_temp_var)
+        emit(idx_load_cond)
+        len_load_cond = LoadLocal.new(var: for_len_var, type: TypeChecker::Types::INTEGER, result_var: new_temp_var)
+        emit(len_load_cond)
+        cmp_var = new_temp_var
+        cmp_call = Call.new(
+          receiver: idx_load_cond,
+          method_name: "<",
+          args: [len_load_cond],
+          type: TypeChecker::Types::BOOL,
+          result_var: cmp_var
+        )
+        emit(cmp_call)
+        @current_block.set_terminator(Branch.new(
+          condition: cmp_call,
+          then_block: body_block.label,
+          else_block: exit_block.label
+        ))
+
+        # Body: x = _for_arr[_for_idx]; <body>
+        set_current_block(body_block)
+
+        # x = _for_arr[_for_idx]
+        arr_load_body = LoadLocal.new(var: for_arr_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(arr_load_body)
+        idx_load_body = LoadLocal.new(var: for_idx_var, type: TypeChecker::Types::INTEGER, result_var: new_temp_var)
+        emit(idx_load_body)
+        elem_var = new_temp_var
+        elem_call = Call.new(
+          receiver: arr_load_body,
+          method_name: "[]",
+          args: [idx_load_body],
+          type: TypeChecker::Types::UNTYPED,
+          result_var: elem_var
+        )
+        emit(elem_call)
+        loop_var = LocalVar.new(name: index_name, type: TypeChecker::Types::UNTYPED)
+        @local_vars[index_name] = loop_var
+        emit(StoreLocal.new(var: loop_var, value: elem_call, type: TypeChecker::Types::UNTYPED))
+
+        # Push loop stack with next_label pointing to increment block
+        @loop_stack.push({
+          cond_label: cond_block.label,
+          exit_label: exit_block.label,
+          next_label: incr_block.label
+        })
 
         # Compile body statements
         body_child = typed_node.children.find { |c| c.node_type == :statements }
@@ -6204,37 +6287,34 @@ module Konpeito
           end
         end
 
-        # Collect all blocks
-        body_blocks = @current_function.body
+        @loop_stack.pop
 
-        # Detect captured variables
-        captures = detect_captured_variables(saved_local_vars)
+        # Jump to increment block (unless body already terminated via break/next)
+        unless @current_block.terminator
+          @current_block.set_terminator(Jump.new(target: incr_block.label))
+        end
 
-        # Restore outer scope
-        @local_vars = saved_local_vars
-        @native_class_vars = saved_native_class_vars
-        @current_block = saved_current_block
-        @current_function = saved_function
-
-        # Create BlockDef
-        block_def = BlockDef.new(
-          params: [block_param],
-          body: body_blocks,
-          captures: captures
+        # Increment block: _for_idx = _for_idx + 1
+        set_current_block(incr_block)
+        idx_load_incr = LoadLocal.new(var: for_idx_var, type: TypeChecker::Types::INTEGER, result_var: new_temp_var)
+        emit(idx_load_incr)
+        one_lit = IntegerLit.new(value: 1, result_var: new_temp_var)
+        emit(one_lit)
+        add_var = new_temp_var
+        add_call = Call.new(
+          receiver: idx_load_incr,
+          method_name: "+",
+          args: [one_lit],
+          type: TypeChecker::Types::INTEGER,
+          result_var: add_var
         )
+        emit(add_call)
+        emit(StoreLocal.new(var: for_idx_var, value: add_call, type: TypeChecker::Types::INTEGER))
+        @current_block.set_terminator(Jump.new(target: cond_block.label))
 
-        # Generate call to .each with block
-        result_var = new_temp_var
-        inst = Call.new(
-          receiver: collection,
-          method_name: "each",
-          args: [],
-          block: block_def,
-          type: typed_node.type,
-          result_var: result_var
-        )
-        emit(inst)
-        inst
+        # Exit
+        set_current_block(exit_block)
+        NilLit.new
       end
 
       # Range literal

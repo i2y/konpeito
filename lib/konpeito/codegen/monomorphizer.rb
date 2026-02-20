@@ -191,6 +191,7 @@ module Konpeito
         # (e.g., assert_equal called with both Integer and String as first arg),
         # monomorphization is not useful — skip the function entirely.
         skip_functions = detect_inconsistent_call_sites
+        skip_functions.merge(detect_nil_compared_functions)
 
         grouped.each do |(func_name, types), sites|
           next if types.all? { |t| t == TypeChecker::Types::UNTYPED }
@@ -216,6 +217,55 @@ module Konpeito
 
         # Group union call sites by original call
         consolidate_union_dispatches
+      end
+
+      # Returns true if the given param is compared with nil in the function body.
+      # Functions that check params against nil are designed to handle nil values,
+      # so creating type-specialized copies that unbox params is incorrect.
+      def param_compared_with_nil?(func, param_name)
+        func.body.each do |bb|
+          bb.instructions.each do |inst|
+            next unless inst.is_a?(HIR::Call)
+            if inst.method_name == "=="
+              # Check: param == nil
+              recv = inst.receiver
+              if recv.is_a?(HIR::LoadLocal)
+                var_name = recv.var.respond_to?(:name) ? recv.var.name.to_s : recv.var.to_s
+                if var_name == param_name && inst.args.first.is_a?(HIR::NilLit)
+                  return true
+                end
+              end
+              # Check: nil == param
+              if recv.is_a?(HIR::NilLit) && inst.args.first.is_a?(HIR::LoadLocal)
+                arg_var = inst.args.first.var
+                arg_name = arg_var.respond_to?(:name) ? arg_var.name.to_s : arg_var.to_s
+                return true if arg_name == param_name
+              end
+            end
+            # Check: param.nil?
+            if inst.method_name == "nil?" && inst.receiver.is_a?(HIR::LoadLocal)
+              var_name = inst.receiver.var.respond_to?(:name) ? inst.receiver.var.name.to_s : inst.receiver.var.to_s
+              return true if var_name == param_name
+              return true
+            end
+          end
+        end
+        false
+      end
+
+      # Returns Set of function names that should skip monomorphization
+      # because they compare parameters with nil.
+      def detect_nil_compared_functions
+        skip = Set.new
+        @hir_program.functions.each do |func|
+          func.params.each do |param|
+            if param_compared_with_nil?(func, param.name.to_s)
+              skip.add(func.name.to_s)
+              break
+            end
+          end
+        end
+        skip
       end
 
       # Detect functions where different call sites pass different types for

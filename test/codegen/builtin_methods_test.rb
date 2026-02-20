@@ -39,8 +39,8 @@ module Konpeito
       end
 
       def test_lookup_object_method
-        result = Codegen.lookup(:Object, :==)
-        assert_equal "rb_obj_equal", result[:c_func]
+        result = Codegen.lookup(:Object, :===)
+        assert_equal "rb_equal", result[:c_func]
         assert_equal 1, result[:arity]
       end
 
@@ -54,15 +54,15 @@ module Konpeito
         assert_equal :block_iterator, result[:conv]
       end
 
-      def test_lookup_float_method
+      def test_lookup_float_method_returns_nil
+        # Float methods (floor, ceil, etc.) are not exported from libruby
         result = Codegen.lookup(:Float, :floor)
-        assert_equal "rb_float_floor", result[:c_func]
-        assert_equal 0, result[:arity]
+        assert_nil result
       end
 
       def test_lookup_nil_class_method
-        result = Codegen.lookup(:NilClass, :nil?)
-        assert_equal "rb_true", result[:c_func]
+        result = Codegen.lookup(:NilClass, :to_a)
+        assert_equal "rb_ary_new", result[:c_func]
       end
 
       def test_lookup_nonexistent_method
@@ -83,7 +83,6 @@ module Konpeito
         assert_includes classes, :Hash
         assert_includes classes, :Object
         assert_includes classes, :Range
-        assert_includes classes, :Float
         assert_includes classes, :NilClass
       end
 

@@ -491,6 +491,11 @@ module Konpeito
           new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
           HIR::ProcCall.new(proc_value: new_proc, args: new_args, type: inst.type, result_var: new_result)
 
+        when HIR::MultiWriteExtract
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_array = transform_value(inst.array, prefix, param_map)
+          HIR::MultiWriteExtract.new(array: new_array, index: inst.index, type: inst.type, result_var: new_result)
+
         else
           # For other instructions, just return as-is with renamed result
           inst

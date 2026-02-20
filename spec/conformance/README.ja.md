@@ -163,27 +163,27 @@ method_spec:
 
 ### 現在の状況
 
-#### Native バックエンド（12 MATCH, 2 DIFF, 3 ERROR / 17 specs）
+#### Native バックエンド（17 MATCH / 17 specs）
 
-| Spec | Status | 原因 |
-|------|--------|------|
+| Spec | Status | スキップ |
+|------|--------|---------|
+| array_spec | MATCH | |
 | block_spec | MATCH | |
 | break_spec | MATCH | |
 | case_spec | MATCH | |
 | exception_spec | MATCH | |
+| hash_spec | MATCH | |
 | if_spec | MATCH | |
+| integer_float_spec | MATCH | |
 | logical_operators_spec | MATCH | |
 | method_spec | MATCH | |
+| multi_assign_spec | MATCH | |
 | next_spec | MATCH | |
 | range_spec | MATCH | |
+| string_interpolation_spec | MATCH | |
 | string_spec | MATCH | |
 | variables_spec | MATCH | |
 | while_spec | MATCH | |
-| hash_spec | DIFF (1) | `Hash#[]=` の上書きが誤った値を返す |
-| integer_float_spec | DIFF (6) | 負数の除算/剰余がC言語の切り捨てセマンティクス; 比較がfalseでなく0を返す |
-| array_spec | ERROR | `TypeError` — compact/flatten で nil→integer 変換エラー |
-| multi_assign_spec | ERROR | `NoMethodError` — 多重代入の変数が未初期化 |
-| string_interpolation_spec | ERROR | SEGV — 実行時クラッシュ |
 
 #### JVM バックエンド（8 MATCH, 1 DIFF, 8 ERROR / 17 specs）
 

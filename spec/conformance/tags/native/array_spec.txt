@@ -1,2 +1,0 @@
-# TypeError: no implicit conversion from nil to integer
-# Array#compact with nil elements causes type error

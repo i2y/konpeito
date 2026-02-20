@@ -1,1 +1,0 @@
-# Hash#[]= overwrite returns wrong value (49 instead of 99)

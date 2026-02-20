@@ -142,7 +142,7 @@ module Konpeito
 
       Object: {
         # Object identity and comparison
-        :== => { c_func: "rb_obj_equal", arity: 1, return_type: :Bool, conv: :simple },
+        # rb_obj_equal is not exported - == falls back to rb_funcallv
         :=== => { c_func: "rb_equal", arity: 1, return_type: :Bool, conv: :simple },
 
         # Object type checking
@@ -177,38 +177,18 @@ module Konpeito
         none?: { arity: 0, return_type: :Bool, conv: :block_iterator },
       },
 
-      Float: {
-        # Float comparison
-        :<=> => { c_func: "rb_float_cmp", arity: 1, return_type: :Integer, conv: :simple },
-
-        # Float conversion
-        to_i: { c_func: "rb_num2long", arity: 0, return_type: :Integer, conv: :simple },
-        to_int: { c_func: "rb_num2long", arity: 0, return_type: :Integer, conv: :simple },
-        floor: { c_func: "rb_float_floor", arity: 0, return_type: :Integer, conv: :simple },
-        ceil: { c_func: "rb_float_ceil", arity: 0, return_type: :Integer, conv: :simple },
-        round: { c_func: "rb_float_round", arity: 0, return_type: :Integer, conv: :simple },
-        truncate: { c_func: "rb_float_truncate", arity: 0, return_type: :Integer, conv: :simple },
-
-        # Float query
-        nan?: { c_func: "rb_float_nan_p", arity: 0, return_type: :Bool, conv: :simple },
-        infinite?: { c_func: "rb_float_infinite_p", arity: 0, return_type: :Any, conv: :simple },
-        finite?: { c_func: "rb_float_finite_p", arity: 0, return_type: :Bool, conv: :simple },
-      },
+      # Float methods: rb_float_cmp, rb_float_floor, rb_float_ceil, rb_float_round,
+      # rb_float_truncate, rb_float_nan_p, rb_float_infinite_p, rb_float_finite_p
+      # are all NOT exported from libruby — they fall back to rb_funcallv
 
       NilClass: {
-        nil?: { c_func: "rb_true", arity: 0, return_type: :Bool, conv: :simple },
-        to_s: { c_func: "rb_nil_to_s", arity: 0, return_type: :String, conv: :simple },
+        # rb_true is not exported from libruby - nil? falls back to rb_funcallv
         to_a: { c_func: "rb_ary_new", arity: 0, return_type: :Array, conv: :simple },
         to_h: { c_func: "rb_hash_new", arity: 0, return_type: :Hash, conv: :simple },
       },
 
-      TrueClass: {
-        to_s: { c_func: "rb_true_to_s", arity: 0, return_type: :String, conv: :simple },
-      },
-
-      FalseClass: {
-        to_s: { c_func: "rb_false_to_s", arity: 0, return_type: :String, conv: :simple },
-      },
+      # rb_true_to_s / rb_false_to_s are not exported from libruby
+      # TrueClass and FalseClass methods fall back to rb_funcallv
     }.freeze
 
     # Helper method to look up a builtin method

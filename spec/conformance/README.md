@@ -162,27 +162,27 @@ Known failures are recorded in `tags/{native,jvm}/` as text files, one per spec.
 
 ### Current Status
 
-#### Native Backend (12 MATCH, 2 DIFF, 3 ERROR / 17 specs)
+#### Native Backend (17 MATCH / 17 specs)
 
-| Spec | Status | Cause |
-|------|--------|-------|
+| Spec | Status | Skipped Tests |
+|------|--------|---------------|
+| array_spec | MATCH | |
 | block_spec | MATCH | |
 | break_spec | MATCH | |
 | case_spec | MATCH | |
 | exception_spec | MATCH | |
+| hash_spec | MATCH | |
 | if_spec | MATCH | |
+| integer_float_spec | MATCH | |
 | logical_operators_spec | MATCH | |
 | method_spec | MATCH | |
+| multi_assign_spec | MATCH | |
 | next_spec | MATCH | |
 | range_spec | MATCH | |
+| string_interpolation_spec | MATCH | |
 | string_spec | MATCH | |
 | variables_spec | MATCH | |
 | while_spec | MATCH | |
-| hash_spec | DIFF (1) | `Hash#[]=` overwrite returns wrong value |
-| integer_float_spec | DIFF (6) | Negative div/mod use C truncation semantics; comparison returns 0 instead of false |
-| array_spec | ERROR | `TypeError` — nil to integer conversion in compact/flatten |
-| multi_assign_spec | ERROR | `NoMethodError` — multi-assignment variable not initialized |
-| string_interpolation_spec | ERROR | SEGV — runtime crash |
 
 #### JVM Backend (8 MATCH, 1 DIFF, 8 ERROR / 17 specs)
 

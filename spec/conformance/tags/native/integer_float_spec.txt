@@ -1,3 +1,0 @@
-# Negative integer division uses truncation instead of floor division (-7/4 → -1 instead of -2)
-# Negative modulo follows C semantics instead of Ruby semantics (-7%3 → -1 instead of 2)
-# Comparison operators return 0 (Fixnum) instead of false for unboxed integers

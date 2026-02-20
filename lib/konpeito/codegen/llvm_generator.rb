@@ -3535,6 +3535,9 @@ module Konpeito
             elsif body_result.type == LLVM::Int1
               # Already a boolean
               body_result
+            elsif body_result.type == LLVM::Int8
+              # Unboxed i8 (comparison result): truthy if non-zero
+              @builder.icmp(:ne, body_result, LLVM::Int8.from_i(0))
             else
               # Boxed VALUE: check for truthy
               select_val = ensure_ruby_value(body_result)
@@ -5219,12 +5222,12 @@ module Konpeito
           raise "Unknown comparison: #{inst.method_name}"
         end
 
-        # Extend to i64 for consistency (0 or 1)
-        result = @builder.zext(cmp_result, LLVM::Int64)
+        # Extend to i8 for boolean consistency (0 or 1)
+        result = @builder.zext(cmp_result, LLVM::Int8)
 
         if inst.result_var
           @variables[inst.result_var] = result
-          @variable_types[inst.result_var] = :i64
+          @variable_types[inst.result_var] = :i8
           @comparison_result_vars.add(inst.result_var)
         end
         result
@@ -5280,11 +5283,11 @@ module Konpeito
           raise "Unknown comparison: #{inst.method_name}"
         end
 
-        result = @builder.zext(cmp_result, LLVM::Int64)
+        result = @builder.zext(cmp_result, LLVM::Int8)
 
         if inst.result_var
           @variables[inst.result_var] = result
-          @variable_types[inst.result_var] = :i64
+          @variable_types[inst.result_var] = :i8
           @comparison_result_vars.add(inst.result_var)
         end
         result
@@ -5308,9 +5311,9 @@ module Konpeito
         when "*"
           @builder.mul(left, right)
         when "/"
-          @builder.sdiv(left, right)
+          generate_ruby_floor_div(left, right)
         when "%"
-          @builder.srem(left, right)
+          generate_ruby_floor_mod(left, right)
         when "<<"
           shift_amt = @builder.trunc(right, LLVM::Int32)
           @builder.shl(left, @builder.zext(shift_amt, LLVM::Int64))
@@ -5333,6 +5336,55 @@ module Konpeito
           @variable_types[inst.result_var] = :i64
         end
         result
+      end
+
+      # Ruby floor division: result rounds toward negative infinity
+      # sdiv rounds toward zero, so adjust when signs differ and remainder != 0
+      def generate_ruby_floor_div(left, right)
+        func = @builder.insert_block.parent
+        zero = LLVM::Int64.from_i(0)
+
+        # q = sdiv(left, right)
+        q = @builder.sdiv(left, right)
+        # r = srem(left, right)
+        r = @builder.srem(left, right)
+
+        # Check if remainder is non-zero and signs of left and right differ
+        r_ne_zero = @builder.icmp(:ne, r, zero)
+        # XOR of left and right: if MSB is set, signs differ
+        xor_val = @builder.xor(left, right)
+        signs_differ = @builder.icmp(:slt, xor_val, zero)
+        # need_adjust = r != 0 && signs_differ
+        need_adjust = @builder.and(r_ne_zero, signs_differ)
+
+        # adjusted = q - 1
+        one = LLVM::Int64.from_i(1)
+        adjusted = @builder.sub(q, one)
+
+        # select: if need_adjust then adjusted else q
+        @builder.select(need_adjust, adjusted, q)
+      end
+
+      # Ruby floor modulo: result has same sign as divisor
+      # srem has same sign as dividend, so adjust when signs differ and remainder != 0
+      def generate_ruby_floor_mod(left, right)
+        func = @builder.insert_block.parent
+        zero = LLVM::Int64.from_i(0)
+
+        # r = srem(left, right)
+        r = @builder.srem(left, right)
+
+        # Check if remainder is non-zero and signs of left and right differ
+        r_ne_zero = @builder.icmp(:ne, r, zero)
+        xor_val = @builder.xor(left, right)
+        signs_differ = @builder.icmp(:slt, xor_val, zero)
+        need_adjust = @builder.and(r_ne_zero, signs_differ)
+
+        # adjusted = r + right
+        adjusted = @builder.add(r, right)
+
+        # select: if need_adjust then adjusted else r
+        @builder.select(need_adjust, adjusted, r)
       end
 
       def generate_unboxed_float_op(inst)
@@ -6143,18 +6195,18 @@ module Konpeito
         func = @builtin_funcs[c_func]
         return generate_fallback_call(inst) unless func
 
-        # Get receiver as boxed VALUE
-        receiver = get_value(inst.receiver)
+        # Get receiver as boxed VALUE (must box unboxed types for CRuby C API)
+        receiver = get_value_as_ruby(inst.receiver)
 
         # Get arguments as boxed VALUEs
-        args = inst.args.map { |arg| get_value(arg) }
+        args = inst.args.map { |arg| get_value_as_ruby(arg) }
 
         @builder.call(func, receiver, *args)
       end
 
       def generate_fallback_call(inst)
         # Fall back to rb_funcallv
-        receiver = get_value(inst.receiver)
+        receiver = get_value_as_ruby(inst.receiver)
 
         method_ptr = @builder.global_string_pointer(inst.method_name)
         method_id = @builder.call(@rb_intern, method_ptr)
@@ -6167,7 +6219,7 @@ module Konpeito
           argv = @builder.alloca(LLVM::Array(value_type, inst.args.size))
 
           inst.args.each_with_index do |arg, i|
-            arg_value = get_value(arg)
+            arg_value = get_value_as_ruby(arg)
             ptr = @builder.gep(argv, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
             @builder.store(arg_value, ptr)
           end

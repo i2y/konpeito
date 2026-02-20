@@ -1,0 +1,75 @@
+# hash_methods_spec: JVM NoSuchMethodError
+# Error: KHash.include_q (arity 1) — method not found on JVM KHash
+# Cause: JVM backend does not implement Hash#include? method
+Hash#keys returns an array with all keys
+Hash#keys first key matches insertion order
+Hash#keys second key matches insertion order
+Hash#keys third key matches insertion order
+Hash#keys returns an empty array for an empty hash
+Hash#values returns an array with all values
+Hash#values first value matches insertion order
+Hash#values second value matches insertion order
+Hash#values third value matches insertion order
+Hash#values returns an empty array for an empty hash
+Hash#key? returns true if argument is a key
+Hash#key? returns false if argument is not a key
+Hash#include? returns true if argument is a key
+Hash#include? returns false if argument is not a key
+Hash#has_value? returns true if the value exists
+Hash#has_value? returns false if the value does not exist
+Hash#has_value? returns true for nil value
+Hash#value? returns true if the value exists
+Hash#value? returns false if the value does not exist
+Hash#to_a returns an array of [key, value] pairs
+Hash#to_a first pair key
+Hash#to_a first pair value
+Hash#to_a second pair key
+Hash#to_a second pair value
+Hash#to_a returns an empty array for an empty hash
+Hash#fetch returns the value for an existing key
+Hash#fetch returns the value for another existing key
+Hash#fetch returns the default value when key is not found
+Hash#fetch returns the value (not default) when key exists
+Hash#store associates the key with the value
+Hash#store overwrites existing value
+Hash#clear removes all key-value pairs
+Hash#clear makes the hash empty
+Hash#clear on empty hash keeps it empty
+Hash#select returns entries for which block is true
+Hash#select includes matching entry c
+Hash#select includes matching entry d
+Hash#select returns empty hash when no entries match
+Hash#reject returns entries for which block is false
+Hash#reject includes non-matching entry a
+Hash#reject includes non-matching entry b
+Hash#reject returns all entries when none match
+Hash#map returns an array of the same size
+Hash#map includes transformed value 2
+Hash#map includes transformed value 4
+Hash#map includes transformed value 6
+Hash#any? returns true if any entry satisfies the block
+Hash#any? returns false if no entry satisfies the block
+Hash#any? returns false for an empty hash
+Hash#all? returns true if all entries satisfy the block
+Hash#all? returns false if any entry does not satisfy the block
+Hash#all? returns true for an empty hash
+Hash#none? returns true if no entry satisfies the block
+Hash#none? returns false if any entry satisfies the block
+Hash#none? returns true for an empty hash
+Hash#count returns the number of entries
+Hash#count returns 0 for an empty hash
+Hash#count with block returns number of entries for which block is true
+Hash#each_key yields each key
+Hash#each_key includes key :a
+Hash#each_key includes key :b
+Hash#each_key includes key :c
+Hash#each_value yields each value
+Hash#each_value includes value 1
+Hash#each_value includes value 2
+Hash#each_value includes value 3
+Hash#flatten returns a one-dimensional array
+Hash#flatten first element is first key
+Hash#flatten second element is first value
+Hash#flatten third element is second key
+Hash#flatten fourth element is second value
+Hash#flatten returns empty array for empty hash

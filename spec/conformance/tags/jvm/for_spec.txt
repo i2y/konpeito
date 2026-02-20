@@ -1,0 +1,16 @@
+# for_spec: JVM NoSuchMethodError
+# Error: KArray.to_a (arity 0) — method not found on JVM KArray
+# Cause: JVM backend does not implement Array#to_a which is needed by for loop desugaring
+for iterates over an Array passing each element to the block
+for loop variable is accessible after the loop
+for iterates over an inclusive Range (1..5)
+for iterates over an exclusive Range (1...5)
+for returns the collection it iterated over
+for returns the original collection (first element)
+for with break exits the loop
+for with break returns nil
+for with next skips the current iteration
+for with empty collection does not execute body
+nested for loops iterate correctly
+for executes code in the containing variable scope
+for loop variable i is available after the loop

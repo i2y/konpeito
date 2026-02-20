@@ -1,0 +1,29 @@
+# class_spec: JVM VerifyError in test_chained_inheritance
+# Error: Bad local variable type — class C extends B but JVM cannot resolve method dispatch
+# Cause: Chained inheritance (C < B < A) generates incorrect local variable types
+Class.new creates an instance of the class
+Class.new passes arguments to initialize
+instance method returns computed value
+second instance method works independently
+first counter incremented twice
+second counter incremented once, independent of first
+class method def self.method can be called on the class
+second class method works independently
+instance is a Circle
+instance is also a Shape via inheritance
+subclass inherits methods from parent
+subclass overrides parent method
+super calls the parent class method
+initialize uses default argument
+initialize uses provided argument
+first instance variable accessible via reader
+second instance variable accessible via reader
+custom to_s returns formatted string
+method computes using instance variables
+another method computes using instance variables
+instance is a C
+instance is a B via inheritance
+instance is an A via chained inheritance
+inherits nearest override from B, not A
+class method works
+instance method works on same class

@@ -1,1 +1,40 @@
-# Runtime error (exit code 1)
+# string_spec: JVM runtime error
+# Cause: String operations not fully working in JVM backend
+String#+ returns a new string containing the given string concatenated to self
+String#length returns the length of self
+String#length returns 0 for empty string
+String#size returns the length of self
+String#upcase returns a copy of self with all lowercase letters upcased
+String#upcase returns a copy when already upcased
+String#downcase returns a copy of self with all uppercase letters downcased
+String#downcase returns a copy when already downcased
+String#include? returns true if self contains other_str
+String#include? returns false if self does not contain other_str
+String#include? returns true if the other string is empty
+String#include? returns true if both strings are empty
+String#empty? returns true if the string has a length of zero
+String#empty? returns false if the string has content
+String#strip returns a new string with leading and trailing whitespace removed
+String#strip makes a string empty if it is only whitespace
+String#strip returns a copy of self when no whitespace
+String#reverse returns a new string with the characters of self in reverse order
+String#reverse returns empty string for empty string
+String#to_i treats leading characters as integer
+String#to_i returns 0 if self is no valid integer-representation
+String#to_i ignores subsequent invalid characters
+String#to_i accepts negative sign
+String#to_f treats leading characters as floating point number (lower bound)
+String#to_f treats leading characters as floating point number (upper bound)
+String#to_f returns 0.0 if the conversion fails
+String#split returns an array of substrings based on splitting on the given string
+String#split first element is correct
+String#split second element is correct
+String#split third element is correct
+String#start_with? returns true only if beginning match
+String#start_with? returns false if beginning does not match
+String#start_with? returns true if the search string is empty
+String#end_with? returns true only if ends match
+String#end_with? returns false if the end does not match
+String#end_with? returns true if the search string is empty
+String#capitalize returns a copy with the first character uppercased and remainder lowercased
+String#capitalize lowercases the remainder

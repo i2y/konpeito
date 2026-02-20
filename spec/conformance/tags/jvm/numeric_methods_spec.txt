@@ -1,0 +1,78 @@
+# numeric_methods_spec: JVM runtime error
+# Cause: Float constants (INFINITY, NAN) or numeric method dispatch issues in JVM backend
+Integer#** returns self raised to the given power
+Integer#** returns 1 when the exponent is 0
+Integer#** returns 1 for 1 raised to any power
+Integer#** returns 0 for 0 raised to a positive power
+Integer#** returns positive for negative base with even exponent
+Integer#** returns negative for negative base with odd exponent
+Integer#** returns 1 for 0 ** 0
+Integer#divmod returns the quotient as first element
+Integer#divmod returns the remainder as second element
+Integer#divmod returns floor quotient for negative dividend
+Integer#divmod returns positive remainder for negative dividend
+Integer#divmod returns floor quotient for negative divisor
+Integer#divmod returns negative remainder for negative divisor
+Integer#divmod returns positive quotient when both negative
+Integer#divmod returns negative remainder when both negative
+Integer#gcd returns the greatest common divisor
+Integer#gcd returns 1 for coprime numbers
+Integer#gcd returns the gcd of 8 and 12
+Integer#gcd returns self.abs when other is 0
+Integer#gcd returns other.abs when self is 0
+Integer#gcd returns 0 when both are 0
+Integer#gcd returns positive gcd for negative receiver
+Integer#gcd returns positive gcd for negative argument
+Integer#gcd returns positive gcd when both are negative
+Integer#abs returns absolute value of large negative
+Integer#abs returns self for large positive
+Integer#even? returns true for large even number
+Integer#even? returns false for large odd number
+Integer#even? returns true for -2
+Integer#odd? returns true for large odd number
+Integer#odd? returns false for large even number
+Integer#odd? returns true for 1
+Integer#odd? returns true for -1
+Integer#positive? returns true for 1
+Integer#positive? returns true for 100
+Integer#negative? returns true for -1
+Integer#negative? returns true for -100
+Float#abs returns 0.0 for 0.0
+Float#abs returns absolute value for small negative float
+Float#ceil returns the smallest Integer greater than or equal to self
+Float#ceil returns self as Integer when already whole
+Float#ceil rounds up 0.9 to 1
+Float#ceil rounds toward zero for negative float
+Float#ceil returns self as Integer for negative whole float
+Float#ceil rounds -0.9 toward zero to 0
+Float#ceil returns 0 for 0.0
+Float#floor returns the largest Integer less than or equal to self
+Float#floor returns self as Integer when already whole
+Float#floor rounds down 0.9 to 0
+Float#floor rounds away from zero for negative float
+Float#floor returns self as Integer for negative whole float
+Float#floor rounds -0.9 away from zero to -1
+Float#floor returns 0 for 0.0
+Float#round rounds 1.5 up to 2
+Float#round rounds 1.4 down to 1
+Float#round rounds 1.6 up to 2
+Float#round rounds -1.5 away from zero to -2
+Float#round rounds -1.4 toward zero to -1
+Float#round rounds -1.6 away from zero to -2
+Float#round returns 0 for 0.0
+Float#round returns the integer value for a whole float
+Float#infinite? returns 1 for positive infinity
+Float#infinite? returns -1 for negative infinity
+Float#infinite? returns nil for a finite Float
+Float#infinite? returns nil for 0.0
+Float#nan? returns true for NaN
+Float#nan? returns false for a finite Float
+Float#nan? returns false for 0.0
+Float#nan? returns false for Infinity
+Float#zero? returns true for -0.0
+Float#zero? returns false for Infinity
+Float#zero? returns false for NaN
+Float#positive? returns true for Infinity
+Float#positive? returns false for -Infinity
+Float#negative? returns true for -Infinity
+Float#negative? returns false for Infinity

@@ -1,0 +1,15 @@
+# fiber_spec: JVM VerifyError in test_fiber_alive_before_completion
+# Error: Bad local variable type — Fiber alive? check produces type mismatch
+# Cause: JVM bytecode verification fails on Fiber#alive? boolean return type handling
+Fiber.new creates a fiber that returns a value on resume
+Fiber.yield returns the yielded value to resume
+first yield returns 1
+second yield returns 2
+final value returns 3
+Fiber#alive? returns true before fiber completes
+Fiber#alive? returns false after fiber completes
+Fiber resume passes value back to yield
+generator yields 0
+generator yields 1
+generator yields 2
+generator yields 3

@@ -1,0 +1,10 @@
+# safe_navigation_spec: JVM runtime error
+# Cause: Safe navigation operator (&.) not fully implemented in JVM backend
+&. calls the method when receiver is non-nil
+&. returns the method result for non-nil receiver
+&. returns nil when receiver is nil
+&. does not call the method when receiver is nil
+&. can be chained on non-nil values
+&. chain returns nil when first receiver is nil
+&. works with Integer receiver
+&. works with Array#first

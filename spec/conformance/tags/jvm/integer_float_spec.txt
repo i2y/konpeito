@@ -1,2 +1,5 @@
-# Negative integer division uses truncation instead of floor division (-7/4 → -1 instead of -2)
-# Negative modulo follows Java semantics instead of Ruby semantics (-7%3 → -1 instead of 2)
+# integer_float_spec: JVM uses Java division/modulo semantics instead of Ruby
+# DIFF 1: Integer#/ negative floor division — -7/4 returns -1 (Java truncation) instead of -2 (Ruby floor)
+# DIFF 2: Integer#% negative modulo — -7%3 returns -1 (Java remainder) instead of 2 (Ruby modulo)
+Integer#/ supports dividing negative numbers (floor division)
+Integer#% follows Ruby's floor-division modulo semantics for negative numbers

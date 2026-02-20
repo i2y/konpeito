@@ -2,5 +2,15 @@
 # Error: Bad return type — lambda$block returns lreturn (long) but signature expects String
 # Cause: Block callback for yield_with_return { |x| x * 2 } infers x as long
 #        but the KBlock interface return type is resolved as String.
-#        The block body return type and the lambda signature are inconsistent.
-RUNTIME_ERROR: VerifyError Bad return type in lambda$block
+yield passes value to block
+yield called multiple times accumulates
+block_given? returns true when block given
+block_given? returns false when no block
+Array#each iterates over elements
+Array#map element 0
+Array#map element 1
+Array#map element 2
+Array#select returns matching elements count
+Array#select first match
+Array#select second match
+method with yield returns its own last expression

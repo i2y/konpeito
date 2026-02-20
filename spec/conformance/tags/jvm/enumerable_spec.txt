@@ -1,0 +1,104 @@
+# enumerable_spec: Monomorphizer crash on union dispatch consolidation
+# Error: Compilation failure — same issue as native backend
+# Cause: Monomorphizer crashes when consolidating union type dispatches
+Array#map returns an array of the same size
+Array#map transforms first element
+Array#map transforms second element
+Array#map transforms third element
+Array#map returns an empty array for an empty receiver
+Array#collect works as an alias for map
+Array#collect transforms last element
+Array#select returns elements for which the block returns true
+Array#select first matching element
+Array#select second matching element
+Array#select returns empty array when no elements match
+Array#filter works as an alias for select
+Array#filter first matching element
+Array#reject returns elements for which the block returns false
+Array#reject first non-matching element
+Array#reject last non-matching element
+Array#reject returns all elements when none match the block
+Enumerable#reduce combines elements using the block with initial value
+Enumerable#reduce uses first element as initial when no initial given
+Enumerable#reduce returns the element when only one element and no initial
+Enumerable#reduce returns initial value for empty array
+Enumerable#inject works as an alias for reduce with initial
+Enumerable#inject works as an alias for reduce without initial
+Array#each yields each element to the block
+Array#each yields first element
+Array#each yields last element
+Array#each returns self
+Array#each returns self with original elements
+Enumerable#find returns the first element for which the block is true
+Enumerable#find returns nil when no element matches
+Enumerable#detect works as an alias for find
+Enumerable#any? returns true if any element matches
+Enumerable#any? returns false if no element matches
+Enumerable#any? returns false for an empty collection
+Enumerable#all? returns true if all elements match
+Enumerable#all? returns false if any element does not match
+Enumerable#all? returns true for an empty collection
+Enumerable#none? returns true if no element matches
+Enumerable#none? returns false if any element matches
+Enumerable#none? returns true for an empty collection
+Enumerable#count returns the number of elements
+Enumerable#count returns 0 for empty array
+Enumerable#count returns the number of elements for which the block returns true
+Enumerable#min returns the minimum element
+Enumerable#min returns nil for an empty collection
+Enumerable#max returns the maximum element
+Enumerable#max returns nil for an empty collection
+Array#sort returns a sorted array - first element
+Array#sort returns a sorted array - second element
+Array#sort returns a sorted array - third element
+Array#sort with block sorts in custom order - first element
+Array#sort with block sorts in custom order - second element
+Array#sort with block sorts in custom order - third element
+Enumerable#flat_map flattens the result one level
+Enumerable#flat_map first element
+Enumerable#flat_map last element
+each_with_index yields each element
+each_with_index yields first element
+each_with_index yields last element
+each_with_index yields first index as 0
+each_with_index yields last index
+Enumerable#sum returns the sum of elements
+Enumerable#sum returns 0 for empty array
+Enumerable#sum with block sums the block results
+Array#first(n) returns the first n elements
+Array#first(n) first element
+Array#first(n) second element
+Array#last(n) returns the last n elements
+Array#last(n) first element of result
+Array#last(n) second element of result
+Array#include? returns true for matching string
+Array#include? returns false for non-matching string
+Array#include? returns true for nil in array
+Array#uniq returns an array with no duplicates
+Array#uniq first element
+Array#uniq second element
+Array#uniq third element
+Array#uniq returns same size when no duplicates
+Array#flatten returns a one-dimensional flattening recursively
+Array#flatten first element
+Array#flatten second element
+Array#flatten third element
+Array#flatten(1) flattens one level
+Array#flatten(1) first element
+Array#flatten(1) second element
+Array#flatten(1) stops at one level leaving nested array
+Array#zip returns array of paired elements
+Array#zip first pair first element
+Array#zip first pair second element
+Array#zip last pair first element
+Array#zip last pair second element
+Array#zip pads shorter array with nil
+Array#zip first pair has value from shorter array
+Array#zip second pair has nil from shorter array
+Array#zip third pair has nil from shorter array
+Array#take returns the first n elements
+Array#take first element
+Array#take last element
+Array#drop returns the remaining elements after dropping n
+Array#drop first remaining element
+Array#drop last remaining element

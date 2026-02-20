@@ -1,0 +1,15 @@
+# symbol_spec: JVM runtime error
+# Cause: Symbol operations not fully implemented in JVM backend
+symbol literal creates a symbol
+Symbol#to_s returns the string form
+Symbol#to_s handles underscores
+Symbol#id2name returns the symbol name as string
+Symbol#name returns the symbol name as string
+same symbols are equal
+different symbols are not equal
+different symbols are not equal with !=
+same symbols are not unequal with !=
+symbol works as hash key
+symbol hash key returns correct value
+Symbol#inspect returns :name format
+Symbol#to_s converts to string

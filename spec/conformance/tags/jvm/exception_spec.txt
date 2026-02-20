@@ -1,1 +1,16 @@
-# Runtime error (exit code 1)
+# exception_spec: JVM VerifyError in test_ensure_with_rescue
+# Error: Bad type on operand stack — ensure block type mismatch
+# Cause: JVM bytecode verification fails when rescue and ensure blocks interact
+can be used to handle a specific exception
+returns value from rescue if an exception was raised
+rescues StandardError
+captures exception in a local variable
+rescue body not executed when no exception
+ensure is executed when an exception is raised and rescued
+ensure is executed when nothing is raised
+rescue block executes
+ensure block also executes
+returns value from else section if no exceptions were raised
+will not execute an else block if an exception was raised
+raise with string raises RuntimeError with that message
+inner rescue catches inner exception

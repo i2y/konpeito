@@ -1,1 +1,40 @@
-# Runtime error (exit code 1)
+# array_spec: JVM IndexOutOfBoundsException
+# Error: Index 5 out of bounds for length 3 in test_element_reference_returns_nil_for_out_of_bounds
+# Cause: JVM KArray does not handle out-of-bounds access gracefully (returns null/throws instead of nil)
+Array#[] returns the element at index 0
+Array#[] returns the element at index 2
+Array#[] returns the element at index from the end with -1
+Array#[] returns the element at index from the end with -2
+Array#[] returns nil for a requested index not in the array
+Array#[] returns nil for a negative index out of bounds
+Array#length returns the number of elements
+Array#length returns 0 for empty array
+Array#size returns the number of elements
+Array#empty? returns true if the array has no elements
+Array#empty? returns false if the array has elements
+Array#push appends the argument to the array
+Array#push appended element is accessible
+Array#first returns the first element
+Array#first returns nil if self is empty
+Array#last returns the last element
+Array#last returns nil if self is empty
+Array#include? returns true if object is present
+Array#include? returns false if object is not present
+Array#[]= sets the value of the element at index
+Array#+ concatenates two arrays
+Array#+ first element from first array
+Array#+ first element from second array
+Array#flatten returns a one-dimensional flattening
+Array#flatten first element
+Array#flatten last element
+Array#compact returns a copy with all nil elements removed
+Array#compact first element
+Array#compact last element
+Array#uniq returns an array with no duplicates
+Array#uniq first element
+Array#uniq last element
+Array#reverse first element is last of original
+Array#reverse middle element stays
+Array#reverse last element is first of original
+Array#join returns elements joined by separator
+Array#join with no separator joins elements directly

@@ -1,0 +1,35 @@
+# conversion_spec: JVM NoSuchMethodError
+# Error: Double.to_int (arity 0) — method not found on JVM Double wrapper
+# Cause: Float#to_int is not implemented in JVM backend's KFloat class
+Integer#to_f returns 0.0 for 0
+Integer#to_f returns 10.0 for 10
+Integer#to_f returns -5.0 for -5
+Integer#to_s returns '0' for 0
+Integer#to_s returns '42' for 42
+Integer#to_s returns '-100' for -100
+Integer#to_i returns self
+Integer#to_i returns self for negative
+Float#to_i returns the truncated value for positive float
+Float#to_i returns the truncated value for negative float
+Float#to_i returns 0 for 0.0
+Float#to_int returns the truncated value
+Float#to_f returns self
+Float#to_f returns self for negative float
+Float#to_s returns '0.0' for 0.0
+Float#to_s returns '-0.0' for -0.0
+Float#to_s returns '1.5' for 1.5
+String#to_i returns an Integer for a numeric string
+String#to_i parses a negative numeric string
+String#to_i ignores leading whitespace
+String#to_i returns 0 for a non-numeric string
+String#to_i parses leading numeric portion
+String#to_f returns a Float for a numeric string
+String#to_f parses a negative float string
+String#to_f returns 0.0 for a non-numeric string
+String#to_s returns self
+NilClass#to_i returns 0
+NilClass#to_f returns 0.0
+NilClass#to_s returns an empty string
+NilClass#to_a returns an empty array
+TrueClass#to_s returns 'true'
+FalseClass#to_s returns 'false'

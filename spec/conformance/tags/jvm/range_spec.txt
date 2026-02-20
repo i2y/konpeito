@@ -1,1 +1,26 @@
-# Runtime error (exit code 1)
+# range_spec: JVM runtime error
+# Cause: Range operations not fully implemented in JVM backend
+Range#to_a converts inclusive range to array with correct length
+Range#to_a inclusive range first element
+Range#to_a inclusive range last element
+Range#to_a converts exclusive range to array with correct length
+Range#to_a exclusive range first element
+Range#to_a exclusive range last element
+Range#to_a returns empty array for descending-ordered range
+Range#include? returns true if other is an element of self
+Range#include? returns true if argument is equal to the first value
+Range#include? returns true if argument is equal to the last value
+Range#include? returns false if the range does not contain the argument
+Range#include? returns false for value before range
+Range#include? with exclusive range does not include end value
+Range#include? with exclusive range includes value before end
+Range#size returns the number of elements in the range
+Range#size returns correct count for exclusive range
+Range#size returns 0 if last is less than first
+Range#each passes each element to the given block
+Range#first returns the first element
+Range#last returns the last element
+negative range to_a returns correct length
+negative range first element is -3
+negative range middle element is 0
+negative range last element is 3

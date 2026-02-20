@@ -1,0 +1,19 @@
+# pattern_match_spec: JVM runtime error
+# Cause: Pattern matching (case/in) not fully implemented in JVM backend
+case/in matches integer literal
+case/in matches string literal
+case/in falls through to else
+case/in binds matched value to variable
+case/in matches alternation pattern
+case/in alternation falls through when no match
+case/in matches Integer type
+case/in matches String type
+case/in guard matches n > 10
+case/in guard matches n > 0
+case/in guard falls to else for 0
+case/in capture pattern binds and uses value
+case/in matches array pattern [a, b]
+case/in matches array pattern [a, b, c]
+case/in matches hash pattern {x:, y:}
+case/in pin pattern matches equal value
+case/in pin pattern does not match different value

@@ -1,0 +1,2 @@
+# Monomorphizer crashes on union dispatch consolidation (compilation failure)
+# All 101 assertions fail due to compilation error

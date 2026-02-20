@@ -176,6 +176,10 @@ module Konpeito
         callee.params.each_with_index do |param, i|
           if call_inst.args[i]
             param_map[param.name] = call_inst.args[i]
+          elsif param.default_value
+            # Use the default value for missing optional args
+            default_hir = prism_to_hir_literal(param.default_value)
+            param_map[param.name] = default_hir if default_hir
           end
         end
         # Also map keyword arguments by name
@@ -222,6 +226,33 @@ module Konpeito
 
         @current_depth -= 1
         result_instructions
+      end
+
+      # Convert a Prism AST default value node to an HIR literal node.
+      # Assigns a result_var so the LLVM generator can generate it properly.
+      def prism_to_hir_literal(prism_node)
+        @default_var_counter ||= 0
+        @default_var_counter += 1
+        rv = "_default_#{@default_var_counter}"
+
+        case prism_node
+        when Prism::IntegerNode
+          HIR::IntegerLit.new(value: prism_node.value, result_var: rv)
+        when Prism::FloatNode
+          HIR::FloatLit.new(value: prism_node.value, result_var: rv)
+        when Prism::StringNode
+          HIR::StringLit.new(value: prism_node.unescaped, result_var: rv)
+        when Prism::SymbolNode
+          HIR::SymbolLit.new(value: prism_node.value, result_var: rv)
+        when Prism::NilNode
+          HIR::NilLit.new(result_var: rv)
+        when Prism::TrueNode
+          HIR::BoolLit.new(value: true, result_var: rv)
+        when Prism::FalseNode
+          HIR::BoolLit.new(value: false, result_var: rv)
+        else
+          nil
+        end
       end
 
       def clone_and_rename(inst, prefix, param_map)

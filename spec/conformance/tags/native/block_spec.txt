@@ -1,0 +1,7 @@
+# block_spec: Native backend runtime error
+# Error: LocalJumpError - "no block given"
+# Cause: yield/block_given? functions compiled as CRuby extension methods
+#        inherit block state from the caller context. When run_tests is called
+#        via `ruby -r bundle -e "run_tests"`, with_block_given sees stale block state.
+# Status: runtime error (all tests blocked)
+RUNTIME_ERROR: LocalJumpError - no block given

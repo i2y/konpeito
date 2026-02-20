@@ -191,6 +191,12 @@ module Konpeito
         # global variables referenced inside blocks have fields available.
         prescan_global_variables(hir_program)
 
+        # Pre-scan: detect functions called with inconsistent argument types
+        # across call sites, and widen those params to :value (Object).
+        # This prevents JVM VerifyError when e.g. assert_equal is called with
+        # both Integer and String arguments at different sites.
+        prescan_call_site_arg_types(hir_program)
+
         # Generate module interfaces FIRST (before classes that may implement them)
         hir_program.modules.each do |module_def|
           @block_methods = []
@@ -340,6 +346,79 @@ module Konpeito
         end
       end
 
+      # Pre-scan: detect functions called with inconsistent argument types.
+      # When a function like assert_equal(expected, actual, desc) is called with
+      # Integer args at one site and String args at another, the JVM needs a single
+      # method descriptor. If HM inference resolves params to a concrete type (e.g. :i64)
+      # based on the first call site, later call sites with different types cause VerifyError.
+      # This pre-scan detects such cases and marks params for widening to :value (Object).
+      def prescan_call_site_arg_types(hir_program)
+        # Collect argument types at each call site per function
+        call_arg_types = Hash.new { |h, k| h[k] = Hash.new { |h2, k2| h2[k2] = Set.new } }
+
+        # Scan all functions (top-level + class methods are both in functions list)
+        # Note: top-level method calls may have SelfRef receiver (implicit self),
+        # so we check for both nil and SelfRef receivers.
+        hir_program.functions.each do |func|
+          each_instruction_recursive(func.body) do |inst|
+            next unless inst.is_a?(HIR::Call)
+            next if inst.receiver && !inst.receiver.is_a?(HIR::SelfRef)
+            target = inst.method_name.to_s
+            inst.args.each_with_index do |arg, i|
+              call_arg_types[target][i] << static_arg_type(arg)
+            end
+          end
+        end
+
+        # Build widened params map: func_name => Set of param indices that need widening
+        @widened_params = {}
+        hir_program.functions.each do |func|
+          func_name = func.name.to_s
+          sites = call_arg_types[func_name]
+          next if sites.empty?
+
+          widened = Set.new
+          func.params.each_with_index do |param, i|
+            site_types = sites[i]
+            next if site_types.nil? || site_types.size <= 1
+
+            # Multiple different types at call sites — widen to :value
+            widened << i
+          end
+
+          @widened_params[func_name] = widened unless widened.empty?
+        end
+      end
+
+      # Infer the JVM type tag of an HIR node statically (without @variable_types).
+      # Used by prescan_call_site_arg_types.
+      def static_arg_type(node)
+        case node
+        when HIR::IntegerLit then :i64
+        when HIR::FloatLit then :double
+        when HIR::StringLit then :string
+        when HIR::BoolLit then :i8
+        when HIR::NilLit then :value
+        else
+          if node.respond_to?(:type) && node.type
+            konpeito_type_to_tag(node.type)
+          else
+            :value
+          end
+        end
+      end
+
+      # Get the effective param type for a function, applying widening if needed.
+      # Widening occurs when different call sites pass different types for the same param.
+      def widened_param_type(func, param, index)
+        widened = @widened_params && @widened_params[func.name.to_s]
+        if widened && widened.include?(index)
+          :value
+        else
+          param_type(param)
+        end
+      end
+
       # Returns the complete JSON IR as a Hash
       def to_json_ir
         { "classes" => @class_defs }
@@ -481,9 +560,9 @@ module Konpeito
         ret_type = function_return_type(func)
         @current_function_return_type = ret_type
 
-        # Allocate parameter slots
-        func.params.each do |param|
-          type = param_type(param)
+        # Allocate parameter slots (use widened types for functions called with mixed arg types)
+        func.params.each_with_index do |param, i|
+          type = widened_param_type(func, param, i)
           allocate_slot(param.name, type)
           # *args (rest param) is a Ruby Array, **kwargs (keyword_rest) is a Hash
           if param.rest || param.keyword_rest
@@ -1033,6 +1112,16 @@ module Konpeito
           @variable_native_array_element_type[target_var] = @variable_native_array_element_type[source_var] if @variable_native_array_element_type[source_var]
           @variable_array_element_types[target_var] = @variable_array_element_types[source_var] if @variable_array_element_types[source_var]
           @variable_is_class_ref[target_var] = @variable_is_class_ref[source_var] if @variable_is_class_ref[source_var]
+        elsif value.is_a?(HIR::IntegerLit) || value.is_a?(HIR::FloatLit) ||
+              value.is_a?(HIR::StringLit) || value.is_a?(HIR::BoolLit) ||
+              value.is_a?(HIR::NilLit) || value.is_a?(HIR::SymbolLit)
+          # Literal value (e.g. from inlined default parameter) — generate inline
+          loaded_type = infer_type_from_hir(value) || :value
+          type = reconcile_store_type(target_var, loaded_type)
+          ensure_slot(target_var, type)
+          instructions.concat(load_value(value, type))
+          instructions << store_instruction(target_var, type)
+          @variable_types[target_var] = type
         else
           # Value should already be on the stack or in a temp var
           source_var = value.respond_to?(:result_var) ? value.result_var : nil
@@ -3112,15 +3201,19 @@ module Konpeito
                                 "name" => "<init>", "descriptor" => "()V" }
             end
           elsif i < args.size
-            param_t = param_type(param)
+            param_t = widened_param_type(target_func, param, i)
             instructions.concat(load_value(args[i], param_t))
             # Unbox if loaded type is :value but function expects primitive
             loaded_t = infer_loaded_type(args[i])
             instructions.concat(unbox_if_needed(loaded_t, param_t))
           else
             # Optional parameter not provided at call site — push default value
-            param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            param_t = widened_param_type(target_func, param, i)
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
           end
         end
 
@@ -3339,10 +3432,9 @@ module Konpeito
           # boolean: ifeq jumps to else (false = 0)
           instructions << { "op" => "ifeq", "target" => else_label }
         when :i64
-          # long: compare with 0
-          instructions << { "op" => "lconst_0" }
-          instructions << { "op" => "lcmp" }
-          instructions << { "op" => "ifeq", "target" => else_label }
+          # Ruby: all integers (including 0) are truthy.
+          # Pop the loaded long value and always fall through to then.
+          instructions << { "op" => "pop2" }
         when :value
           # Ruby truthiness: null (nil) and Boolean.FALSE (false) are falsy.
           # A simple ifnull misses Boolean.FALSE, causing && short-circuit bugs.
@@ -10985,6 +11077,63 @@ module Konpeito
         end
       end
 
+      # Convert a Prism default value node to JVM bytecode instructions.
+      # Used when optional parameters are missing at a call site.
+      def prism_default_to_jvm(prism_node, expected_type)
+        case prism_node
+        when Prism::IntegerNode
+          val = prism_node.value
+          insts = if val == 0
+            [{ "op" => "lconst_0" }]
+          elsif val == 1
+            [{ "op" => "lconst_1" }]
+          else
+            [{ "op" => "ldc2_w", "value" => val, "type" => "long" }]
+          end
+          if expected_type == :value
+            insts << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                       "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+          end
+          insts
+        when Prism::FloatNode
+          val = prism_node.value
+          insts = if val == 0.0
+            [{ "op" => "dconst_0" }]
+          elsif val == 1.0
+            [{ "op" => "dconst_1" }]
+          else
+            [{ "op" => "ldc2_w", "value" => val, "type" => "double" }]
+          end
+          if expected_type == :value
+            insts << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                       "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+          end
+          insts
+        when Prism::StringNode
+          [{ "op" => "ldc", "value" => prism_node.unescaped }]
+        when Prism::SymbolNode
+          [{ "op" => "ldc", "value" => prism_node.value }]
+        when Prism::NilNode
+          [{ "op" => "aconst_null" }]
+        when Prism::TrueNode
+          insts = [{ "op" => "iconst", "value" => 1 }]
+          if expected_type == :value
+            insts << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
+                       "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
+          end
+          insts
+        when Prism::FalseNode
+          insts = [{ "op" => "iconst", "value" => 0 }]
+          if expected_type == :value
+            insts << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
+                       "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
+          end
+          insts
+        else
+          default_value_instructions(expected_type)
+        end
+      end
+
       def default_value_instructions(type)
         case type
         when :i64 then [{ "op" => "lconst_0" }]
@@ -11539,8 +11688,8 @@ module Konpeito
       end
 
       def method_descriptor(func)
-        params_desc = func.params.map do |param|
-          t = param_type(param)
+        params_desc = func.params.each_with_index.map do |param, i|
+          t = widened_param_type(func, param, i)
           t = :value if t == :void  # Nil/void is not valid as JVM param type
           type_to_descriptor(t)
         end.join

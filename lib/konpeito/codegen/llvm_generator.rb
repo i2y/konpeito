@@ -40,6 +40,7 @@ module Konpeito
         @dibuilder = nil          # DIBuilder for debug info
         @profiler = nil           # Profiler for instrumentation
         @variadic_functions = {}  # Track functions with **kwargs or *args
+        @comparison_result_vars = Set.new  # Track variables holding comparison results (0/1 boolean)
 
         # Register all NativeClass types from RBS upfront
         register_native_classes_from_rbs
@@ -719,8 +720,8 @@ module Konpeito
           var.linkage = :external
         end
 
-        # rb_eArgumentError global
-        @rb_eArgumentError = @mod.globals.add(value_type, "rb_eArgumentError") do |var|
+        # rb_eArgError global (CRuby's ArgumentError class)
+        @rb_eArgumentError = @mod.globals.add(value_type, "rb_eArgError") do |var|
           var.linkage = :external
         end
 
@@ -968,6 +969,12 @@ module Konpeito
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)
 
+        # Track blocks with Return terminators so phi nodes can skip them
+        @return_blocks = Set.new
+        hir_func.body.each do |hir_block|
+          @return_blocks << hir_block.label if hir_block.terminator.is_a?(HIR::Return)
+        end
+
         # Generate code for each block
         hir_func.body.each do |hir_block|
           generate_block(func, hir_block)
@@ -1205,9 +1212,7 @@ module Konpeito
 
             # Determine default value
             default_value = if param.default_value
-              # Has explicit default - we need to generate the default value
-              # For now, use Qnil as placeholder; proper default handling requires more work
-              @qnil
+              generate_keyword_default_value(param.default_value)
             else
               # Required keyword - use Qundef to detect missing
               @qundef
@@ -1277,6 +1282,14 @@ module Konpeito
               @builder.store(kwargs_hash, alloca)
             end
           end
+
+          # After keyword processing, remap entry block to current position.
+          # Required keyword params create branch blocks (kwarg_missing/kwarg_ok),
+          # leaving the builder positioned in a continuation block rather than
+          # the original entry block. Function body code must be generated there.
+          if keyword_params.any? { |p| !p.default_value }
+            @blocks[hir_func.body.first.label] = @builder.insert_block
+          end
         end  # End of variadic_info else block
 
         # Insert profiling entry probe after parameter setup
@@ -1285,6 +1298,13 @@ module Konpeito
         # Sort blocks to ensure phi dependencies are satisfied
         # Blocks with phi nodes referencing results from other blocks must come after those blocks
         sorted_blocks = sort_blocks_by_phi_dependencies(hir_func.body)
+
+        # Track blocks with Return terminators so phi nodes can skip them
+        # (a block that returns doesn't branch to the merge block)
+        @return_blocks = Set.new
+        sorted_blocks.each do |hir_block|
+          @return_blocks << hir_block.label if hir_block.terminator.is_a?(HIR::Return)
+        end
 
         # Generate code for each block in dependency order
         sorted_blocks.each do |hir_block|
@@ -2244,6 +2264,14 @@ module Konpeito
           target_type = source_type
           # Need to recreate alloca with the new unboxed type
           @variable_allocas.delete(var_name)
+        elsif %i[double i64 i8].include?(target_type) && source_type == :value && inst.value.is_a?(HIR::Phi)
+          # Downgrade from unboxed to VALUE type for phi nodes with mixed types.
+          # This happens when a phi with mixed types (e.g., bool + int from &&/||)
+          # stores into a variable that was pre-allocated as unboxed based on static
+          # type analysis. The phi resolves to :value at codegen time, so we must
+          # widen the variable to :value to avoid unsafe unboxing (e.g., rb_num2long on Qfalse).
+          target_type = :value
+          @variable_allocas.delete(var_name)
         end
 
         value_to_store = convert_value(value, source_type, target_type)
@@ -2279,6 +2307,13 @@ module Konpeito
 
         @variables[var_name] = value_to_store
         @variable_types[var_name] = target_type
+
+        # Propagate comparison result flag through variable assignments
+        src_var = inst.value.respond_to?(:result_var) ? inst.value.result_var : nil
+        if src_var && @comparison_result_vars.include?(src_var)
+          @comparison_result_vars.add(var_name)
+        end
+
         value_to_store
       end
 
@@ -5172,6 +5207,7 @@ module Konpeito
         if inst.result_var
           @variables[inst.result_var] = result
           @variable_types[inst.result_var] = :i64
+          @comparison_result_vars.add(inst.result_var)
         end
         result
       end
@@ -5231,6 +5267,7 @@ module Konpeito
         if inst.result_var
           @variables[inst.result_var] = result
           @variable_types[inst.result_var] = :i64
+          @comparison_result_vars.add(inst.result_var)
         end
         result
       end
@@ -7040,6 +7077,31 @@ module Konpeito
         @builder.select(is_true, @qtrue, @qfalse)
       end
 
+      # Generate LLVM value for keyword argument default from Prism AST node
+      def generate_keyword_default_value(prism_node)
+        case prism_node
+        when Prism::StringNode
+          str_ptr = @builder.global_string_pointer(prism_node.unescaped)
+          @builder.call(@rb_str_new_cstr, str_ptr)
+        when Prism::IntegerNode
+          @builder.call(@rb_int2inum, LLVM::Int64.from_i(prism_node.value))
+        when Prism::FloatNode
+          @builder.call(@rb_float_new, LLVM::Double.from_f(prism_node.value))
+        when Prism::NilNode
+          @qnil
+        when Prism::TrueNode
+          @qtrue
+        when Prism::FalseNode
+          @qfalse
+        when Prism::SymbolNode
+          sym_ptr = @builder.global_string_pointer(prism_node.value)
+          sym_id = @builder.call(@rb_intern, sym_ptr)
+          @builder.call(@rb_id2sym, sym_id)
+        else
+          @qnil
+        end
+      end
+
       # Convert Ruby VALUE to i1 boolean
       def ruby_to_bool(value)
         # In Ruby, only nil and false are falsy
@@ -7701,6 +7763,9 @@ module Konpeito
         inst.incoming.each do |label, hir_value|
           llvm_block = @blocks[label]
           next unless llvm_block
+          # Skip blocks with Return terminators — they don't branch to the
+          # merge block, so they cannot be predecessors in the phi node.
+          next if @return_blocks&.include?(label)
           llvm_value, type_tag = get_value_with_type(hir_value)
           incoming_data << [llvm_block, llvm_value, type_tag]
         end
@@ -7755,11 +7820,25 @@ module Konpeito
 
           is_truthy = case cond_type
           when :i64
-            # For i64 (from comparison), non-zero is truthy
-            @builder.icmp(:ne, condition, LLVM::Int64.from_i(0))
+            if comparison_result?(term.condition)
+              # Comparison result (0=false, 1=true): use C-style truthiness
+              @builder.icmp(:ne, condition, LLVM::Int64.from_i(0))
+            else
+              # Ruby: all integers (including 0) are truthy.
+              # Box to VALUE and use Ruby truthiness (RTEST).
+              boxed = @builder.call(@rb_int2inum, condition)
+              ruby_to_bool(boxed)
+            end
           when :double
-            # For double, non-zero is truthy
-            @builder.fcmp(:one, condition, LLVM::Double.from_f(0.0))
+            if comparison_result?(term.condition)
+              # Comparison result: use C-style truthiness
+              @builder.fcmp(:one, condition, LLVM::Double.from_f(0.0))
+            else
+              # Ruby: all floats (including 0.0) are truthy.
+              # Box to VALUE and use Ruby truthiness (RTEST).
+              boxed = @builder.call(@rb_float_new, condition)
+              ruby_to_bool(boxed)
+            end
           when :i8
             # For i8 (Bool field), non-zero is truthy
             @builder.icmp(:ne, condition, LLVM::Int8.from_i(0))
@@ -7776,6 +7855,25 @@ module Konpeito
         when HIR::Jump
           target = @blocks[term.target]
           @builder.br(target)
+        end
+      end
+
+      # Check if an HIR condition node represents a comparison result (boolean 0/1)
+      # rather than a raw integer/float value.
+      # In Ruby, only nil and false are falsy — integers (including 0) and floats are always truthy.
+      COMPARISON_METHODS = %w[== != < > <= >=].freeze
+
+      def comparison_result?(hir_condition)
+        case hir_condition
+        when HIR::Call
+          COMPARISON_METHODS.include?(hir_condition.method_name)
+        when HIR::LoadLocal
+          var_name = hir_condition.var&.name
+          @comparison_result_vars.include?(var_name)
+        when HIR::Instruction
+          hir_condition.result_var && @comparison_result_vars.include?(hir_condition.result_var)
+        else
+          false
         end
       end
 

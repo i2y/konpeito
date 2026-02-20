@@ -1,0 +1,6 @@
+# block_spec: JVM compilation error
+# Error: ASM NegativeArraySizeException in assert_equal_Integer_Nil_String
+# Cause: Monomorphized assert_equal with mixed types (J, Object, String) causes
+#        ASM Frame.merge to fail when computing stack map frames.
+#        The Integer(long) and Nil(Object) param types have incompatible slot sizes.
+COMPILE_ERROR: ASM NegativeArraySizeException in assert_equal monomorphization

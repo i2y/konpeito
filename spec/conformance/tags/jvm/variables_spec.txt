@@ -1,0 +1,7 @@
+# variables_spec: JVM ASM compilation error
+# Error: ArrayIndexOutOfBoundsException in ASM Frame.merge for test_local_or_assign_nil
+# Cause: ||= with nil/Integer mixed types causes JVM stack frame computation failure.
+#        The nil branch produces Object type, Integer branch produces long (2-slot),
+#        and ASM cannot merge these frame types at branch join points.
+# Note: Native backend passes all 13 tests. This is a JVM-specific issue.
+COMPILE_ERROR: ASM frame computation failure in test_local_or_assign_nil (||= nil/Integer mixed types)

@@ -2068,17 +2068,46 @@ module Konpeito
       def infer_and(node)
         left_type = infer(node.left)
         right_type = infer(node.right)
-        # a && b: if a is falsy, result is a (nil/false); otherwise result is b
-        # Return right_type as it's the most common use case
-        right_type
+        # a && b: if a is falsy, result is a; if a is truthy, result is b
+        if left_type == right_type
+          right_type
+        elsif always_falsy_type?(left_type)
+          left_type
+        elsif always_truthy_type?(left_type)
+          right_type
+        else
+          Types::Union.new([left_type, right_type])
+        end
       end
 
       def infer_or(node)
         left_type = infer(node.left)
         right_type = infer(node.right)
-        # a || b: if a is truthy, result is a; otherwise result is b
-        # Return left_type as it's the most common use case
-        left_type
+        # a || b: if a is truthy, result is a; if a is falsy, result is b
+        if left_type == right_type
+          left_type
+        elsif always_truthy_type?(left_type)
+          left_type
+        elsif always_falsy_type?(left_type)
+          right_type
+        else
+          Types::Union.new([left_type, right_type])
+        end
+      end
+
+      # NilClass and FalseClass are always falsy in Ruby
+      def always_falsy_type?(type)
+        type.is_a?(Types::NilType) ||
+          (type.is_a?(Types::ClassInstance) && type.name == :FalseClass)
+      end
+
+      # Everything except nil, false, and bool is always truthy in Ruby
+      def always_truthy_type?(type)
+        return false if type.is_a?(Types::NilType)
+        return false if type.is_a?(Types::BoolType)
+        return false if type.is_a?(Types::ClassInstance) && type.name == :FalseClass
+        return false if type.is_a?(Types::Union)
+        true
       end
 
       # Compound assignment operators
@@ -2095,15 +2124,36 @@ module Konpeito
         existing = lookup(node.name)
         var_type = existing ? existing.instantiate : TypeVar.new
         value_type = infer(node.value)
-        # x ||= val: result is either existing value or val
-        var_type
+        # x ||= val: if x is falsy, x becomes val; if truthy, x stays
+        result = if var_type == value_type
+          var_type
+        elsif always_falsy_type?(var_type)
+          value_type
+        elsif always_truthy_type?(var_type)
+          var_type
+        else
+          Types::Union.new([var_type, value_type])
+        end
+        bind(node.name, result)
+        result
       end
 
       def infer_local_variable_and_write(node)
         existing = lookup(node.name)
         var_type = existing ? existing.instantiate : TypeVar.new
         value_type = infer(node.value)
-        value_type
+        # x &&= val: if x is truthy, x becomes val; if falsy, x stays
+        result = if var_type == value_type
+          value_type
+        elsif always_truthy_type?(var_type)
+          value_type
+        elsif always_falsy_type?(var_type)
+          var_type
+        else
+          Types::Union.new([var_type, value_type])
+        end
+        bind(node.name, result)
+        result
       end
 
       def infer_instance_variable_write(node)

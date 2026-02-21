@@ -4846,7 +4846,7 @@ class JVMBackendTest < Minitest::Test
 
     success, output = compile_and_run(source, name: "jvm_float_floor")
     assert success, "JAR should run successfully: #{output}"
-    assert_equal "3.0", output.strip
+    assert_equal "3", output.strip
   end
 
   def test_jvm_float_ceil
@@ -4857,7 +4857,7 @@ class JVMBackendTest < Minitest::Test
 
     success, output = compile_and_run(source, name: "jvm_float_ceil")
     assert success, "JAR should run successfully: #{output}"
-    assert_equal "4.0", output.strip
+    assert_equal "4", output.strip
   end
 
   def test_jvm_float_to_i

@@ -88,6 +88,11 @@ public class KArray<T> implements List<T> {
         return this;
     }
 
+    /** Ruby: arr.to_a — returns self (identity for arrays, used by for/each desugaring) */
+    public KArray<T> to_a() {
+        return this;
+    }
+
     /** Ruby: arr.compact — removes nil (null) elements */
     public KArray<T> compact() {
         KArray<T> result = new KArray<>();
@@ -157,6 +162,14 @@ public class KArray<T> implements List<T> {
         return data.size();
     }
 
+    /** Ruby: arr.sort { |a, b| ... } — sort with comparator block (via Comparator) */
+    @SuppressWarnings("unchecked")
+    public KArray<T> sortWithComparator(java.util.Comparator<Object> comparator) {
+        KArray<T> result = new KArray<>(data);
+        result.data.sort((java.util.Comparator<? super T>) (Object) comparator);
+        return result;
+    }
+
     /** Ruby: arr.shift — remove and return first element */
     public T shift() {
         return data.isEmpty() ? null : data.remove(0);
@@ -207,6 +220,72 @@ public class KArray<T> implements List<T> {
     public long findIndex(T value) {
         int idx = data.indexOf(value);
         return idx;
+    }
+
+    /** Ruby: arr.first(n) — returns first n elements */
+    public KArray<T> first(int n) {
+        KArray<T> result = new KArray<>();
+        int limit = Math.min(n, data.size());
+        for (int i = 0; i < limit; i++) {
+            result.data.add(data.get(i));
+        }
+        return result;
+    }
+
+    /** Ruby: arr.last(n) — returns last n elements */
+    public KArray<T> last(int n) {
+        KArray<T> result = new KArray<>();
+        int start = Math.max(0, data.size() - n);
+        for (int i = start; i < data.size(); i++) {
+            result.data.add(data.get(i));
+        }
+        return result;
+    }
+
+    /** Ruby: arr.take(n) — returns first n elements */
+    public KArray<T> take(int n) {
+        return first(n);
+    }
+
+    /** Ruby: arr.drop(n) — returns elements after first n */
+    public KArray<T> drop(int n) {
+        KArray<T> result = new KArray<>();
+        for (int i = Math.min(n, data.size()); i < data.size(); i++) {
+            result.data.add(data.get(i));
+        }
+        return result;
+    }
+
+    /** Ruby: arr.zip(other) — pairs elements from two arrays */
+    @SuppressWarnings("unchecked")
+    public KArray<KArray<Object>> zip(KArray<?> other) {
+        KArray<KArray<Object>> result = new KArray<>();
+        for (int i = 0; i < data.size(); i++) {
+            KArray<Object> pair = new KArray<>();
+            pair.data.add(data.get(i));
+            pair.data.add(i < other.size() ? other.get(i) : null);
+            result.data.add(pair);
+        }
+        return result;
+    }
+
+    /** Ruby: arr.flatten(depth) — flattens with depth limit */
+    @SuppressWarnings("unchecked")
+    public KArray<Object> flatten(int depth) {
+        KArray<Object> result = new KArray<>();
+        flattenHelper(result, data, depth);
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void flattenHelper(KArray<Object> result, List<?> list, int depth) {
+        for (Object elem : list) {
+            if (depth > 0 && elem instanceof KArray) {
+                flattenHelper(result, ((KArray<Object>) elem).data, depth - 1);
+            } else {
+                result.data.add(elem);
+            }
+        }
     }
 
     /** Ruby: arr.join(sep) */
@@ -308,7 +387,9 @@ public class KArray<T> implements List<T> {
 
     @Override
     public T get(int index) {
-        return data.get(adjustIndex(index));
+        int idx = adjustIndex(index);
+        if (idx < 0 || idx >= data.size()) return null;
+        return data.get(idx);
     }
 
     @Override

@@ -284,8 +284,19 @@ module Konpeito
 
         hir_program.functions.each do |func|
           has_yield = body_contains_yield?(func.body)
-          @yield_functions.add(func.name.to_s) if has_yield
+          has_block_given = body_contains_block_given?(func.body)
+          @yield_functions.add(func.name.to_s) if has_yield || has_block_given
         end
+      end
+
+      # Check if basic blocks contain block_given? calls
+      def body_contains_block_given?(basic_blocks)
+        basic_blocks.any? { |bb|
+          bb.instructions.any? { |inst|
+            inst.is_a?(HIR::Call) && inst.method_name.to_s == "block_given?" &&
+              (inst.receiver.nil? || inst.receiver.is_a?(HIR::SelfRef))
+          }
+        }
       end
 
       # Check if an array of basic blocks contains Yield instructions,
@@ -380,10 +391,20 @@ module Konpeito
           widened = Set.new
           func.params.each_with_index do |param, i|
             site_types = sites[i]
-            next if site_types.nil? || site_types.size <= 1
+            next if site_types.nil? || site_types.empty?
 
             # Multiple different types at call sites — widen to :value
-            widened << i
+            if site_types.size > 1
+              widened << i
+            elsif site_types.size == 1
+              # Even with a single call-site type, widen if it conflicts with HM-inferred param type.
+              # E.g., HM infers param as :i8 (bool) but call site passes :value (Object from invokedynamic).
+              site_type = site_types.first
+              hm_type = param_type(param)
+              if site_type != hm_type && (site_type == :value || hm_type == :value)
+                widened << i
+              end
+            end
           end
 
           @widened_params[func_name] = widened unless widened.empty?
@@ -399,6 +420,10 @@ module Konpeito
         when HIR::StringLit then :string
         when HIR::BoolLit then :i8
         when HIR::NilLit then :value
+        when HIR::Call
+          # Call results that go through invokedynamic always return Object on JVM,
+          # regardless of what HM inference says. Treat as :value.
+          :value
         else
           if node.respond_to?(:type) && node.type
             konpeito_type_to_tag(node.type)
@@ -564,6 +589,8 @@ module Konpeito
         # Allocate parameter slots (use widened types for functions called with mixed arg types)
         func.params.each_with_index do |param, i|
           type = widened_param_type(func, param, i)
+          # :void (NilClass) is not a valid JVM parameter type — nil is null, which is Object reference
+          type = :value if type == :void
           allocate_slot(param.name, type)
           # *args (rest param) is a Ruby Array, **kwargs (keyword_rest) is a Hash
           if param.rest || param.keyword_rest
@@ -582,6 +609,15 @@ module Konpeito
         end
 
         prescan_phi_nodes(func)
+
+        # After phi prescan, verify return type is compatible with variable assignments.
+        # When a variable is assigned different types on different paths (e.g., x = nil
+        # then x ||= 42), the return type must be :value to avoid JVM type mismatches.
+        if ret_type != :value && ret_type != :void
+          ret_type = verify_return_type_with_phi(func, ret_type)
+          @current_function_return_type = ret_type
+        end
+
         instructions = generate_function_body(func)
 
         # Sanitize returns for void methods: replace non-void returns with void return
@@ -653,7 +689,7 @@ module Konpeito
           inlined_try_body = bb.instructions[0...begin_rescue_idx].reject { |i| owned.include?(i.object_id) }
 
           # Generate BeginRescue with the inlined try body
-          instructions.concat(generate_begin_rescue(begin_rescue_inst, inlined_try_body: inlined_try_body))
+          instructions.concat(generate_begin_rescue(begin_rescue_inst, inlined_try_body: inlined_try_body, bb_instructions: bb.instructions))
 
           # Process any remaining instructions after BeginRescue
           bb.instructions[(begin_rescue_idx + 1)..]&.each do |inst|
@@ -842,6 +878,8 @@ module Konpeito
         when HIR::IncludeStatement
           # Include/extend/prepend are handled at class generation time
           []
+        when HIR::DefinedCheck
+          generate_defined_check(inst)
         # Concurrency
         when HIR::ThreadNew     then generate_thread_new(inst)
         when HIR::ThreadJoin    then generate_thread_join(inst)
@@ -990,8 +1028,15 @@ module Konpeito
         type = :string
         ensure_slot(result_var, type)
 
+        # Use new String(ldc) instead of bare ldc to avoid JVM string interning.
+        # This ensures Object#equal? (identity check) returns false for different
+        # string literals with the same value, matching Ruby semantics.
         [
+          { "op" => "new", "type" => "java/lang/String" },
+          { "op" => "dup" },
           { "op" => "ldc", "value" => inst.value },
+          { "op" => "invokespecial", "owner" => "java/lang/String",
+            "name" => "<init>", "descriptor" => "(Ljava/lang/String;)V" },
           store_instruction(result_var, type)
         ].tap { @variable_types[result_var] = type }
       end
@@ -1052,8 +1097,9 @@ module Konpeito
       # Load a shared mutable capture from static field (inside block)
       def generate_load_shared_capture(source_var, result_var)
         field_name = @shared_capture_fields[source_var]
-        # Determine expected type: check @shared_mutable_capture_types or default to :i64
-        type = @shared_mutable_capture_types&.dig(source_var) || :i64
+        # Determine expected type: check @shared_mutable_capture_types or default to :value
+        # (previously defaulted to :i64, which broke Proc/KBlock values)
+        type = @shared_mutable_capture_types&.dig(source_var) || :value
 
         instructions = []
         instructions << { "op" => "getstatic", "owner" => main_class_name,
@@ -1064,6 +1110,18 @@ module Konpeito
           ensure_slot(result_var, type)
           instructions << store_instruction(result_var, type)
           @variable_types[result_var] = type
+          # Propagate KBlock interface info for lambda/proc .call()
+          if @variable_kblock_iface[source_var]
+            @variable_kblock_iface[result_var] = @variable_kblock_iface[source_var]
+          end
+          # Propagate class type info for method dispatch
+          if @variable_class_types[source_var]
+            @variable_class_types[result_var] = @variable_class_types[source_var]
+          end
+          # Propagate collection type info for array/hash dispatch
+          if @variable_collection_types[source_var]
+            @variable_collection_types[result_var] = @variable_collection_types[source_var]
+          end
         end
 
         instructions
@@ -1096,6 +1154,7 @@ module Konpeito
           @variable_native_array_element_type[target_var] = @variable_native_array_element_type[source_var] if @variable_native_array_element_type[source_var]
           @variable_array_element_types[target_var] = @variable_array_element_types[source_var] if @variable_array_element_types[source_var]
           @variable_is_class_ref[target_var] = @variable_is_class_ref[source_var] if @variable_is_class_ref[source_var]
+          @variable_is_symbol[target_var] = @variable_is_symbol[source_var] if @variable_is_symbol[source_var]
         elsif value.is_a?(HIR::LoadLocal)
           # LoadLocal - load from its source variable
           source_var = value.var.is_a?(HIR::LocalVar) ? value.var.name.to_s : value.var.to_s
@@ -1113,16 +1172,22 @@ module Konpeito
           @variable_native_array_element_type[target_var] = @variable_native_array_element_type[source_var] if @variable_native_array_element_type[source_var]
           @variable_array_element_types[target_var] = @variable_array_element_types[source_var] if @variable_array_element_types[source_var]
           @variable_is_class_ref[target_var] = @variable_is_class_ref[source_var] if @variable_is_class_ref[source_var]
+          @variable_is_symbol[target_var] = @variable_is_symbol[source_var] if @variable_is_symbol[source_var]
         elsif value.is_a?(HIR::IntegerLit) || value.is_a?(HIR::FloatLit) ||
               value.is_a?(HIR::StringLit) || value.is_a?(HIR::BoolLit) ||
               value.is_a?(HIR::NilLit) || value.is_a?(HIR::SymbolLit)
           # Literal value (e.g. from inlined default parameter) — generate inline
           loaded_type = infer_type_from_hir(value) || :value
+          # NilLit is a null Object reference on JVM, not void
+          loaded_type = :value if loaded_type == :void || value.is_a?(HIR::NilLit)
+          # If this variable has mixed-type assignments, force :value
+          loaded_type = :value if @_nil_assigned_vars&.include?(target_var)
           type = reconcile_store_type(target_var, loaded_type)
           ensure_slot(target_var, type)
           instructions.concat(load_value(value, type))
           instructions << store_instruction(target_var, type)
           @variable_types[target_var] = type
+          @variable_is_symbol[target_var] = true if value.is_a?(HIR::SymbolLit)
         else
           # Value should already be on the stack or in a temp var
           source_var = value.respond_to?(:result_var) ? value.result_var : nil
@@ -1156,6 +1221,8 @@ module Konpeito
       # E.g., parameter `completely` is :value (Object), and `completely = true` (:i8)
       # must box to Object, not change the slot type to :i8.
       def reconcile_store_type(target_var, source_type)
+        # Variables with mixed-type assignments must always be :value
+        return :value if @_nil_assigned_vars&.include?(target_var)
         existing_type = @variable_types[target_var]
         return source_type unless existing_type && @variable_slots.key?(target_var)
         return source_type if existing_type == source_type
@@ -1207,6 +1274,13 @@ module Konpeito
 
         if source_var
           type = @variable_types[source_var] || :value
+          # Record type so that subsequent loads from this shared field use the correct type
+          # (without this, the default :i64 is assumed, which breaks Proc/KBlock values)
+          @shared_mutable_capture_types[target_var] = type
+          # Propagate KBlock interface info so .call() works on shared capture variables
+          if @variable_kblock_iface[source_var]
+            @variable_kblock_iface[target_var] = @variable_kblock_iface[source_var]
+          end
           instructions << load_instruction(source_var, type)
           # Box primitive for Object field
           instructions.concat(box_for_object_field(type))
@@ -1278,6 +1352,26 @@ module Konpeito
         args = inst.args || []
         result_var = inst.result_var
         block_def = inst.block
+
+        # Safe navigation: x&.method → if x == nil then nil else x.method end
+        if inst.safe_navigation && receiver
+          return generate_safe_navigation_call(inst)
+        end
+
+        # Symbol#class → "Symbol" (symbols are represented as strings on JVM)
+        if method_name == "class" && receiver && args.empty?
+          recv_var = extract_var_name(receiver)
+          if recv_var && @variable_is_symbol[recv_var]
+            instructions = [{ "op" => "ldc", "value" => "Symbol" }]
+            if result_var
+              ensure_slot(result_var, :value)
+              instructions << store_instruction(result_var, :value)
+              @variable_types[result_var] = :value
+            end
+            return instructions
+          end
+        end
+
         # block_given? → null check on __block__ parameter
         if method_name == "block_given?" && (receiver.nil? || receiver.is_a?(HIR::SelfRef))
           return generate_block_given(result_var)
@@ -1352,7 +1446,10 @@ module Konpeito
         # Exclude comparison operators — they must go through generate_comparison_call
         # which handles == nil (ifnull), Objects.equals, etc. correctly.
         if receiver && !receiver.is_a?(HIR::SelfRef) && is_user_class_receiver?(receiver) && !comparison_operator?(method_name.to_s)
-          return generate_instance_call(inst, method_name, receiver, args, result_var)
+          result = generate_instance_call(inst, method_name, receiver, args, result_var)
+          # If generate_instance_call returns empty (method not found in user class hierarchy),
+          # fall through to invokedynamic for Ruby built-in methods (is_a?, respond_to?, etc.)
+          return result unless result.empty?
         end
 
         # Check for self.method() call within instance method (explicit or implicit self)
@@ -1386,7 +1483,8 @@ module Konpeito
 
         # Check for String method calls
         if receiver && is_string_receiver?(receiver) && string_method?(method_name)
-          return generate_string_method_call(method_name, receiver, args, result_var)
+          result = generate_string_method_call(method_name, receiver, args, result_var)
+          return result if result
         end
 
         # Check for NativeArray primitive array method calls ([], []=, length)
@@ -1427,6 +1525,15 @@ module Konpeito
 
         if method_name == "print" && (receiver.nil? || receiver.is_a?(HIR::SelfRef))
           return generate_print_call(args, result_var)
+        end
+
+        # Symbol#inspect → ":" + value (symbols are strings in JVM backend)
+        if method_name == "inspect" && receiver && args.empty?
+          recv_var = extract_var_name(receiver)
+          is_sym = receiver.is_a?(HIR::SymbolLit) || (recv_var && @variable_is_symbol[recv_var])
+          if is_sym
+            return generate_symbol_inspect(receiver, result_var)
+          end
         end
 
         # Check for type conversion methods
@@ -1475,7 +1582,8 @@ module Konpeito
             if cls_name == "String"
               @variable_types[recv_var] = :string if recv_var
               if string_method?(method_name)
-                return generate_string_method_call(method_name, receiver, args, result_var)
+                result = generate_string_method_call(method_name, receiver, args, result_var)
+                return result if result
               end
             end
 
@@ -1734,8 +1842,23 @@ module Konpeito
         recv_type = recv_var ? (@variable_types[recv_var] || :value) : (literal_type_tag(receiver) || :value)
         arg_type = arg_var ? (@variable_types[arg_var] || :value) : (literal_type_tag(arg) || :value)
 
+        # :void (NilClass) should be treated as :value (Object) for comparison purposes
+        recv_type = :value if recv_type == :void
+        arg_type = :value if arg_type == :void
+
         # Determine comparison type
-        is_object_type = recv_type == :string || arg_type == :string ||
+        # If either side is nil (literal or :value variable), always use null-safe object comparison
+        has_nil = receiver.is_a?(HIR::NilLit) || arg.is_a?(HIR::NilLit)
+
+        # For == and !=: if one side is :value (potentially null) and the other is numeric,
+        # use object comparison to avoid NPE when unboxing null to primitive.
+        # This handles inlined nil comparisons where nil becomes a LoadLocal with :value type.
+        mixed_value_numeric = (op == "==" || op == "!=") &&
+                              ((recv_type == :value && (arg_type == :i64 || arg_type == :double || arg_type == :i8)) ||
+                               (arg_type == :value && (recv_type == :i64 || recv_type == :double || recv_type == :i8)))
+
+        is_object_type = has_nil || mixed_value_numeric ||
+                         recv_type == :string || arg_type == :string ||
                          (recv_type == :value && arg_type == :value &&
                           recv_type != :i64 && arg_type != :i64 &&
                           recv_type != :double && arg_type != :double)
@@ -1920,7 +2043,7 @@ module Konpeito
 
       # ---- begin/rescue/else/ensure ----
 
-      def generate_begin_rescue(inst, inlined_try_body: nil)
+      def generate_begin_rescue(inst, inlined_try_body: nil, bb_instructions: nil)
         instructions = []
 
         try_start = new_label("try_start")
@@ -1930,6 +2053,29 @@ module Konpeito
         has_rescue = inst.rescue_clauses && !inst.rescue_clauses.empty?
         has_else = inst.else_blocks && !inst.else_blocks.empty?
         has_ensure = inst.ensure_blocks && !inst.ensure_blocks.empty?
+
+        # Build a map from body_blocks/ensure_blocks/else_blocks expression IDs to their
+        # wrapping StoreLocal instructions from the main BB. The HIR builder extracts
+        # StoreLocal wrappers into the main BB and only puts the value expression in
+        # body_blocks. We need to re-associate them for correct code generation.
+        orphaned_stores = {}  # expression_object_id => StoreLocal instruction
+        if bb_instructions && inst.non_try_instruction_ids
+          non_try_ids = inst.non_try_instruction_ids
+          # Collect all body expression IDs
+          body_expr_ids = Set.new
+          inst.rescue_clauses&.each do |clause|
+            clause.body_blocks&.each { |bi| body_expr_ids << bi.object_id }
+          end
+          inst.ensure_blocks&.each { |bi| body_expr_ids << bi.object_id }
+          inst.else_blocks&.each { |bi| body_expr_ids << bi.object_id }
+
+          bb_instructions.each do |bi|
+            next unless bi.is_a?(HIR::StoreLocal) && non_try_ids.include?(bi.object_id)
+            # This StoreLocal wraps one of the body expressions
+            val_id = bi.value.object_id
+            orphaned_stores[val_id] = bi if body_expr_ids.include?(val_id)
+          end
+        end
 
         # Use inlined try body if provided (from block's pre-BeginRescue instructions),
         # otherwise fall back to BeginRescue's stored try_blocks
@@ -1961,7 +2107,19 @@ module Konpeito
         # Label for exception ensure path (catch-all)
         finally_handler_label = new_label("finally_handler") if has_ensure
 
-        # Register exception table entries
+        # 1. Try block (generate BEFORE registering outer exception handlers,
+        # so that inner/nested BeginRescue handlers appear first in the table.
+        # JVM checks exception table entries in order; first match wins.)
+        instructions << { "op" => "label", "name" => try_start }
+        last_try_result = nil
+        try_body.each do |try_inst|
+          instructions.concat(generate_instruction(try_inst))
+          last_try_result = try_inst.result_var if try_inst.respond_to?(:result_var) && try_inst.result_var
+        end
+        instructions << { "op" => "label", "name" => try_end }
+
+        # Register exception table entries AFTER try body is generated
+        # (so nested handlers from inner BeginRescue appear before outer ones)
         if has_rescue
           inst.rescue_clauses.each_with_index do |clause, i|
             clause.exception_classes.each do |exc_class|
@@ -1986,26 +2144,11 @@ module Konpeito
           }
         end
 
-        # 1. Try block
-        instructions << { "op" => "label", "name" => try_start }
-        last_try_result = nil
-        try_body.each do |try_inst|
-          instructions.concat(generate_instruction(try_inst))
-          last_try_result = try_inst.result_var if try_inst.respond_to?(:result_var) && try_inst.result_var
-        end
-        instructions << { "op" => "label", "name" => try_end }
-
         # Store try block result to result_var if present
         if result_var && last_try_result
           last_type = @variable_types[last_try_result.to_s] || :value
           instructions.concat(load_value_from_var(last_try_result.to_s, last_type))
-          if last_type == :i64
-            instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
-                              "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
-          elsif last_type == :double
-            instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
-                              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
-          end
+          instructions.concat(box_primitive_if_needed(last_type, :value))
           instructions << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
         end
 
@@ -2037,19 +2180,17 @@ module Konpeito
             clause.body_blocks&.each do |body_inst|
               instructions.concat(generate_instruction(body_inst))
               last_rescue_result = body_inst.result_var if body_inst.respond_to?(:result_var) && body_inst.result_var
+              # Generate orphaned StoreLocal that wraps this body expression
+              if (store_inst = orphaned_stores[body_inst.object_id])
+                instructions.concat(generate_instruction(store_inst))
+              end
             end
 
             # Store rescue body result to result_var
             if result_var && last_rescue_result
               last_type = @variable_types[last_rescue_result.to_s] || :value
               instructions.concat(load_value_from_var(last_rescue_result.to_s, last_type))
-              if last_type == :i64
-                instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
-                                  "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
-              elsif last_type == :double
-                instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
-                                  "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
-              end
+              instructions.concat(box_primitive_if_needed(last_type, :value))
               instructions << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
             end
 
@@ -2072,6 +2213,10 @@ module Konpeito
           # Run ensure body
           inst.ensure_blocks.each do |ensure_inst|
             instructions.concat(generate_instruction(ensure_inst))
+            # Generate orphaned StoreLocal that wraps this ensure expression
+            if (store_inst = orphaned_stores[ensure_inst.object_id])
+              instructions.concat(generate_instruction(store_inst))
+            end
           end
 
           # Re-throw
@@ -2082,8 +2227,21 @@ module Konpeito
         # 4. Else block
         if has_else
           instructions << { "op" => "label", "name" => else_label }
+          last_else_result = nil
           inst.else_blocks.each do |else_inst|
             instructions.concat(generate_instruction(else_inst))
+            last_else_result = else_inst.result_var if else_inst.respond_to?(:result_var) && else_inst.result_var
+            # Generate orphaned StoreLocal that wraps this else expression
+            if (store_inst = orphaned_stores[else_inst.object_id])
+              instructions.concat(generate_instruction(store_inst))
+            end
+          end
+          # Else block result overrides the try block result
+          if result_var && last_else_result
+            last_type = @variable_types[last_else_result.to_s] || :value
+            instructions.concat(load_value_from_var(last_else_result.to_s, last_type))
+            instructions.concat(box_primitive_if_needed(last_type, :value))
+            instructions << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
           end
           if has_ensure
             instructions << { "op" => "goto", "target" => ensure_normal_label }
@@ -2097,6 +2255,10 @@ module Konpeito
           instructions << { "op" => "label", "name" => ensure_normal_label }
           inst.ensure_blocks.each do |ensure_inst|
             instructions.concat(generate_instruction(ensure_inst))
+            # Generate orphaned StoreLocal that wraps this ensure expression
+            if (store_inst = orphaned_stores[ensure_inst.object_id])
+              instructions.concat(generate_instruction(store_inst))
+            end
           end
         end
 
@@ -2300,12 +2462,19 @@ module Konpeito
             instructions.concat(guard_insts)
             # Guard result is on stack or in result_var
             guard_result_var = in_clause.guard.result_var if in_clause.guard.respond_to?(:result_var)
+            guard_type = :value
             if guard_result_var
               guard_type = @variable_types[guard_result_var.to_s] || :value
               instructions.concat(load_value_from_var(guard_result_var.to_s, guard_type))
             end
-            # Check truthiness: if result is not null and not false (for Objects)
-            instructions << { "op" => "ifnull", "target" => next_label }
+            # Check truthiness based on guard result type
+            if guard_type == :i8
+              # Boolean/int result: 0 = false, non-zero = true
+              instructions << { "op" => "ifeq", "target" => next_label }
+            else
+              # Object result: null = false, non-null = truthy
+              instructions << { "op" => "ifnull", "target" => next_label }
+            end
             instructions << { "op" => "goto", "target" => body_label }
           else
             instructions << { "op" => "ifeq", "target" => next_label }
@@ -2865,11 +3034,31 @@ module Konpeito
       def generate_store_constant(inst)
         instructions = []
 
-        # Skip storing Java:: class reference aliases (they are type-level only)
+        # Java:: class reference aliases (e.g., KUIRuntime = Java::Konpeito::Ui::KUIRuntime)
+        # Store the alias name as a string in the static field so that getstatic in class
+        # constructors gets a valid class reference (not null).
         if inst.value.is_a?(HIR::ConstantLookup) && inst.value.name.to_s.start_with?("Java::")
-          # Propagate the class_types mapping for the alias
-          @variable_class_types[inst.name.to_s] = inst.value.name.to_s
-          return []
+          alias_name = inst.name.to_s
+          @variable_class_types[alias_name] = inst.value.name.to_s
+
+          # Determine owner for the static field
+          scope = inst.respond_to?(:scope) ? inst.scope&.to_s : nil
+          owner = if scope && @module_info.key?(scope)
+                    module_jvm_name(scope)
+                  elsif scope && @class_info.key?(scope)
+                    @class_info[scope][:jvm_name]
+                  else
+                    main_class_name
+                  end
+          if owner == main_class_name
+            @constant_fields << alias_name
+          end
+
+          return [
+            { "op" => "ldc", "value" => alias_name },
+            { "op" => "putstatic", "owner" => owner,
+              "name" => alias_name, "descriptor" => "Ljava/lang/Object;" }
+          ]
         end
 
         # Determine the owner (module or class)
@@ -2892,6 +3081,42 @@ module Konpeito
 
         instructions << { "op" => "putstatic", "owner" => owner,
                           "name" => inst.name.to_s, "descriptor" => "Ljava/lang/Object;" }
+        instructions
+      end
+
+      # defined? operator: returns a string describing the type of the expression
+      def generate_defined_check(inst)
+        instructions = []
+        result_var = inst.result_var
+
+        case inst.check_type
+        when :local_variable
+          # In AOT compilation, local variables are always known at compile time
+          instructions << { "op" => "ldc", "value" => "local-variable" }
+        when :constant
+          # For well-known constants, just return "constant"
+          # In a more complete implementation, we'd use Class.forName to check
+          instructions << { "op" => "ldc", "value" => "constant" }
+        when :expression
+          # For nil/true/false literals etc., return the name directly
+          instructions << { "op" => "ldc", "value" => inst.name.to_s }
+        when :method
+          instructions << { "op" => "ldc", "value" => "method" }
+        when :global_variable
+          instructions << { "op" => "ldc", "value" => "global-variable" }
+        when :instance_variable
+          instructions << { "op" => "ldc", "value" => "instance-variable" }
+        when :class_variable
+          instructions << { "op" => "ldc", "value" => "class-variable" }
+        else
+          instructions << { "op" => "ldc", "value" => "expression" }
+        end
+
+        if result_var
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+
         instructions
       end
 
@@ -2953,13 +3178,24 @@ module Konpeito
       def generate_regexp_lit(inst)
         instructions = []
 
-        # Store the pattern as a string (sufficient for basic usage and display)
+        # Compile regexp literal to java.util.regex.Pattern for proper regex support
         instructions << { "op" => "ldc", "value" => inst.pattern }
+        flags = inst.respond_to?(:options) ? ruby_regexp_flags_to_jvm(inst.options || 0) : 0
+        if flags != 0
+          instructions << { "op" => "iconst", "value" => flags }
+          instructions << { "op" => "invokestatic", "owner" => "java/util/regex/Pattern",
+                            "name" => "compile",
+                            "descriptor" => "(Ljava/lang/String;I)Ljava/util/regex/Pattern;" }
+        else
+          instructions << { "op" => "invokestatic", "owner" => "java/util/regex/Pattern",
+                            "name" => "compile",
+                            "descriptor" => "(Ljava/lang/String;)Ljava/util/regex/Pattern;" }
+        end
 
         if inst.result_var
           ensure_slot(inst.result_var, :value)
           instructions << { "op" => "astore", "var" => @variable_slots[inst.result_var.to_s] }
-          @variable_types[inst.result_var.to_s] = :string
+          @variable_types[inst.result_var.to_s] = :value
         end
         instructions
       end
@@ -3106,11 +3342,12 @@ module Konpeito
                               "owner" => "java/lang/Boolean", "name" => "toString",
                               "descriptor" => "(Z)Ljava/lang/String;" }
           else
-            # Object.toString()
+            # Object.toString() — null-safe: return "" for nil (Ruby semantics)
             instructions.concat(load_value(receiver, :value))
-            instructions << { "op" => "invokevirtual",
-                              "owner" => "java/lang/Object", "name" => "toString",
-                              "descriptor" => "()Ljava/lang/String;" }
+            instructions << { "op" => "ldc", "value" => "" }
+            instructions << { "op" => "invokestatic",
+                              "owner" => "java/util/Objects", "name" => "toString",
+                              "descriptor" => "(Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/String;" }
           end
           if result_var
             instructions << store_instruction(result_var, :value)
@@ -3126,12 +3363,19 @@ module Konpeito
             instructions.concat(load_value(receiver, :double))
             instructions << { "op" => "d2l" }
           else
-            # Fallback: assume string → Long.parseLong
+            # Fallback: use invokedynamic for null-safe, Ruby-compatible to_i
+            # (handles non-numeric strings by returning 0, partial numeric parsing, etc.)
             instructions.concat(load_value(receiver, :value))
-            instructions << { "op" => "checkcast", "type" => "java/lang/String" }
-            instructions << { "op" => "invokestatic",
-                              "owner" => "java/lang/Long", "name" => "parseLong",
-                              "descriptor" => "(Ljava/lang/String;)J" }
+            instructions << { "op" => "invokedynamic",
+                              "name" => "to_i",
+                              "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;",
+                              "bootstrapOwner" => "konpeito/runtime/RubyDispatch",
+                              "bootstrapName" => "bootstrap",
+                              "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;" }
+            # Unbox the result (Object → Long → long)
+            instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                              "name" => "longValue", "descriptor" => "()J" }
           end
           if result_var
             instructions << store_instruction(result_var, :i64)
@@ -3147,11 +3391,17 @@ module Konpeito
             instructions.concat(load_value(receiver, :i64))
             instructions << { "op" => "l2d" }
           else
+            # Fallback: use invokedynamic for null-safe, Ruby-compatible to_f
             instructions.concat(load_value(receiver, :value))
-            instructions << { "op" => "checkcast", "type" => "java/lang/String" }
-            instructions << { "op" => "invokestatic",
-                              "owner" => "java/lang/Double", "name" => "parseDouble",
-                              "descriptor" => "(Ljava/lang/String;)D" }
+            instructions << { "op" => "invokedynamic",
+                              "name" => "to_f",
+                              "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;",
+                              "bootstrapOwner" => "konpeito/runtime/RubyDispatch",
+                              "bootstrapName" => "bootstrap",
+                              "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;" }
+            instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                              "name" => "doubleValue", "descriptor" => "()D" }
           end
           if result_var
             instructions << store_instruction(result_var, :double)
@@ -3479,6 +3729,76 @@ module Konpeito
           instructions << { "op" => "goto", "target" => else_label }
         end
 
+        instructions
+      end
+
+      # Safe navigation: x&.method → if x == nil then nil else x.method end
+      def generate_safe_navigation_call(inst)
+        instructions = []
+        receiver = inst.receiver
+        result_var = inst.result_var
+
+        # Force result_var to :value type (safe nav can return nil)
+        # This ensures both branches (null and non-null) use the same JVM type
+        if result_var
+          @variable_types[result_var] = :value
+          @_nil_assigned_vars ||= Set.new
+          @_nil_assigned_vars << result_var
+          slot_for(result_var) # ensure slot is allocated as Object
+        end
+
+        # Load receiver onto stack for null check
+        instructions.concat(load_value(receiver, :value))
+
+        # If null, jump to nil_label
+        nil_label = new_label("safe_nav_nil")
+        end_label = new_label("safe_nav_end")
+        instructions << { "op" => "ifnull", "target" => nil_label }
+
+        # Non-null path: do the actual call (with safe_navigation disabled to avoid recursion)
+        original_safe_nav = inst.instance_variable_get(:@safe_navigation)
+        inst.instance_variable_set(:@safe_navigation, false)
+        instructions.concat(generate_call(inst))
+        inst.instance_variable_set(:@safe_navigation, original_safe_nav)
+
+        # If the call stored the result as a primitive type, we need to convert it to Object
+        # since safe navigation result must be Object (can be null)
+        if result_var
+          actual_type = @variable_types[result_var]
+          if actual_type && actual_type != :value
+            # Re-read as current type, box, and store as :value
+            slot = slot_for(result_var)
+            case actual_type
+            when :i64
+              instructions << { "op" => "lload", "var" => slot }
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                               "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+              instructions << { "op" => "astore", "var" => slot }
+            when :double
+              instructions << { "op" => "dload", "var" => slot }
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                               "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+              instructions << { "op" => "astore", "var" => slot }
+            when :i8
+              instructions << { "op" => "iload", "var" => slot }
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
+                               "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
+              instructions << { "op" => "astore", "var" => slot }
+            end
+            @variable_types[result_var] = :value
+          end
+        end
+
+        instructions << { "op" => "goto", "target" => end_label }
+
+        # Null path: store null as result
+        instructions << { "op" => "label", "name" => nil_label }
+        if result_var
+          instructions << { "op" => "aconst_null" }
+          instructions << store_instruction(result_var, :value)
+        end
+
+        instructions << { "op" => "label", "name" => end_label }
         instructions
       end
 
@@ -4911,6 +5231,14 @@ module Konpeito
                 # Unbox if loaded type is :value but constructor expects primitive
                 loaded_t = infer_loaded_type(args[i])
                 instructions.concat(unbox_if_needed(loaded_t, param_t))
+              else
+                # Optional parameter not provided at call site — push default value
+                init_param = init_func&.params&.[](i)
+                if init_param&.default_value
+                  instructions.concat(prism_default_to_jvm(init_param.default_value, param_t))
+                else
+                  instructions.concat(default_value_instructions(param_t))
+                end
               end
             end
           end
@@ -5035,24 +5363,63 @@ module Konpeito
 
         name = inst.name.to_s
 
+        # Special Ruby constants: Float::INFINITY, Float::NAN, etc.
+        if name == "Float::INFINITY"
+          ensure_slot(result_var, :value)
+          @variable_types[result_var] = :value
+          return [
+            { "op" => "getstatic", "owner" => "java/lang/Double",
+              "name" => "POSITIVE_INFINITY", "descriptor" => "D" },
+            { "op" => "invokestatic", "owner" => "java/lang/Double",
+              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" },
+            store_instruction(result_var, :value)
+          ]
+        end
+        if name == "Float::NAN"
+          ensure_slot(result_var, :value)
+          @variable_types[result_var] = :value
+          return [
+            { "op" => "getstatic", "owner" => "java/lang/Double",
+              "name" => "NaN", "descriptor" => "D" },
+            { "op" => "invokestatic", "owner" => "java/lang/Double",
+              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" },
+            store_instruction(result_var, :value)
+          ]
+        end
+
+        # Built-in Ruby class/module names (for ConstantLookup of Integer, String, etc.)
+        builtin_classes = %w[
+          Integer Float String Symbol Array Hash Regexp NilClass TrueClass FalseClass
+          Numeric Comparable Object BasicObject Kernel Enumerable
+          Range MatchData IO File Dir Time Proc Method
+          StandardError RuntimeError ArgumentError TypeError NameError NoMethodError
+          ZeroDivisionError RangeError IndexError KeyError IOError
+          Fiber Thread Mutex ConditionVariable Queue SizedQueue
+        ]
+
         # Check if this is a class/module reference or a value constant
+        # Also check if this is a Java:: class alias (e.g., KUIRuntime = Java::Konpeito::Ui::KUIRuntime)
+        java_class_alias = @variable_class_types[name]&.to_s&.start_with?("Java::")
         is_class = @class_info.key?(name) ||
                    @module_info.key?(name) ||
                    STDLIB_MODULES.key?(name) ||
+                   builtin_classes.include?(name) ||
                    @variable_class_types.values.include?(name) ||
+                   java_class_alias ||
                    (@rbs_loader && @rbs_loader.respond_to?(:native_class_type) &&
                     (begin; @rbs_loader.native_class_type(name); rescue; nil; end))
 
         if is_class
           # Class reference — used as receiver for ClassName.new / ClassName.method calls.
-          # The actual class reference is resolved at call sites, so we just store a marker.
+          # Store as the class name string so that comparisons like
+          # `assert_equal(Integer, 1.class, ...)` work (k_class returns the name).
           ensure_slot(result_var, :value)
           @variable_types[result_var] = :value
           @variable_class_types[result_var] = name
           @variable_is_class_ref[result_var] = true
 
           [
-            { "op" => "aconst_null" },
+            { "op" => "ldc", "value" => name },
             store_instruction(result_var, :value)
           ]
         else
@@ -7307,11 +7674,10 @@ module Konpeito
           end
         }
 
-        # Determine return type: use the target function's return type (not the caller's)
-        func_ret = function_return_type(func)
-        ret_type = if func_ret && func_ret != :value && func_ret != :void
-                     func_ret
-                   elsif yield_inst.respond_to?(:type) && yield_inst.type
+        # Determine return type: use the yield instruction's type (what the block returns),
+        # NOT the function's own return type (which is what the function returns after the yield).
+        # Default to :value (Object) for safety — blocks may return different types.
+        ret_type = if yield_inst.respond_to?(:type) && yield_inst.type
                      t = konpeito_type_to_tag(yield_inst.type)
                      t == :value ? :value : t
                    else
@@ -7548,11 +7914,27 @@ module Konpeito
       def generate_symbol_lit(inst)
         result_var = inst.result_var
         ensure_slot(result_var, :string)
+        @variable_is_symbol[result_var.to_s] = true
 
         [
           { "op" => "ldc", "value" => inst.value.to_s },
           store_instruction(result_var, :string)
         ].tap { @variable_types[result_var] = :string }
+      end
+
+      # Symbol#inspect → ":" + symbol_name
+      def generate_symbol_inspect(receiver, result_var)
+        instructions = []
+        instructions << { "op" => "ldc", "value" => ":" }
+        instructions.concat(load_value(receiver, :string))
+        instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
+                          "name" => "concat", "descriptor" => "(Ljava/lang/String;)Ljava/lang/String;" }
+        if result_var
+          ensure_slot(result_var, :string)
+          instructions << store_instruction(result_var, :string)
+          @variable_types[result_var.to_s] = :string
+        end
+        instructions
       end
 
       def generate_hash_lit(inst)
@@ -7671,9 +8053,25 @@ module Konpeito
       end
 
       def string_method?(name)
+        # Note: count, tr, chomp (with arg), delete, squeeze, insert, center, ljust, rjust,
+        # capitalize, swapcase, chop, hex, oct, scan, match, match?, each_line
+        # are delegated to invokedynamic (RubyDispatch.java) for correct Ruby semantics.
+        # Note: gsub and sub are delegated to invokedynamic (RubyDispatch.java)
+        # because they may receive Regexp (Pattern) arguments that can't be handled inline.
         %w[length size upcase downcase include? start_with? end_with? strip
-           reverse empty? split gsub chars sub index rindex lines bytes
-           replace freeze frozen? count tr chomp to_i to_f []].include?(name)
+           reverse empty? split chars lines bytes
+           replace freeze frozen? to_i to_f []].include?(name)
+      end
+
+      # Check if a method argument is a Regexp (Pattern) type
+      def regexp_type_arg?(arg)
+        return true if arg.is_a?(HIR::RegexpLit)
+        if arg.is_a?(HIR::LocalVar)
+          var_name = arg.name.to_s
+          type = @variable_types[var_name]
+          return type == :regexp || type == :pattern
+        end
+        false
       end
 
       def numeric_instance_method?(name)
@@ -7714,9 +8112,23 @@ module Konpeito
         when "push", "<<"
           generate_array_push(receiver, args, result_var)
         when "first"
-          generate_array_ruby_method(receiver, "first", "()Ljava/lang/Object;", result_var, element_type: element_type)
+          if args.empty?
+            generate_array_ruby_method(receiver, "first", "()Ljava/lang/Object;", result_var, element_type: element_type)
+          else
+            generate_array_first_n(receiver, args, result_var)
+          end
         when "last"
-          generate_array_ruby_method(receiver, "last", "()Ljava/lang/Object;", result_var, element_type: element_type)
+          if args.empty?
+            generate_array_ruby_method(receiver, "last", "()Ljava/lang/Object;", result_var, element_type: element_type)
+          else
+            generate_array_last_n(receiver, args, result_var)
+          end
+        when "take"
+          generate_array_take(receiver, args, result_var)
+        when "drop"
+          generate_array_drop(receiver, args, result_var)
+        when "zip"
+          generate_array_zip(receiver, args, result_var)
         when "pop"
           generate_array_ruby_method(receiver, "pop", "()Ljava/lang/Object;", result_var, element_type: element_type)
         when "empty?"
@@ -7728,13 +8140,22 @@ module Konpeito
         when "reverse"
           generate_array_collection_method(receiver, "reverse", result_var)
         when "sort"
-          generate_array_collection_method(receiver, "sort", result_var)
+          if block_def
+            # sort with block: fall through to dynamic dispatch via invokedynamic
+            nil
+          else
+            generate_array_collection_method(receiver, "sort", result_var)
+          end
         when "compact"
           generate_array_collection_method(receiver, "compact", result_var)
         when "uniq"
           generate_array_collection_method(receiver, "uniq", result_var)
         when "flatten"
-          generate_array_collection_method(receiver, "flatten", result_var)
+          if args.empty?
+            generate_array_collection_method(receiver, "flatten", result_var)
+          else
+            generate_array_flatten_depth(receiver, args, result_var)
+          end
         when "min"
           generate_array_ruby_method(receiver, "min", "()Ljava/lang/Object;", result_var, element_type: element_type)
         when "max"
@@ -7780,11 +8201,17 @@ module Konpeito
         when "delete"
           generate_array_delete_value(receiver, args, result_var)
         when "count"
-          if args.empty?
+          if block_def
+            generate_array_count_inline(receiver, block_def, result_var)
+          elsif args.empty?
             generate_array_length(receiver, result_var)
           end
         when "sum"
-          generate_array_sum(receiver, result_var)
+          if block_def
+            generate_array_sum_inline(receiver, block_def, result_var)
+          else
+            generate_array_sum(receiver, result_var)
+          end
         when "find_index"
           generate_array_find_index(receiver, args, result_var)
         when "find", "detect"
@@ -8060,6 +8487,102 @@ module Konpeito
         instructions
       end
 
+      def generate_array_first_n(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :i64))
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "first", "descriptor" => "(I)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      def generate_array_last_n(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :i64))
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "last", "descriptor" => "(I)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      def generate_array_take(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :i64))
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "take", "descriptor" => "(I)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      def generate_array_drop(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :i64))
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "drop", "descriptor" => "(I)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      def generate_array_zip(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :value))
+        instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "zip", "descriptor" => "(Lkonpeito/runtime/KArray;)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      def generate_array_flatten_depth(receiver, args, result_var)
+        instructions = []
+        instructions.concat(load_karray_receiver(receiver))
+        instructions.concat(load_value(args.first, :i64))
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "flatten", "descriptor" => "(I)Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+          @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
       def generate_array_find_inline(receiver, block_def, result_var)
         @block_counter = (@block_counter || 0) + 1
         instructions = []
@@ -8109,6 +8632,7 @@ module Konpeito
         # Load element
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__arr_find_elem_#{@block_counter}"
+        saved_outer = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
@@ -8158,6 +8682,9 @@ module Konpeito
 
         instructions << { "op" => "label", "name" => loop_end }
 
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer)
+
         if result_var
           instructions << load_instruction(found_var, :value)
           ensure_slot(result_var, :value)
@@ -8165,6 +8692,44 @@ module Konpeito
           @variable_types[result_var] = :value
         end
         instructions
+      end
+
+      # ========================================================================
+      # Block Parameter Scoping Helpers
+      # ========================================================================
+
+      # Save the outer variable's slot and type info so a block parameter with the
+      # same name can shadow it without corrupting the outer variable's state.
+      # Returns a saved state hash, or nil if no shadowing is needed.
+      def save_outer_var_for_block_param(param_name)
+        return nil unless @variable_slots.key?(param_name)
+        saved = {
+          slot: @variable_slots[param_name],
+          type: @variable_types[param_name],
+          class_type: @variable_class_types[param_name],
+          collection_type: @variable_collection_types[param_name],
+          kblock_iface: @variable_kblock_iface[param_name],
+          concurrency_type: @variable_concurrency_types[param_name],
+          native_array_element_type: @variable_native_array_element_type[param_name],
+          is_symbol: @variable_is_symbol[param_name],
+        }
+        # Remove the old slot mapping so a new slot will be allocated for the block param
+        @variable_slots.delete(param_name)
+        @variable_types.delete(param_name)
+        saved
+      end
+
+      # Restore the outer variable's slot and type info after the block has finished.
+      def restore_outer_var_after_block(param_name, saved_state)
+        return unless saved_state
+        @variable_slots[param_name] = saved_state[:slot]
+        @variable_types[param_name] = saved_state[:type]
+        @variable_class_types[param_name] = saved_state[:class_type] if saved_state[:class_type]
+        @variable_collection_types[param_name] = saved_state[:collection_type] if saved_state[:collection_type]
+        @variable_kblock_iface[param_name] = saved_state[:kblock_iface] if saved_state[:kblock_iface]
+        @variable_concurrency_types[param_name] = saved_state[:concurrency_type] if saved_state[:concurrency_type]
+        @variable_native_array_element_type[param_name] = saved_state[:native_array_element_type] if saved_state[:native_array_element_type]
+        @variable_is_symbol[param_name] = saved_state[:is_symbol] if saved_state[:is_symbol]
       end
 
       # ========================================================================
@@ -8212,6 +8777,8 @@ module Konpeito
         # Load element: arr.get(i)
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__each_elem_#{@block_counter}"
+        # Save outer variable state if block param shadows it (different type)
+        saved_outer = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8238,6 +8805,9 @@ module Konpeito
 
         instructions << { "op" => "goto", "target" => loop_label }
         instructions << { "op" => "label", "name" => end_label }
+
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer)
 
         # each returns the receiver
         if result_var
@@ -8300,6 +8870,7 @@ module Konpeito
         # Load element
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__map_elem_#{@block_counter}"
+        saved_outer_map = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8319,6 +8890,9 @@ module Konpeito
             last_result_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
           end
         end
+
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer_map)
 
         # Push block result to result array
         instructions << load_instruction(result_arr_var, @variable_types[result_arr_var] || :value)
@@ -8411,6 +8985,7 @@ module Konpeito
 
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__sel_elem_#{@block_counter}"
+        saved_outer_sel = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8465,6 +9040,9 @@ module Konpeito
         instructions << store_instruction(counter_var, :i64)
         instructions << { "op" => "goto", "target" => loop_label }
         instructions << { "op" => "label", "name" => end_label }
+
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer_sel)
 
         if result_var
           ensure_slot(result_var, :value)
@@ -8523,6 +9101,7 @@ module Konpeito
 
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__rej_elem_#{@block_counter}"
+        saved_outer_rej = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8574,6 +9153,9 @@ module Konpeito
         instructions << { "op" => "goto", "target" => loop_label }
         instructions << { "op" => "label", "name" => end_label }
 
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer_rej)
+
         if result_var
           ensure_slot(result_var, :value)
           instructions << load_instruction(result_arr_var, :value)
@@ -8606,18 +9188,30 @@ module Konpeito
         # Accumulator = initial value (boxed as Object)
         acc_param = block_def.params[0]
         acc_var = acc_param ? acc_param.name.to_s : "__red_acc_#{@block_counter}"
+        saved_outer_acc = save_outer_var_for_block_param(acc_var)
         ensure_slot(acc_var, :value)
-        if args.first
+        has_initial = !!args.first
+        if has_initial
           instructions.concat(load_and_box_for_collection(args.first))
         else
-          instructions << { "op" => "aconst_null" }
+          # No initial value: use first element as accumulator, start loop from index 1
+          instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
+          instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
+          instructions << { "op" => "iconst", "value" => 0 }
+          instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                            "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
         end
         instructions << store_instruction(acc_var, :value)
         @variable_types[acc_var] = :value
 
         counter_var = "__red_i_#{@block_counter}"
         ensure_slot(counter_var, :i64)
-        instructions << { "op" => "lconst_0" }
+        if has_initial
+          instructions << { "op" => "lconst_0" }
+        else
+          # Start from index 1 when no initial value (first element is used as accumulator)
+          instructions << { "op" => "lconst_1" }
+        end
         instructions << store_instruction(counter_var, :i64)
         @variable_types[counter_var] = :i64
 
@@ -8633,6 +9227,7 @@ module Konpeito
         # Load element
         elem_param = block_def.params[1]
         elem_var = elem_param ? elem_param.name.to_s : "__red_elem_#{@block_counter}"
+        saved_outer_elem_red = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8674,6 +9269,10 @@ module Konpeito
         instructions << store_instruction(counter_var, :i64)
         instructions << { "op" => "goto", "target" => loop_label }
         instructions << { "op" => "label", "name" => end_label }
+
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(acc_var, saved_outer_acc)
+        restore_outer_var_after_block(elem_var, saved_outer_elem_red)
 
         if result_var
           ensure_slot(result_var, :value)
@@ -8741,6 +9340,7 @@ module Konpeito
 
         block_param = block_def.params.first
         elem_var = block_param ? block_param.name.to_s : "__sc_elem_#{@block_counter}"
+        saved_outer_sc = save_outer_var_for_block_param(elem_var)
         ensure_slot(elem_var, :value)
         instructions << load_instruction(arr_var, @variable_types[arr_var] || :value)
         instructions << { "op" => "checkcast", "type" => KARRAY_CLASS } unless @variable_types[arr_var] == :array
@@ -8815,11 +9415,227 @@ module Konpeito
 
         instructions << { "op" => "label", "name" => end_label }
 
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer_sc)
+
         if result_var
           ensure_slot(result_var, :i8)
           instructions << load_instruction(sc_result_var, :i8)
           instructions << store_instruction(result_var, :i8)
           @variable_types[result_var] = :i8
+        end
+        instructions
+      end
+
+      def generate_array_count_inline(receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+
+        arr_var = "__arr_cnt_#{@block_counter}"
+        ensure_slot(arr_var, :value)
+        instructions.concat(load_value(receiver, :value))
+        instructions << store_instruction(arr_var, :value)
+        @variable_types[arr_var] = :value
+
+        limit_var = "__cnt_limit_#{@block_counter}"
+        ensure_slot(limit_var, :i64)
+        instructions << load_instruction(arr_var, :value)
+        instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "length", "descriptor" => "()J" }
+        instructions << store_instruction(limit_var, :i64)
+        @variable_types[limit_var] = :i64
+
+        count_var = "__cnt_result_#{@block_counter}"
+        ensure_slot(count_var, :i64)
+        instructions << { "op" => "lconst_0" }
+        instructions << store_instruction(count_var, :i64)
+        @variable_types[count_var] = :i64
+
+        counter_var = "__cnt_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << { "op" => "lconst_0" }
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("cnt_loop")
+        end_label = new_label("cnt_end")
+        incr_label = new_label("cnt_incr")
+        skip_label = new_label("cnt_skip")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(limit_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => "ifge", "target" => end_label }
+
+        # Load element
+        elem_param = block_def.params[0]
+        elem_var = elem_param ? elem_param.name.to_s : "__cnt_elem_#{@block_counter}"
+        saved_outer_cnt = save_outer_var_for_block_param(elem_var)
+        ensure_slot(elem_var, :value)
+        instructions << load_instruction(arr_var, :value)
+        instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
+        instructions << store_instruction(elem_var, :value)
+        @variable_types[elem_var] = :value
+
+        # Inline block body
+        last_result_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            instructions.concat(generate_instruction(block_inst))
+            last_result_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Check if block returned truthy
+        if last_result_var
+          last_type = @variable_types[last_result_var] || :value
+          instructions << load_instruction(last_result_var, last_type)
+          if last_type == :i8
+            instructions << { "op" => "ifeq", "target" => skip_label }
+          else
+            instructions << { "op" => "ifnull", "target" => skip_label }
+          end
+        end
+
+        # Increment count
+        instructions << { "op" => "label", "name" => incr_label }
+        instructions << load_instruction(count_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(count_var, :i64)
+
+        instructions << { "op" => "label", "name" => skip_label }
+
+        # Increment counter
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        # Restore outer variable state after block completes
+        restore_outer_var_after_block(elem_var, saved_outer_cnt)
+
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions << load_instruction(count_var, :i64)
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
+        end
+        instructions
+      end
+
+      def generate_array_sum_inline(receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+
+        arr_var = "__arr_sum_#{@block_counter}"
+        ensure_slot(arr_var, :value)
+        instructions.concat(load_value(receiver, :value))
+        instructions << store_instruction(arr_var, :value)
+        @variable_types[arr_var] = :value
+
+        limit_var = "__sum_limit_#{@block_counter}"
+        ensure_slot(limit_var, :i64)
+        instructions << load_instruction(arr_var, :value)
+        instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "length", "descriptor" => "()J" }
+        instructions << store_instruction(limit_var, :i64)
+        @variable_types[limit_var] = :i64
+
+        # Accumulator (boxed as Object to handle both int/float)
+        acc_var = "__sum_acc_#{@block_counter}"
+        ensure_slot(acc_var, :value)
+        instructions << { "op" => "lconst_0" }
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                          "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+        instructions << store_instruction(acc_var, :value)
+        @variable_types[acc_var] = :value
+
+        counter_var = "__sum_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << { "op" => "lconst_0" }
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("sum_loop")
+        end_label = new_label("sum_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(limit_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => "ifge", "target" => end_label }
+
+        # Load element into block param
+        elem_param = block_def.params[0]
+        elem_var = elem_param ? elem_param.name.to_s : "__sum_elem_#{@block_counter}"
+        ensure_slot(elem_var, :value)
+        instructions << load_instruction(arr_var, :value)
+        instructions << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
+                          "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
+        instructions << store_instruction(elem_var, :value)
+        @variable_types[elem_var] = :value
+
+        # Inline block body
+        last_result_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            instructions.concat(generate_instruction(block_inst))
+            last_result_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Add block result to accumulator using invokedynamic (handles both int/float)
+        if last_result_var
+          last_type = @variable_types[last_result_var] || :value
+          instructions << load_instruction(acc_var, :value)
+          instructions << load_instruction(last_result_var, last_type)
+          # Box if needed
+          case last_type
+          when :i64
+            instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                              "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+          when :double
+            instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+          end
+          instructions << { "op" => "invokedynamic",
+                            "name" => "op_plus",
+                            "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+                            "bootstrapOwner" => "konpeito/runtime/RubyDispatch",
+                            "bootstrapName" => "bootstrap",
+                            "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;",
+                            "bootstrapArgs" => [] }
+          instructions << store_instruction(acc_var, :value)
+        end
+
+        # Increment counter
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << load_instruction(acc_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
         end
         instructions
       end
@@ -8849,7 +9665,11 @@ module Konpeito
         when "has_value?", "value?"
           generate_hash_has_value(receiver, args, result_var)
         when "count"
-          generate_hash_length(receiver, result_var)
+          if _block_def
+            nil  # Fall through to dispatch for count with block
+          else
+            generate_hash_length(receiver, result_var)
+          end
         when "each"
           if _block_def
             generate_hash_each_inline(receiver, _block_def, result_var)
@@ -8862,10 +9682,11 @@ module Konpeito
           generate_hash_merge_inplace(receiver, args, result_var)
         when "clear"
           generate_hash_clear(receiver, result_var)
-        when "each_key"
-          nil # Requires block iteration - skip for now
-        when "select", "reject", "map", "any?", "all?"
-          nil # Requires block iteration - skip for now
+        when "each_key", "each_value", "each_pair"
+          nil # Handled via invokedynamic dispatch → RubyDispatch
+        when "select", "filter", "reject", "map", "collect", "any?", "all?", "none?",
+             "min_by", "max_by", "sort_by", "flat_map", "collect_concat", "find", "detect"
+          nil # Handled via invokedynamic dispatch → RubyDispatch (block-based methods)
         else
           nil
         end
@@ -9212,9 +10033,18 @@ module Konpeito
         when "split"
           generate_string_split(receiver, args, result_var)
         when "gsub"
-          generate_string_gsub(receiver, args, result_var)
+          # If the pattern arg is a Regexp, fall through to dispatch (which handles Pattern)
+          if args.size >= 1 && (args[0].is_a?(HIR::RegexpLit) || regexp_type_arg?(args[0]))
+            nil
+          else
+            generate_string_gsub(receiver, args, result_var)
+          end
         when "sub"
-          generate_string_sub(receiver, args, result_var)
+          if args.size >= 1 && (args[0].is_a?(HIR::RegexpLit) || regexp_type_arg?(args[0]))
+            nil
+          else
+            generate_string_sub(receiver, args, result_var)
+          end
         when "index"
           generate_string_index(receiver, args, result_var)
         when "rindex"
@@ -9709,7 +10539,8 @@ module Konpeito
         instructions << load_instruction(temp_new, :i64)
         instructions << { "op" => "lsub" }
         instructions << load_instruction(temp_tlen, :i64)
-        instructions << { "op" => "ldiv" }
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                          "name" => "floorDiv", "descriptor" => "(JJ)J" }
 
         if result_var
           ensure_slot(result_var, :i64)
@@ -9766,11 +10597,18 @@ module Konpeito
 
       def generate_string_to_i(receiver, result_var)
         instructions = []
+        # Use invokedynamic for Ruby-compatible String#to_i
+        # (handles non-numeric strings, partial parsing, etc.)
         instructions.concat(load_string_receiver(receiver))
-        instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
-                          "name" => "strip", "descriptor" => "()Ljava/lang/String;" }
-        instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
-                          "name" => "parseLong", "descriptor" => "(Ljava/lang/String;)J" }
+        instructions << { "op" => "invokedynamic",
+                          "name" => "to_i",
+                          "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;",
+                          "bootstrapOwner" => "konpeito/runtime/RubyDispatch",
+                          "bootstrapName" => "bootstrap",
+                          "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;" }
+        instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+        instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                          "name" => "longValue", "descriptor" => "()J" }
         if result_var
           ensure_slot(result_var, :i64)
           instructions << store_instruction(result_var, :i64)
@@ -9781,11 +10619,17 @@ module Konpeito
 
       def generate_string_to_f(receiver, result_var)
         instructions = []
+        # Use invokedynamic for Ruby-compatible String#to_f
         instructions.concat(load_string_receiver(receiver))
-        instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
-                          "name" => "strip", "descriptor" => "()Ljava/lang/String;" }
-        instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
-                          "name" => "parseDouble", "descriptor" => "(Ljava/lang/String;)D" }
+        instructions << { "op" => "invokedynamic",
+                          "name" => "to_f",
+                          "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;",
+                          "bootstrapOwner" => "konpeito/runtime/RubyDispatch",
+                          "bootstrapName" => "bootstrap",
+                          "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;" }
+        instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+        instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                          "name" => "doubleValue", "descriptor" => "()D" }
         if result_var
           ensure_slot(result_var, :double)
           instructions << store_instruction(result_var, :double)
@@ -9820,13 +10664,15 @@ module Konpeito
           generate_numeric_comparison(receiver, recv_type, :lt, result_var)
         when "round"
           return nil unless recv_type == :double
-          generate_float_to_long_math(receiver, "round", result_var)
+          # Ruby uses round-half-away-from-zero, not Java's round-half-to-even
+          # So we need custom logic instead of Math.round
+          generate_ruby_round(receiver, result_var)
         when "floor"
           return nil unless recv_type == :double
-          generate_float_math(receiver, "floor", result_var)
+          generate_float_to_long_via_double(receiver, "floor", result_var)
         when "ceil"
           return nil unless recv_type == :double
-          generate_float_math(receiver, "ceil", result_var)
+          generate_float_to_long_via_double(receiver, "ceil", result_var)
         when "to_i"
           return nil unless recv_type == :double
           generate_double_to_long(receiver, result_var)
@@ -9959,6 +10805,64 @@ module Konpeito
         instructions
       end
 
+      # Ruby round: round-half-away-from-zero
+      # if (x >= 0) return (long)Math.floor(x + 0.5) else return (long)Math.ceil(x - 0.5)
+      def generate_ruby_round(receiver, result_var)
+        instructions = []
+        pos_label = new_label("round_pos")
+        end_label = new_label("round_end")
+
+        # Load receiver
+        instructions.concat(load_value(receiver, :double))
+        instructions << { "op" => "dconst_0" }
+        instructions << { "op" => "dcmpg" }
+        instructions << { "op" => "ifge", "target" => pos_label }
+
+        # Negative case: ceil(x - 0.5)
+        instructions.concat(load_value(receiver, :double))
+        instructions << { "op" => "ldc2_w", "value" => 0.5, "type" => "double" }
+        instructions << { "op" => "dsub" }
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                          "name" => "ceil", "descriptor" => "(D)D" }
+        instructions << { "op" => "d2l" }
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions << store_instruction(result_var, :i64)
+        end
+        instructions << { "op" => "goto", "target" => end_label }
+
+        # Positive case: floor(x + 0.5)
+        instructions << { "op" => "label", "name" => pos_label }
+        instructions.concat(load_value(receiver, :double))
+        instructions << { "op" => "ldc2_w", "value" => 0.5, "type" => "double" }
+        instructions << { "op" => "dadd" }
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                          "name" => "floor", "descriptor" => "(D)D" }
+        instructions << { "op" => "d2l" }
+        if result_var
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
+        end
+
+        instructions << { "op" => "label", "name" => end_label }
+        instructions
+      end
+
+      # Call Math.floor/ceil (returns double), then d2l to convert to long
+      def generate_float_to_long_via_double(receiver, java_method, result_var)
+        instructions = []
+        instructions.concat(load_value(receiver, :double))
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                          "name" => java_method, "descriptor" => "(D)D" }
+        instructions << { "op" => "d2l" }
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
+        end
+        instructions
+      end
+
       def generate_double_to_long(receiver, result_var)
         instructions = []
         instructions.concat(load_value(receiver, :double))
@@ -10022,7 +10926,8 @@ module Konpeito
 
         instructions << load_instruction(a_var, :i64)
         instructions << load_instruction(b_var, :i64)
-        instructions << { "op" => "lrem" }
+        instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                          "name" => "floorMod", "descriptor" => "(JJ)J" }
         instructions << store_instruction(b_var, :i64)
 
         instructions << load_instruction(temp_var, :i64)
@@ -10523,6 +11428,78 @@ module Konpeito
       # ========================================================================
 
       def prescan_phi_nodes(func)
+        # Pre-scan: identify variables that are assigned different types on different
+        # paths (e.g., x = nil; x ||= 42 or x = false; x ||= 42).
+        # These variables must be stored as :value (Object) on the JVM.
+        @_nil_assigned_vars = Set.new
+        var_assigned_types = Hash.new { |h, k| h[k] = Set.new }
+        # Track variables stored inside exception handlers (rescue/ensure) — these need :value
+        # because JVM verifier requires type consistency across normal and exception code paths.
+        exception_block_vars = Set.new
+
+        func.body.each do |bb|
+          # Collect non_try_instruction_ids from all BeginRescue in this BB.
+          # These are instruction object_ids of instructions that belong to rescue/ensure/else
+          # bodies but are extracted into the main BB by the HIR builder.
+          non_try_ids = Set.new
+          bb.instructions.each do |inst|
+            if inst.is_a?(HIR::BeginRescue) && inst.non_try_instruction_ids
+              non_try_ids.merge(inst.non_try_instruction_ids)
+            end
+          end
+
+          bb.instructions.each do |inst|
+            next unless inst.is_a?(HIR::StoreLocal)
+            target = inst.var.is_a?(HIR::LocalVar) ? inst.var.name.to_s : inst.var.to_s
+            val = inst.value
+            tag = if val.is_a?(HIR::NilLit)
+                    :nil
+                  elsif val.is_a?(HIR::BoolLit)
+                    :i8
+                  elsif val.is_a?(HIR::IntegerLit)
+                    :i64
+                  elsif val.is_a?(HIR::FloatLit)
+                    :double
+                  elsif val.is_a?(HIR::StringLit)
+                    :string
+                  else
+                    # For non-literal values (LoadLocal, Call results, etc.),
+                    # try to infer type from HM type annotation to avoid
+                    # falsely flagging variables as mixed-type.
+                    inferred_tag = nil
+                    if val.is_a?(HIR::LoadLocal) || val.is_a?(HIR::LocalVar) || val.is_a?(HIR::Param)
+                      src = if val.is_a?(HIR::LoadLocal)
+                              val.var.is_a?(HIR::LocalVar) ? val.var.name.to_s : val.var.to_s
+                            else
+                              val.respond_to?(:name) ? val.name.to_s : val.to_s
+                            end
+                      src_tags = var_assigned_types[src]
+                      if src_tags && src_tags.size == 1 && !src_tags.include?(:other)
+                        inferred_tag = src_tags.first
+                      end
+                    end
+                    if inferred_tag.nil? && val.respond_to?(:type) && val.type
+                      t = konpeito_type_to_tag(val.type)
+                      inferred_tag = t unless t == :value
+                    end
+                    inferred_tag || :other
+                  end
+            var_assigned_types[target] << tag
+            # If this StoreLocal is owned by a BeginRescue (in rescue/ensure/else body),
+            # mark it as an exception block variable
+            exception_block_vars << target if non_try_ids.include?(inst.object_id)
+          end
+        end
+        # Variables stored in exception blocks need :value for JVM verifier compatibility
+        exception_block_vars.each { |v| @_nil_assigned_vars << v }
+        # Mark variables with mixed-type assignments (nil + primitive, or different primitives)
+        var_assigned_types.each do |var_name, tags|
+          if tags.include?(:nil) || tags.size > 1
+            # Multiple types or nil assignment — variable needs :value on JVM
+            @_nil_assigned_vars << var_name if tags.size > 1 || tags.include?(:nil)
+          end
+        end
+
         @block_phi_nodes = {}
         func.body.each do |bb|
           phis = bb.instructions.select { |inst| inst.is_a?(HIR::Phi) }
@@ -10618,6 +11595,7 @@ module Konpeito
         @variable_concurrency_types = {}  # Track :thread, :mutex, :cv, :sized_queue, :ractor, :ractor_port
         @variable_native_array_element_type = {}  # Track :i64, :double for primitive arrays
         @variable_array_element_types = {}  # Track element type tag for Array[T] (e.g., :string, :i64, :double)
+        @variable_is_symbol = {}  # Track variables that hold symbol values (for inspect)
         @next_slot = 0
         @label_counter = 0
         @block_phi_nodes = {}
@@ -10639,9 +11617,21 @@ module Konpeito
       end
 
       # Scan a function for shared mutable captures: variables captured by blocks
-      # AND modified inside those blocks. These need static field storage for sharing.
+      # AND modified inside those blocks OR in the outer scope (for lambdas/procs).
+      # These need static field storage for sharing.
       def scan_shared_mutable_captures(func)
         mutable_capture_names = Set.new
+
+        # Collect all variables stored in the outer function body (for lambda/proc capture-by-reference)
+        outer_stored_vars = Set.new
+        func.body.each do |bb|
+          bb.instructions.each do |inst|
+            if inst.is_a?(HIR::StoreLocal)
+              var_name = inst.var.is_a?(HIR::LocalVar) ? inst.var.name.to_s : inst.var.to_s
+              outer_stored_vars.add(var_name)
+            end
+          end
+        end
 
         func.body.each do |bb|
           bb.instructions.each do |inst|
@@ -10651,6 +11641,16 @@ module Konpeito
             captured_names = Set.new((block_def.captures || []).map { |c| c.name.to_s })
             next if captured_names.empty?
 
+            # For lambdas/procs (ProcNew), the captured variable may be modified in the
+            # outer scope after lambda creation. In Ruby, lambdas capture by reference,
+            # so mutations to outer variables must be visible when the lambda is called.
+            if inst.is_a?(HIR::ProcNew)
+              captured_names.each do |var_name|
+                mutable_capture_names.add(var_name) if outer_stored_vars.include?(var_name)
+              end
+            end
+
+            # Also check for stores inside the block body (for regular block captures)
             block_def.body.each do |block_bb|
               block_bb.instructions.each do |block_inst|
                 if block_inst.is_a?(HIR::StoreLocal)
@@ -11291,6 +12291,19 @@ module Konpeito
           type || infer_type_from_hir(val) || literal_type_tag(val) || :value
         end
 
+        # Check if any incoming value is a LoadLocal of a variable that has nil
+        # assignments. In such cases, the JVM variable will be stored as :value
+        # (Object), not as a primitive, so the phi must also be :value.
+        has_nil_source = phi.incoming.values.any? do |val|
+          if val.is_a?(HIR::LoadLocal) && val.var.respond_to?(:name)
+            var_name = val.var.name.to_s
+            @_nil_assigned_vars&.include?(var_name)
+          else
+            false
+          end
+        end
+        return :value if has_nil_source
+
         if incoming_types.all? { |t| t == :i8 }
           :i8
         elsif incoming_types.all? { |t| t == :i64 }
@@ -11377,7 +12390,8 @@ module Konpeito
           insts
         when HIR::FloatLit
           val = hir_value.value
-          insts = if val == 0.0
+          # Use dconst_0 only for positive zero; negative zero (-0.0) needs ldc2_w
+          insts = if val == 0.0 && (1.0 / val) == Float::INFINITY  # positive zero: 1.0/+0.0 = +Inf
             [{ "op" => "dconst_0" }]
           elsif val == 1.0
             [{ "op" => "dconst_1" }]
@@ -11400,13 +12414,22 @@ module Konpeito
         when HIR::NilLit
           [{ "op" => "aconst_null" }]
         when HIR::StringLit
-          [{ "op" => "ldc", "value" => hir_value.value }]
+          # Use new String(ldc) to avoid JVM string interning.
+          # This ensures Object#equal? (identity check) returns false for different
+          # string literals with the same value, matching Ruby semantics.
+          [
+            { "op" => "new", "type" => "java/lang/String" },
+            { "op" => "dup" },
+            { "op" => "ldc", "value" => hir_value.value },
+            { "op" => "invokespecial", "owner" => "java/lang/String",
+              "name" => "<init>", "descriptor" => "(Ljava/lang/String;)V" }
+          ]
         when HIR::LocalVar, HIR::Param
           var_name = hir_value.name.to_s
           # Shared mutable capture inside block: use getstatic
           if @shared_mutable_captures&.include?(var_name) && !@variable_slots.key?(var_name)
             field_name = @shared_capture_fields[var_name]
-            type = @shared_mutable_capture_types&.dig(var_name) || :i64
+            type = @shared_mutable_capture_types&.dig(var_name) || :value
             insts = [{ "op" => "getstatic", "owner" => main_class_name,
                        "name" => field_name, "descriptor" => "Ljava/lang/Object;" }]
             insts.concat(unbox_from_object_field(type))
@@ -11430,7 +12453,7 @@ module Konpeito
             # Shared mutable capture inside block: use getstatic
             if @shared_mutable_captures&.include?(source) && !@variable_slots.key?(source)
               field_name = @shared_capture_fields[source]
-              type = @shared_mutable_capture_types&.dig(source) || :i64
+              type = @shared_mutable_capture_types&.dig(source) || :value
               insts = [{ "op" => "getstatic", "owner" => main_class_name,
                          "name" => field_name, "descriptor" => "Ljava/lang/Object;" }]
               insts.concat(unbox_from_object_field(type))
@@ -11444,13 +12467,25 @@ module Konpeito
             end
           end
         else
-          # Try to load from result variable
+          # For embedded HIR nodes (e.g., Call used as receiver of another Call
+          # inside CaseMatchStatement bodies), generate the instruction first,
+          # then load from its result variable.
           if hir_value.respond_to?(:result_var) && hir_value.result_var
             var_name = hir_value.result_var
-            type = @variable_types[var_name] || expected_type
-            insts = [load_instruction(var_name, type)]
-            insts.concat(box_primitive_if_needed(type, expected_type))
-            insts
+            # If the result_var hasn't been generated yet (no slot allocated),
+            # generate the instruction first
+            if !@variable_slots.key?(var_name)
+              insts = generate_instruction(hir_value)
+              type = @variable_types[var_name] || expected_type
+              insts << load_instruction(var_name, type)
+              insts.concat(box_primitive_if_needed(type, expected_type))
+              insts
+            else
+              type = @variable_types[var_name] || expected_type
+              insts = [load_instruction(var_name, type)]
+              insts.concat(box_primitive_if_needed(type, expected_type))
+              insts
+            end
           else
             [{ "op" => "aconst_null" }]
           end
@@ -11529,6 +12564,15 @@ module Konpeito
             val_type = val.respond_to?(:type) ? val.type : nil
             if val_type
               result = konpeito_type_to_tag(val_type)
+              # Before returning a primitive type, check if the return variable
+              # can be nil on some paths (e.g., x = nil; x ||= 42).
+              # JVM needs Object return type in such cases.
+              if result != :value && val.is_a?(HIR::LoadLocal) && val.var.respond_to?(:name)
+                var_name = val.var.name.to_s
+                if variable_has_nil_assignment?(func, var_name)
+                  result = :value
+                end
+              end
               return result if result != :value
             end
 
@@ -11548,6 +12592,80 @@ module Konpeito
         return_type = func.return_type
         return :value unless return_type
         konpeito_type_to_tag(return_type)
+      end
+
+      # Check if a variable has a NilLit assignment anywhere in the function.
+      # Used to detect cases like `x = nil; x ||= 42` where the variable's JVM
+      # type must be :value (Object) even though HM inference says Integer.
+      def variable_has_nil_assignment?(func, var_name)
+        func.body.each do |bb|
+          bb.instructions.each do |inst|
+            next unless inst.is_a?(HIR::StoreLocal)
+            target = inst.var.is_a?(HIR::LocalVar) ? inst.var.name.to_s : inst.var.to_s
+            next unless target == var_name
+            return true if inst.value.is_a?(HIR::NilLit)
+          end
+        end
+        false
+      end
+
+      # Check if the return type needs to be widened to :value due to phi nodes
+      # or mixed-type variable assignments (e.g., x = nil; x ||= 42).
+      def verify_return_type_with_phi(func, ret_type)
+        # Collect return variable names
+        ret_var_names = []
+        func.body.each do |bb|
+          next unless bb.terminator.is_a?(HIR::Return) && bb.terminator.value
+          var_name = extract_var_name(bb.terminator.value)
+          ret_var_names << var_name if var_name
+        end
+        return ret_type if ret_var_names.empty?
+
+        # Check if phi result vars feed into the return
+        phi_result_vars = {}
+        @block_phi_nodes&.each_value do |phis|
+          phis.each { |phi| phi_result_vars[phi.result_var] = @variable_types[phi.result_var] }
+        end
+
+        ret_var_names.each do |rv|
+          # If the return var is a phi result that resolved to :value, widen
+          if phi_result_vars[rv] == :value
+            return :value
+          end
+        end
+
+        # Also check if any return variable is assigned both nil and a primitive
+        # (e.g., x = nil on one path and x = 42 on another path via ||=)
+        ret_var_names.each do |rv|
+          assigned_types = Set.new
+          func.body.each do |bb|
+            bb.instructions.each do |inst|
+              next unless inst.is_a?(HIR::StoreLocal)
+              target = inst.var.is_a?(HIR::LocalVar) ? inst.var.name.to_s : inst.var.to_s
+              next unless target == rv
+              val = inst.value
+              if val.is_a?(HIR::NilLit)
+                assigned_types << :nil
+              elsif val.is_a?(HIR::IntegerLit)
+                assigned_types << :i64
+              elsif val.is_a?(HIR::FloatLit)
+                assigned_types << :double
+              elsif val.is_a?(HIR::BoolLit)
+                assigned_types << :i8
+              elsif val.is_a?(HIR::StringLit) || val.is_a?(HIR::SymbolLit)
+                assigned_types << :string
+              else
+                assigned_types << :other
+              end
+            end
+          end
+          # If variable has nil assignment + primitive assignment, widen to :value
+          if assigned_types.include?(:nil) && (assigned_types.include?(:i64) || assigned_types.include?(:double) || assigned_types.include?(:i8))
+            return :value
+          end
+        end
+
+        ret_type
       end
 
       def infer_type_from_hir(hir_value)
@@ -11729,6 +12847,7 @@ module Konpeito
         "<=>" => "op_cmp", "<<" => "op_lshift", ">>" => "op_rshift",
         "&" => "op_and", "|" => "op_or", "^" => "op_xor", "~" => "op_not",
         "[]" => "op_aref", "[]=" => "op_aset", "+@" => "op_uplus", "-@" => "op_uminus",
+        "=~" => "op_match", "!~" => "op_nmatch",
       }.freeze
 
       # java.lang.Object final methods that cannot be overridden
@@ -11761,8 +12880,10 @@ module Konpeito
                    when "+" then { "op" => "ladd" }
                    when "-" then { "op" => "lsub" }
                    when "*" then { "op" => "lmul" }
-                   when "/" then { "op" => "ldiv" }
-                   when "%" then { "op" => "lrem" }
+                   when "/" then { "op" => "invokestatic", "owner" => "java/lang/Math",
+                                    "name" => "floorDiv", "descriptor" => "(JJ)J" }
+                   when "%" then { "op" => "invokestatic", "owner" => "java/lang/Math",
+                                    "name" => "floorMod", "descriptor" => "(JJ)J" }
                    end
                  when :double
                    case op
@@ -11781,8 +12902,10 @@ module Konpeito
                    when "+" then { "op" => "ladd" }
                    when "-" then { "op" => "lsub" }
                    when "*" then { "op" => "lmul" }
-                   when "/" then { "op" => "ldiv" }
-                   when "%" then { "op" => "lrem" }
+                   when "/" then { "op" => "invokestatic", "owner" => "java/lang/Math",
+                                    "name" => "floorDiv", "descriptor" => "(JJ)J" }
+                   when "%" then { "op" => "invokestatic", "owner" => "java/lang/Math",
+                                    "name" => "floorMod", "descriptor" => "(JJ)J" }
                    end
         end
 

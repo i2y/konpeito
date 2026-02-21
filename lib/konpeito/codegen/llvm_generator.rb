@@ -40,6 +40,7 @@ module Konpeito
         @dibuilder = nil          # DIBuilder for debug info
         @profiler = nil           # Profiler for instrumentation
         @variadic_functions = {}  # Track functions with **kwargs or *args
+        @keyword_param_functions = {}  # Track functions with keyword params (for direct call kwargs passing)
         @comparison_result_vars = Set.new  # Track variables holding comparison results (0/1 boolean)
 
         # Register all NativeClass types from RBS upfront
@@ -165,10 +166,14 @@ module Konpeito
 
         mangled = mangle_name(hir_func)
 
+        # Check if any regular param has a default value
+        has_default_params = regular_params.any? { |p| p.default_value }
+
         # Use variadic signature for functions with:
         # - **kwargs only (no regular params)
         # - *args parameter
-        needs_variadic = (keyword_rest_param && regular_params.empty? && keyword_params.empty?) || rest_param
+        # - default positional arguments
+        needs_variadic = (keyword_rest_param && regular_params.empty? && keyword_params.empty?) || rest_param || has_default_params
 
         if needs_variadic
           # Variadic signature: VALUE func(int argc, VALUE *argv, VALUE self)
@@ -177,14 +182,25 @@ module Konpeito
             keyword_rest: keyword_rest_param ? keyword_rest_param.name : nil,
             rest: rest_param ? rest_param.name : nil,
             regular_count: regular_params.size,
-            keyword_count: keyword_params.size
+            keyword_count: keyword_params.size,
+            has_defaults: has_default_params,
+            default_params: has_default_params ? regular_params.select { |p| p.default_value }.map { |p| { name: p.name, default_value: p.default_value } } : nil
           }
         else
           # Standard signature: VALUE func(VALUE self, VALUE arg1, ...)
           # +1 for self, +1 for kwargs hash if has keyword params or keyword_rest
           num_params = regular_params.size + 1
-          num_params += 1 if keyword_params.any? || keyword_rest_param
+          has_kwargs_param = keyword_params.any? || keyword_rest_param
+          num_params += 1 if has_kwargs_param
           param_types = [value_type] * num_params
+
+          # Track functions with keyword params for direct call kwargs passing
+          if has_kwargs_param
+            @keyword_param_functions[hir_func.name] = {
+              regular_count: regular_params.size,
+              keyword_params: keyword_params.map(&:name)
+            }
+          end
         end
 
         return_type = value_type
@@ -1057,11 +1073,38 @@ module Konpeito
               alloca = @variable_allocas[param.name]
               next unless alloca
 
-              # Get argv[i]
-              param_ptr = @builder.gep2(value_type, argv_param, [LLVM::Int32.from_i(i)], "param_#{param.name}_ptr")
-              boxed_value = @builder.load2(value_type, param_ptr, "param_#{param.name}")
-
               type_tag = @variable_types[param.name]
+
+              # Check if this param has a default value and argc may be less than needed
+              if param.default_value && variadic_info[:has_defaults]
+                # Generate argc check: if i < argc then use argv[i] else use default
+                current_func = @builder.insert_block.parent
+                use_argv_block = current_func.basic_blocks.append("use_argv_#{param.name}")
+                use_default_block = current_func.basic_blocks.append("use_default_#{param.name}")
+                continue_block = current_func.basic_blocks.append("param_continue_#{param.name}")
+
+                has_arg = @builder.icmp(:sgt, argc_param, LLVM::Int32.from_i(i), "has_arg_#{param.name}")
+                @builder.cond(has_arg, use_argv_block, use_default_block)
+
+                # Use argv[i]
+                @builder.position_at_end(use_argv_block)
+                param_ptr = @builder.gep2(value_type, argv_param, [LLVM::Int32.from_i(i)], "param_#{param.name}_ptr")
+                argv_value = @builder.load2(value_type, param_ptr, "param_#{param.name}_argv")
+                @builder.br(continue_block)
+
+                # Use default value
+                @builder.position_at_end(use_default_block)
+                default_value = generate_default_param_value(param.default_value)
+                @builder.br(continue_block)
+
+                # Merge with phi
+                @builder.position_at_end(continue_block)
+                boxed_value = @builder.phi(value_type, { use_argv_block => argv_value, use_default_block => default_value }, "param_#{param.name}")
+              else
+                # Get argv[i] directly
+                param_ptr = @builder.gep2(value_type, argv_param, [LLVM::Int32.from_i(i)], "param_#{param.name}_ptr")
+                boxed_value = @builder.load2(value_type, param_ptr, "param_#{param.name}")
+              end
 
               # Unbox parameter if it's a numeric type
               value_to_store = case type_tag
@@ -1074,6 +1117,12 @@ module Konpeito
               end
 
               @builder.store(value_to_store, alloca)
+            end
+
+            # If we created branches for default params, remap the entry block
+            # so that subsequent HIR instructions are generated in the correct block
+            if variadic_info[:has_defaults] && !variadic_info[:keyword_rest] && !variadic_info[:rest]
+              @blocks[hir_func.body.first.label] = @builder.insert_block
             end
           end
 
@@ -1391,13 +1440,39 @@ module Konpeito
           vars[p.name] = p.type
         end
 
-        # Scan all blocks for StoreLocal instructions
+        # First pass: collect temp vars that come from safe navigation calls
+        # These can return nil, so any variable storing their result must be boxed VALUE
+        safe_nav_result_vars = Set.new
+        hir_func.body.each do |block|
+          block.instructions.each do |inst|
+            if inst.is_a?(HIR::Call) && inst.safe_navigation && inst.result_var
+              safe_nav_result_vars << inst.result_var
+            end
+          end
+        end
+
+        # Second pass: collect StoreLocal instructions with type info
         hir_func.body.each do |block|
           block.instructions.each do |inst|
             if inst.is_a?(HIR::StoreLocal)
-              # Use the type from the value being stored, or existing type
-              value_type = inst.value.respond_to?(:type) ? inst.value.type : nil
-              vars[inst.var.name] ||= value_type || inst.var.type
+              # Check if the value comes from a safe navigation call (directly or via LoadLocal)
+              is_safe_nav = false
+              if inst.value.is_a?(HIR::Call) && inst.value.safe_navigation
+                is_safe_nav = true
+              elsif inst.value.is_a?(HIR::LoadLocal)
+                # Check if the LoadLocal references a safe navigation result
+                ref_var = inst.value.result_var || inst.value.var.name
+                is_safe_nav = safe_nav_result_vars.include?(ref_var)
+              end
+
+              if is_safe_nav
+                # Safe navigation results must be boxed VALUE (can be nil)
+                vars[inst.var.name] ||= :force_value
+              else
+                # Use the type from the value being stored, or existing type
+                value_type = inst.value.respond_to?(:type) ? inst.value.type : nil
+                vars[inst.var.name] ||= value_type || inst.var.type
+              end
             end
           end
         end
@@ -1410,13 +1485,36 @@ module Konpeito
       def collect_local_variables_in_block(block_def)
         vars = {}
 
-        # Scan all basic blocks for StoreLocal instructions
+        # First pass: collect safe navigation result vars
+        safe_nav_result_vars = Set.new
+        block_def.body.each do |basic_block|
+          basic_block.instructions.each do |inst|
+            if inst.is_a?(HIR::Call) && inst.safe_navigation && inst.result_var
+              safe_nav_result_vars << inst.result_var
+            end
+          end
+        end
+
+        # Second pass: scan all basic blocks for StoreLocal instructions
         block_def.body.each do |basic_block|
           basic_block.instructions.each do |inst|
             if inst.is_a?(HIR::StoreLocal)
-              # Use the type from the value being stored, or existing type
-              value_type = inst.value.respond_to?(:type) ? inst.value.type : nil
-              vars[inst.var.name] ||= value_type || inst.var.type
+              # Check if value comes from safe navigation
+              is_safe_nav = false
+              if inst.value.is_a?(HIR::Call) && inst.value.safe_navigation
+                is_safe_nav = true
+              elsif inst.value.is_a?(HIR::LoadLocal)
+                ref_var = inst.value.result_var || inst.value.var.name
+                is_safe_nav = safe_nav_result_vars.include?(ref_var)
+              end
+
+              if is_safe_nav
+                vars[inst.var.name] ||= :force_value
+              else
+                # Use the type from the value being stored, or existing type
+                value_type = inst.value.respond_to?(:type) ? inst.value.type : nil
+                vars[inst.var.name] ||= value_type || inst.var.type
+              end
             end
           end
         end
@@ -1472,6 +1570,18 @@ module Konpeito
           "rn_#{owner}_#{name}"
         else
           "rn_#{name}"
+        end
+      end
+
+      # Get the self VALUE for the current function.
+      # For variadic functions (arity -1), self is at params[2] instead of params[0].
+      def get_self_value
+        func = @builder.insert_block.parent
+        mangled = func.name
+        if @variadic_functions[mangled]
+          func.params[2]
+        else
+          func.params[0]
         end
       end
 
@@ -2261,9 +2371,12 @@ module Konpeito
           # Upgrade from VALUE to unboxed type
           # This handles intermediate variables like `dx = x2 - x1` where the
           # type was initially unknown but unboxed arithmetic produced an unboxed result
-          target_type = source_type
-          # Need to recreate alloca with the new unboxed type
-          @variable_allocas.delete(var_name)
+          # Only upgrade if no alloca exists yet (first assignment).
+          # If the variable already has a VALUE alloca (e.g., x = nil; x &&= 42),
+          # keep it as VALUE to avoid corrupting the alloca across conditional branches.
+          unless @variable_allocas[var_name]
+            target_type = source_type
+          end
         elsif %i[double i64 i8].include?(target_type) && source_type == :value && inst.value.is_a?(HIR::Phi)
           # Downgrade from unboxed to VALUE type for phi nodes with mixed types.
           # This happens when a phi with mixed types (e.g., bool + int from &&/||)
@@ -2506,9 +2619,8 @@ module Konpeito
           return generate_native_self_field_get(inst)
         end
 
-        # Get self (first parameter)
-        func = @builder.insert_block.parent
-        self_value = func.params[0]
+        # Get self (first parameter for standard, third for variadic)
+        self_value = get_self_value
 
         # Get ivar ID
         ivar_name_ptr = @builder.global_string_pointer(inst.name)
@@ -2526,9 +2638,8 @@ module Konpeito
           return generate_native_self_field_set(inst)
         end
 
-        # Get self (first parameter)
-        func = @builder.insert_block.parent
-        self_value = func.params[0]
+        # Get self (first parameter for standard, third for variadic)
+        self_value = get_self_value
 
         # Get ivar ID
         ivar_name_ptr = @builder.global_string_pointer(inst.name)
@@ -2599,15 +2710,13 @@ module Konpeito
 
       # Get the VALUE representing the current class for class variable access
       def get_current_class_value
-        func = @builder.insert_block.parent
-
         # Check if this is a class method (singleton method)
         if @current_hir_func&.class_method?
           # For class methods, self IS the class
-          func.params[0]
+          get_self_value
         elsif @current_hir_func&.owner_class
           # For instance methods, get the class from self using rb_class_of
-          self_value = func.params[0]
+          self_value = get_self_value
           @builder.call(@rb_class_of, self_value)
         else
           # Top-level: use rb_cObject (need to load the global)
@@ -2686,8 +2795,7 @@ module Konpeito
 
       # Fallback to rb_ivar_get when field not found
       def generate_fallback_ivar_get(inst)
-        func = @builder.insert_block.parent
-        self_value = func.params[0]
+        self_value = get_self_value
         ivar_name_ptr = @builder.global_string_pointer(inst.name)
         ivar_id = @builder.call(@rb_intern, ivar_name_ptr)
         result = @builder.call(@rb_ivar_get, self_value, ivar_id)
@@ -2697,8 +2805,7 @@ module Konpeito
 
       # Fallback to rb_ivar_set when field not found
       def generate_fallback_ivar_set(inst)
-        func = @builder.insert_block.parent
-        self_value = func.params[0]
+        self_value = get_self_value
         ivar_name_ptr = @builder.global_string_pointer(inst.name)
         ivar_id = @builder.call(@rb_intern, ivar_name_ptr)
         value = get_value_as_ruby(inst.value)
@@ -2812,7 +2919,7 @@ module Konpeito
             result = generate_array_delete_at(inst)
             @variables[inst.result_var] = result if inst.result_var
             return result
-          elsif builtin[:conv] == :simple && builtin[:arity] == inst.args.size
+          elsif builtin[:conv] == :simple && builtin[:arity] == inst.args.size && !inst.block
             result = generate_builtin_call(inst, builtin)
             @variables[inst.result_var] = result if inst.result_var
             return result
@@ -2929,6 +3036,8 @@ module Konpeito
         inst.instance_variable_set(:@safe_navigation, false)
         call_result = generate_call(inst)
         inst.instance_variable_set(:@safe_navigation, original_safe_nav)
+        # Ensure call_result is boxed VALUE for the phi (it may be unboxed from optimized paths)
+        call_result = ensure_boxed_value(call_result, inst.result_var)
         # Get the current block (may have changed during generate_call)
         call_exit_bb = @builder.insert_block
         @builder.br(safe_merge_bb)
@@ -2940,8 +3049,47 @@ module Konpeito
         # Merge
         @builder.position_at_end(safe_merge_bb)
         phi = @builder.phi(value_type, { call_exit_bb => call_result, safe_nil_bb => @qnil })
-        @variables[inst.result_var] = phi if inst.result_var
+        if inst.result_var
+          @variables[inst.result_var] = phi
+          # Safe navigation result is always VALUE since it can be nil
+          @variable_types[inst.result_var] = :value
+          # If there's a pre-allocated unboxed alloca, we need to replace it with VALUE alloca
+          if @variable_allocas[inst.result_var]
+            existing_alloca = @variable_allocas[inst.result_var]
+            # Check if the alloca is the wrong type (unboxed instead of VALUE)
+            alloca_elem_type = begin; existing_alloca.type.element_type; rescue; nil; end
+            if alloca_elem_type && alloca_elem_type != value_type
+              # Create a new VALUE alloca at entry block
+              entry_block = @current_function.basic_blocks.first
+              current_block = @builder.insert_block
+              if entry_block.instructions.first
+                @builder.position_before(entry_block.instructions.first)
+              else
+                @builder.position_at_end(entry_block)
+              end
+              new_alloca = @builder.alloca(value_type, inst.result_var)
+              @variable_allocas[inst.result_var] = new_alloca
+              @builder.position_at_end(current_block)
+            end
+          end
+        end
         phi
+      end
+
+      # Ensure a value is boxed as VALUE (for safe navigation merge)
+      def ensure_boxed_value(value, result_var)
+        type_tag = result_var ? (@variable_types[result_var] || :value) : :value
+        case type_tag
+        when :i64
+          @builder.call(@rb_int2inum, value)
+        when :double
+          @builder.call(@rb_float_new, value)
+        when :i8
+          is_true = @builder.icmp(:ne, value, LLVM::Int8.from_i(0))
+          @builder.select(is_true, @qtrue, @qfalse)
+        else
+          value
+        end
       end
 
       # Generate a call with union type dispatch
@@ -3038,6 +3186,18 @@ module Konpeito
       # Generate a single type check
       # Returns an i1 value that is true if the value matches the expected type
       def generate_single_type_check(value, type_str)
+        # Optimized checks for nil and bool types
+        case type_str
+        when "nil", "Nil", "NilClass"
+          # nil check: value == Qnil
+          return @builder.icmp(:eq, value, @qnil)
+        when "bool", "Bool"
+          # bool check: value == Qtrue || value == Qfalse
+          is_true = @builder.icmp(:eq, value, @qtrue)
+          is_false = @builder.icmp(:eq, value, @qfalse)
+          return @builder.or(is_true, is_false)
+        end
+
         # Get the Ruby class constant for the type
         class_value = get_ruby_class_for_type(type_str)
 
@@ -3064,12 +3224,15 @@ module Konpeito
           @builder.load2(value_type, @rb_cArray, "rb_cArray")
         when "Hash"
           @builder.load2(value_type, @rb_cHash, "rb_cHash")
-        when "NilClass"
+        when "NilClass", "nil", "Nil"
           @builder.load2(value_type, @rb_cNilClass, "rb_cNilClass")
         when "TrueClass"
           @builder.load2(value_type, @rb_cTrueClass, "rb_cTrueClass")
         when "FalseClass"
           @builder.load2(value_type, @rb_cFalseClass, "rb_cFalseClass")
+        when "bool", "Bool"
+          # Bool can be either TrueClass or FalseClass; return TrueClass as representative
+          @builder.load2(value_type, @rb_cTrueClass, "rb_cTrueClass")
         else
           # For other types, use rb_path2class
           type_ptr = @builder.global_string_pointer(type_str)
@@ -3202,9 +3365,10 @@ module Konpeito
         return false unless inst.block
         return false unless inst.block.params.size == 2  # |acc, elem|
 
-        # Check if receiver type is Array
+        # Check if receiver type is Array (or if receiver is an ArrayLit)
         receiver_type = inst.receiver.respond_to?(:type) ? inst.receiver.type : nil
-        return false unless is_array_type?(receiver_type)
+        is_array = is_array_type?(receiver_type) || inst.receiver.is_a?(HIR::ArrayLit)
+        return false unless is_array
 
         # Check block body is simple (single basic block with simple operations)
         return false unless inst.block.body.is_a?(::Array) && inst.block.body.size == 1
@@ -3220,9 +3384,10 @@ module Konpeito
         return false unless inst.block
         return false unless inst.block.params.size == 1  # |elem|
 
-        # Check if receiver type is Array
+        # Check if receiver type is Array (or if receiver is an ArrayLit)
         receiver_type = inst.receiver.respond_to?(:type) ? inst.receiver.type : nil
-        return false unless is_array_type?(receiver_type)
+        is_array = is_array_type?(receiver_type) || inst.receiver.is_a?(HIR::ArrayLit)
+        return false unless is_array
 
         true
       end
@@ -3235,6 +3400,10 @@ module Konpeito
         if type.is_a?(TypeChecker::Types::ClassInstance) && type.name == :Array
           return true
         end
+
+        # String representation check for array types from inference
+        type_str = type.to_s rescue nil
+        return true if type_str && type_str.start_with?("Array")
 
         false
       end
@@ -3273,17 +3442,22 @@ module Konpeito
         elem_unboxed_type = get_array_element_unboxed_type(receiver_type)
         use_unboxed = elem_unboxed_type != :value
 
-        # Get initial value
-        initial_value = if inst.args.any?
-          get_value_as_ruby(inst.args.first)
-        else
-          @qnil
-        end
-
         # Get array length
         length_id = @builder.call(@rb_intern, @builder.global_string_pointer("length"))
         length_value = @builder.call(@rb_funcallv, receiver, length_id, LLVM::Int32.from_i(0), LLVM::Pointer(value_type).null)
         arr_len = @builder.call(@rb_num2long, length_value)
+
+        has_initial = inst.args.any?
+
+        # Get initial value: if provided use it, otherwise use arr[0]
+        initial_value = if has_initial
+          get_value_as_ruby(inst.args.first)
+        else
+          @builder.call(@rb_ary_entry, receiver, LLVM::Int64.from_i(0))
+        end
+
+        # Start index: 0 if initial provided, 1 if using arr[0]
+        start_idx = has_initial ? 0 : 1
 
         # Determine accumulator type and allocate
         if use_unboxed
@@ -3302,7 +3476,7 @@ module Konpeito
         end
 
         idx_alloca = @builder.alloca(LLVM::Int64, "reduce_idx")
-        @builder.store(LLVM::Int64.from_i(0), idx_alloca)
+        @builder.store(LLVM::Int64.from_i(start_idx), idx_alloca)
 
         # Create loop blocks
         func = @builder.insert_block.parent
@@ -3649,9 +3823,10 @@ module Konpeito
         return false unless inst.block
         return false unless inst.block.params.size == 1  # |elem|
 
-        # Check if receiver type is Array
+        # Check if receiver type is Array (or if receiver is an ArrayLit)
         receiver_type = inst.receiver.respond_to?(:type) ? inst.receiver.type : nil
-        return false unless is_array_type?(receiver_type)
+        is_array = is_array_type?(receiver_type) || inst.receiver.is_a?(HIR::ArrayLit)
+        return false unless is_array
 
         true
       end
@@ -4095,17 +4270,33 @@ module Konpeito
             alloca
           end
 
-          # Runtime argc check: argc >= params.size?
+          # Runtime argc check for multi-param block callback:
+          # rb_block_call callback: VALUE func(VALUE yielded_arg, VALUE data2, int argc, VALUE *argv, VALUE blockarg)
+          #
+          # For reduce/inject: yielded_arg = acc, argc = 1, argv = [elem]
+          # For each_with_index: yielded_arg = elem, argc = 1, argv = [idx] (Ruby 4.0)
+          # For Hash#select/reject: yielded_arg = key, argc = 2, argv = [key, value]
+          # For Hash#map/any?/each: yielded_arg = [k, v], argc = 1, argv = [same [k,v] array]
+          #
+          # Strategy:
+          # - If argc >= params.size: extract all from argv
+          # - If argc == params.size - 1: check if yielded_arg == argv[0] (Hash pair case)
+          #   - If same value: destructure yielded_arg as array (Hash iteration via Enumerable)
+          #   - If different: yielded_arg is first param, rest from argv (reduce/each_with_index)
+          # - Otherwise: destructure yielded_arg as array
           argc_val = callback_func.params[2]  # int argc
-          argc_enough = @builder.icmp(:sge, argc_val, LLVM::Int32.from_i(block_def.params.size), "argc_enough")
 
           argv_block = callback_func.basic_blocks.append("argv_extract")
+          check_mixed_block = callback_func.basic_blocks.append("check_mixed")
+          mixed_block = callback_func.basic_blocks.append("mixed_extract")
           destruct_block = callback_func.basic_blocks.append("destruct_extract")
           params_done_block = callback_func.basic_blocks.append("params_done")
 
-          @builder.cond(argc_enough, argv_block, destruct_block)
+          # First check: argc >= params.size?
+          argc_enough = @builder.icmp(:sge, argc_val, LLVM::Int32.from_i(block_def.params.size), "argc_enough")
+          @builder.cond(argc_enough, argv_block, check_mixed_block)
 
-          # argv path: extract from argv directly
+          # argv path: extract all params from argv
           @builder.position_at_end(argv_block)
           block_def.params.each_with_index do |param, i|
             ptr = @builder.gep2(value_type, callback_func.params[3],
@@ -4115,7 +4306,37 @@ module Konpeito
           end
           @builder.br(params_done_block)
 
-          # destructure path: extract from yielded_arg using rb_ary_entry
+          # Second check: argc == params.size - 1? (mixed mode)
+          @builder.position_at_end(check_mixed_block)
+          argc_one_less = @builder.icmp(:eq, argc_val, LLVM::Int32.from_i(block_def.params.size - 1), "argc_one_less")
+          @builder.cond(argc_one_less, mixed_block, destruct_block)
+
+          # mixed path: yielded_arg is first param, rest from argv
+          # BUT: for Hash iteration (map/any?/all?/none?/each), CRuby passes
+          # yielded_arg = [key, value] and argc=1 with argv[0] = same [key, value] array.
+          # In this case, we must destructure the array instead of using mixed mode.
+          # Detect this by checking if yielded_arg == argv[0] (same VALUE identity).
+          @builder.position_at_end(mixed_block)
+          first_argv_ptr = @builder.gep2(value_type, callback_func.params[3],
+            [LLVM::Int32.from_i(0)], "first_argv_ptr")
+          first_argv_val = @builder.load2(value_type, first_argv_ptr, "first_argv_val")
+          same_value = @builder.icmp(:eq, callback_func.params[0], first_argv_val, "yielded_eq_argv0")
+
+          mixed_real_block = callback_func.basic_blocks.append("mixed_real")
+          @builder.cond(same_value, destruct_block, mixed_real_block)
+
+          # Real mixed path: yielded_arg and argv[0] are different values
+          @builder.position_at_end(mixed_real_block)
+          @builder.store(callback_func.params[0], param_allocas[0])  # first param = yielded_arg
+          block_def.params[1..].each_with_index do |param, i|
+            ptr = @builder.gep2(value_type, callback_func.params[3],
+              [LLVM::Int32.from_i(i)], "mixed_#{param.name}_ptr")
+            val = @builder.load2(value_type, ptr, "mixed_#{param.name}")
+            @builder.store(val, param_allocas[i + 1])
+          end
+          @builder.br(params_done_block)
+
+          # destruct path: extract from yielded_arg using rb_ary_entry
           @builder.position_at_end(destruct_block)
           block_def.params.each_with_index do |param, i|
             val = @builder.call(@rb_ary_entry, callback_func.params[0],
@@ -4153,32 +4374,90 @@ module Konpeito
         end
 
         # Compile block body
-        result = @qnil
-        result_type = :value
-        last_inst = nil
-        block_def.body.each do |basic_block|
-          basic_block.instructions.each do |hir_inst|
-            result = generate_instruction(hir_inst)
-            last_inst = hir_inst
+        if block_def.body.size > 1
+          # Multi-block body (contains while/if control flow)
+          # Save current blocks map and create LLVM blocks for each HIR block
+          saved_blocks = @blocks.dup
+          saved_return_blocks = @return_blocks
+          saved_loop_stack = @loop_stack
+
+          @return_blocks = Set.new
+          @loop_stack = [] if @loop_stack.nil?
+
+          block_def.body.each do |hir_block|
+            llvm_block = callback_func.basic_blocks.append(hir_block.label)
+            @blocks[hir_block.label] = llvm_block
           end
-        end
 
-        # Determine result type from last instruction
-        # Special handling for StoreLocal: get type from var.name since it has no result_var
-        if last_inst.is_a?(HIR::StoreLocal)
-          var_name = last_inst.var.name
-          result_type = @variable_types[var_name] || :value
-        elsif last_inst && last_inst.respond_to?(:result_var) && last_inst.result_var
-          result_type = @variable_types[last_inst.result_var] || :value
-        end
+          # Track blocks with Return terminators
+          block_def.body.each do |hir_block|
+            @return_blocks << hir_block.label if hir_block.terminator.is_a?(HIR::Return)
+          end
 
-        # Return the result, converting to VALUE if necessary
-        result = @qnil if result.nil?
-        # Box the result if it's unboxed
-        if result.is_a?(LLVM::Value) && result_type != :value
-          result = convert_value(result, result_type, :value)
+          # Jump from entry to first HIR block
+          @builder.br(@blocks[block_def.body.first.label])
+
+          # Generate each block (instructions + terminators)
+          block_def.body.each do |hir_block|
+            generate_block(callback_func, hir_block)
+          end
+
+          # Ensure all blocks have terminators
+          # Blocks without terminators (e.g., while_exit in a block body) need a ret
+          callback_func.basic_blocks.each do |llvm_block|
+            next if llvm_block.name == "entry"  # Entry block already has br
+            last_instr = llvm_block.instructions.last
+            has_terminator = last_instr && (last_instr.opcode == :ret || last_instr.opcode == :br ||
+                             last_instr.opcode == :cond_br || last_instr.opcode == :switch ||
+                             last_instr.opcode == :unreachable)
+            unless has_terminator
+              @builder.position_at_end(llvm_block)
+              # Return the last value in the block, or Qnil
+              # For while_exit blocks, the last instruction loads the break value
+              if last_instr
+                result_val = last_instr
+                # Box unboxed values before returning
+                result_type = :value  # Default
+                @builder.ret(result_val)
+              else
+                @builder.ret(@qnil)
+              end
+            end
+          end
+
+          # Restore blocks map
+          @blocks = saved_blocks
+          @return_blocks = saved_return_blocks
+          @loop_stack = saved_loop_stack
+        else
+          # Single-block body (simple expression, no control flow)
+          result = @qnil
+          result_type = :value
+          last_inst = nil
+          block_def.body.each do |basic_block|
+            basic_block.instructions.each do |hir_inst|
+              result = generate_instruction(hir_inst)
+              last_inst = hir_inst
+            end
+          end
+
+          # Determine result type from last instruction
+          # Special handling for StoreLocal: get type from var.name since it has no result_var
+          if last_inst.is_a?(HIR::StoreLocal)
+            var_name = last_inst.var.name
+            result_type = @variable_types[var_name] || :value
+          elsif last_inst && last_inst.respond_to?(:result_var) && last_inst.result_var
+            result_type = @variable_types[last_inst.result_var] || :value
+          end
+
+          # Return the result, converting to VALUE if necessary
+          result = @qnil if result.nil?
+          # Box the result if it's unboxed
+          if result.is_a?(LLVM::Value) && result_type != :value
+            result = convert_value(result, result_type, :value)
+          end
+          @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
         end
-        @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
 
         # Restore builder state
         @builder.position_at_end(saved_block) if saved_block
@@ -6113,15 +6392,33 @@ module Konpeito
         target = @functions[func_name.to_s] || @functions[func_name.to_sym]
         return generate_fallback_call(inst) unless target
 
-        # Get self (first argument)
-        func = @builder.insert_block.parent
-        self_value = func.params[0]
+        # Check if target is a variadic function (needs different calling convention)
+        mangled = target.name
+        if @variadic_functions[mangled]
+          return generate_direct_call_variadic(inst, target)
+        end
+
+        # Get self (first argument for standard, third for variadic)
+        self_value = get_self_value
 
         # Build argument list: [self, arg1, arg2, ...]
         # Use get_value_as_ruby to ensure arguments are boxed Ruby VALUES
         call_args = [self_value]
         inst.args.each do |arg|
           call_args << get_value_as_ruby(arg)
+        end
+
+        # If the target function expects keyword params, pass a kwargs hash
+        kw_info = @keyword_param_functions[func_name.to_s] || @keyword_param_functions[func_name.to_sym]
+        if kw_info
+          if inst.has_keyword_args?
+            kwargs_hash = build_keyword_args_hash(inst.keyword_args)
+            call_args << kwargs_hash
+          else
+            # No keyword args provided - pass an empty hash
+            # The callee will use rb_hash_lookup2 with defaults
+            call_args << @builder.call(@rb_hash_new)
+          end
         end
 
         result = @builder.call(target, *call_args)
@@ -6142,6 +6439,33 @@ module Konpeito
         end
 
         result
+      end
+
+      # Generate direct call to a variadic function (argc, argv, self)
+      def generate_direct_call_variadic(inst, target)
+        self_value = get_self_value
+
+        # Collect all arguments (regular + keyword hash if present)
+        all_args = inst.args.map { |arg| get_value_as_ruby(arg) }
+        if inst.has_keyword_args?
+          kwargs_hash = build_keyword_args_hash(inst.keyword_args)
+          all_args << kwargs_hash
+        end
+
+        argc = LLVM::Int32.from_i(all_args.size)
+
+        if all_args.empty?
+          argv = LLVM::Pointer(value_type).null
+        else
+          argv = @builder.alloca(LLVM::Array(value_type, all_args.size))
+          all_args.each_with_index do |arg, i|
+            ptr = @builder.gep(argv, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
+            @builder.store(arg, ptr)
+          end
+          argv = @builder.bit_cast(argv, LLVM::Pointer(value_type))
+        end
+
+        @builder.call(target, argc, argv, self_value)
       end
 
       # Look up a builtin method for direct call (devirtualization)
@@ -6231,9 +6555,8 @@ module Konpeito
       end
 
       def generate_self_ref(inst)
-        # Self is the first parameter of the function
-        func = @builder.insert_block.parent
-        self_param = func.params[0]
+        # Self is the first parameter for standard, third for variadic
+        self_param = get_self_value
 
         if inst.result_var
           @variables[inst.result_var] = self_param
@@ -6252,6 +6575,24 @@ module Konpeito
       end
 
       def generate_constant_lookup(inst)
+        # Handle well-known Float constants directly
+        case inst.name
+        when "Float::INFINITY"
+          result = @builder.call(@rb_float_new, LLVM::Double.from_f(Float::INFINITY))
+          if inst.result_var
+            @variables[inst.result_var] = result
+            @variable_types[inst.result_var] = :value
+          end
+          return result
+        when "Float::NAN"
+          result = @builder.call(@rb_float_new, LLVM::Double.from_f(Float::NAN))
+          if inst.result_var
+            @variables[inst.result_var] = result
+            @variable_types[inst.result_var] = :value
+          end
+          return result
+        end
+
         # Look up a constant (typically a class name)
         # Use rb_const_get(rb_cObject, rb_intern(name))
         const_name_ptr = @builder.global_string_pointer(inst.name)
@@ -6397,8 +6738,8 @@ module Konpeito
             return result
           end
         else
-          # For other types, return "expression" as a safe default
-          str_ptr = @builder.global_string_pointer("expression")
+          # For other types, return the name (e.g., "expression", "nil", "true", "false")
+          str_ptr = @builder.global_string_pointer(inst.name)
           result = @builder.call(@rb_str_new_cstr, str_ptr)
         end
 
@@ -7171,6 +7512,9 @@ module Konpeito
           @qnil
         end
       end
+
+      # Generate LLVM value for default positional parameter (reuses keyword default logic)
+      alias generate_default_param_value generate_keyword_default_value
 
       # Convert Ruby VALUE to i1 boolean
       def ruby_to_bool(value)

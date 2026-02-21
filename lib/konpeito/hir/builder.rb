@@ -111,6 +111,14 @@ module Konpeito
           [:class_variable, value_node.name.to_s]
         when Prism::CallNode
           [:method, value_node.name.to_s]
+        when Prism::NilNode
+          [:expression, "nil"]
+        when Prism::TrueNode
+          [:expression, "true"]
+        when Prism::FalseNode
+          [:expression, "false"]
+        when Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode
+          [:expression, "expression"]
         else
           [:expression, "expression"]
         end
@@ -6084,6 +6092,14 @@ module Konpeito
         body_block = new_block("while_body")
         exit_block = new_block("while_exit")
 
+        # Initialize break value variable (for break-with-value support)
+        break_val_name = "_break_val_#{exit_block.label}"
+        break_val_var = LocalVar.new(name: break_val_name, type: TypeChecker::Types::UNTYPED)
+        @local_vars[break_val_name] = break_val_var
+        nil_init = NilLit.new(result_var: new_temp_var)
+        emit(nil_init)
+        emit(StoreLocal.new(var: break_val_var, value: nil_init, type: TypeChecker::Types::UNTYPED))
+
         @current_block.set_terminator(Jump.new(target: cond_block.label))
 
         # Condition
@@ -6097,22 +6113,32 @@ module Konpeito
 
         # Body
         set_current_block(body_block)
-        @loop_stack.push({ cond_label: cond_block.label, exit_label: exit_block.label })
+        @loop_stack.push({ cond_label: cond_block.label, exit_label: exit_block.label, break_val_var: break_val_var })
         visit(typed_node.children[1]) if typed_node.children[1]
         @loop_stack.pop
         unless @current_block.terminator
           @current_block.set_terminator(Jump.new(target: cond_block.label))
         end
 
-        # Exit
+        # Exit - load break value as loop result
         set_current_block(exit_block)
-        NilLit.new
+        load_break = LoadLocal.new(var: break_val_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(load_break)
+        load_break
       end
 
       def visit_until(typed_node)
         cond_block = new_block("until_cond")
         body_block = new_block("until_body")
         exit_block = new_block("until_exit")
+
+        # Initialize break value variable (for break-with-value support)
+        break_val_name = "_break_val_#{exit_block.label}"
+        break_val_var = LocalVar.new(name: break_val_name, type: TypeChecker::Types::UNTYPED)
+        @local_vars[break_val_name] = break_val_var
+        nil_init = NilLit.new(result_var: new_temp_var)
+        emit(nil_init)
+        emit(StoreLocal.new(var: break_val_var, value: nil_init, type: TypeChecker::Types::UNTYPED))
 
         @current_block.set_terminator(Jump.new(target: cond_block.label))
 
@@ -6128,21 +6154,38 @@ module Konpeito
 
         # Body
         set_current_block(body_block)
-        @loop_stack.push({ cond_label: cond_block.label, exit_label: exit_block.label })
+        @loop_stack.push({ cond_label: cond_block.label, exit_label: exit_block.label, break_val_var: break_val_var })
         visit(typed_node.children[1]) if typed_node.children[1]
         @loop_stack.pop
         unless @current_block.terminator
           @current_block.set_terminator(Jump.new(target: cond_block.label))
         end
 
-        # Exit
+        # Exit - load break value as loop result
         set_current_block(exit_block)
-        NilLit.new
+        load_break = LoadLocal.new(var: break_val_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(load_break)
+        load_break
       end
 
       def visit_break(typed_node)
         if @loop_stack.any?
-          @current_block.set_terminator(Jump.new(target: @loop_stack.last[:exit_label]))
+          loop_info = @loop_stack.last
+
+          # Evaluate break value if present, otherwise nil
+          if typed_node.children.any? && typed_node.children[0]
+            break_val = visit(typed_node.children[0])
+          else
+            break_val = NilLit.new(result_var: new_temp_var)
+            emit(break_val)
+          end
+
+          # Store break value for the loop to return
+          if loop_info[:break_val_var]
+            emit(StoreLocal.new(var: loop_info[:break_val_var], value: break_val, type: TypeChecker::Types::UNTYPED))
+          end
+
+          @current_block.set_terminator(Jump.new(target: loop_info[:exit_label]))
           # Create unreachable block for any code after break
           set_current_block(new_block("after_break"))
         end
@@ -6185,6 +6228,9 @@ module Konpeito
         end
         collection = visit(collection_child) if collection_child
 
+        # Use unique suffixes for for-loop internal variables (supports nesting)
+        for_id = new_temp_var
+
         # Convert to array via .to_a (handles Range and other Enumerables)
         arr_var = new_temp_var
         to_a_call = Call.new(
@@ -6195,8 +6241,9 @@ module Konpeito
           result_var: arr_var
         )
         emit(to_a_call)
-        for_arr_var = LocalVar.new(name: "_for_arr", type: TypeChecker::Types::UNTYPED)
-        @local_vars["_for_arr"] = for_arr_var
+        for_arr_name = "_for_arr_#{for_id}"
+        for_arr_var = LocalVar.new(name: for_arr_name, type: TypeChecker::Types::UNTYPED)
+        @local_vars[for_arr_name] = for_arr_var
         emit(StoreLocal.new(var: for_arr_var, value: to_a_call, type: TypeChecker::Types::UNTYPED))
 
         # _for_len = _for_arr.length
@@ -6211,15 +6258,17 @@ module Konpeito
           result_var: len_var
         )
         emit(len_call)
-        for_len_var = LocalVar.new(name: "_for_len", type: TypeChecker::Types::INTEGER)
-        @local_vars["_for_len"] = for_len_var
+        for_len_name = "_for_len_#{for_id}"
+        for_len_var = LocalVar.new(name: for_len_name, type: TypeChecker::Types::INTEGER)
+        @local_vars[for_len_name] = for_len_var
         emit(StoreLocal.new(var: for_len_var, value: len_call, type: TypeChecker::Types::INTEGER))
 
         # _for_idx = 0
         zero_lit = IntegerLit.new(value: 0, result_var: new_temp_var)
         emit(zero_lit)
-        for_idx_var = LocalVar.new(name: "_for_idx", type: TypeChecker::Types::INTEGER)
-        @local_vars["_for_idx"] = for_idx_var
+        for_idx_name = "_for_idx_#{for_id}"
+        for_idx_var = LocalVar.new(name: for_idx_name, type: TypeChecker::Types::INTEGER)
+        @local_vars[for_idx_name] = for_idx_var
         emit(StoreLocal.new(var: for_idx_var, value: zero_lit, type: TypeChecker::Types::INTEGER))
 
         # Create blocks
@@ -6227,6 +6276,15 @@ module Konpeito
         body_block = new_block("for_body")
         incr_block = new_block("for_incr")
         exit_block = new_block("for_exit")
+
+        # Initialize break value variable to the collection (for returns collection on normal exit)
+        # break overrides this with nil or the break value
+        break_val_name = "_break_val_#{exit_block.label}"
+        break_val_var = LocalVar.new(name: break_val_name, type: TypeChecker::Types::UNTYPED)
+        @local_vars[break_val_name] = break_val_var
+        arr_ref = LoadLocal.new(var: for_arr_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(arr_ref)
+        emit(StoreLocal.new(var: break_val_var, value: arr_ref, type: TypeChecker::Types::UNTYPED))
 
         @current_block.set_terminator(Jump.new(target: cond_block.label))
 
@@ -6276,7 +6334,8 @@ module Konpeito
         @loop_stack.push({
           cond_label: cond_block.label,
           exit_label: exit_block.label,
-          next_label: incr_block.label
+          next_label: incr_block.label,
+          break_val_var: break_val_var
         })
 
         # Compile body statements
@@ -6312,9 +6371,11 @@ module Konpeito
         emit(StoreLocal.new(var: for_idx_var, value: add_call, type: TypeChecker::Types::INTEGER))
         @current_block.set_terminator(Jump.new(target: cond_block.label))
 
-        # Exit
+        # Exit - load break value as loop result
         set_current_block(exit_block)
-        NilLit.new
+        load_break = LoadLocal.new(var: break_val_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+        emit(load_break)
+        load_break
       end
 
       # Range literal

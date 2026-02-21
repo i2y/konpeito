@@ -1,81 +1,5 @@
-# string_methods_spec: JVM runtime error
-# Cause: String methods not fully implemented in JVM backend
-String#center returns a new string centered with spaces
-String#center pads with the given pad string
-String#center returns self when width is less than length
-String#center returns self when width equals length
-String#center uses the pad string cyclically
-String#ljust pads the right side with spaces
-String#ljust pads with the given pad string
-String#ljust returns self when width is less than length
-String#rjust pads the left side with spaces
-String#rjust pads with the given pad string
-String#rjust returns self when width is less than length
-String#count returns the number of times the given character appears
-String#count counts all characters in the given set
-String#count returns 0 when no characters match
-String#count with negated set counts characters not in the set
-String#delete returns a new string with the given characters removed
-String#delete removes all characters in the given set
-String#delete returns a copy when no characters match
-String#squeeze removes runs of the same character
-String#squeeze limits squeezing to the given character set
-String#squeeze removes consecutive duplicate l from hello
-String#tr returns a new string with characters translated
-String#tr supports ranges in from/to strings
-String#tr with empty to_str deletes the from characters
-String#scan returns all occurrences of the string pattern
-String#scan first match is correct
-String#scan second match is correct
-String#scan returns all matches of the regexp
-String#scan first regexp match
-String#scan second regexp match
-String#scan third regexp match
-String#scan returns an empty array when there are no matches
-String#match returns a MatchData when there is a match
-String#match returns the full match as element 0
-String#match returns the first capture group as element 1
-String#match returns nil when there is no match
-String#match? returns true when the pattern matches
-String#match? returns false when the pattern does not match
-String#index returns the index of the first occurrence of the given substring
-String#index returns 0 when the match is at the start
-String#index returns nil if the substring is not found
-String#index with offset starts searching from the given position
-String#rindex returns the index of the last occurrence of the given substring
-String#rindex returns nil if the substring is not found
-String#rindex with offset searches backward from the given position
-String#insert inserts the string before the character at the given index
-String#insert with negative index counts from the end
-String#insert at index 0 prepends the string
-String#capitalize returns a copy of self with the first character uppercased and the remainder lowercased
-String#capitalize lowercases the remainder of the string
-String#capitalize returns an empty string for an empty string
-String#capitalize returns a copy when already capitalized
-String#swapcase returns a new string with uppercase/lowercase swapped
-String#swapcase converts all uppercase to lowercase
-String#swapcase converts all lowercase to uppercase
-String#swapcase returns an empty string for an empty string
-String#chomp removes a trailing newline
-String#chomp removes a trailing \r\n
-String#chomp removes a trailing \r
-String#chomp returns a copy when there is no trailing newline
-String#chomp with a separator removes the separator from the end
-String#chop returns a new string with the last character removed
-String#chop removes \r\n as a single character
-String#chop returns an empty string when the string has a single character
-String#chop returns an empty string for an empty string
-String#hex interprets the leading characters as a hexadecimal digit string
-String#hex accepts 0x prefix
-String#hex is case-insensitive
-String#hex returns 0 if there are no valid hex digits
-String#hex stops at the first invalid hex character
-String#oct interprets the leading characters as an octal digit string
-String#oct returns 0 if there are no valid octal digits
-String#oct stops at the first invalid octal character
-String#to_sym returns the symbol corresponding to self
-String#intern returns the symbol corresponding to self
-String#to_sym handles strings with spaces
+# string_methods_spec: 78/89 pass (11 fail due to type inference/each_line)
+# Remaining: each_line with block causes type error (String | nil), compilation fails
 String#each_line yields each line
 String#each_line includes the newline in yielded lines
 String#each_line second line includes newline
@@ -84,5 +8,3 @@ String#each_line with separator splits on the given separator
 String#each_line with separator includes the separator
 String#each_line with separator second segment
 String#each_line with separator last segment without separator
-String#encode returns a copy transcoded to the given encoding
-String#encode can transcode from ASCII to UTF-8

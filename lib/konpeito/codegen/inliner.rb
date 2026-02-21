@@ -298,7 +298,8 @@ module Konpeito
             args: new_args,
             block: inst.block,
             type: inst.type,
-            result_var: new_result
+            result_var: new_result,
+            safe_navigation: inst.safe_navigation
           )
 
         when HIR::IntegerLit, HIR::FloatLit, HIR::StringLit,
@@ -475,6 +476,10 @@ module Konpeito
           new_value = transform_value(inst.value, prefix, param_map)
           HIR::StoreConstant.new(name: inst.name, value: new_value, scope: inst.scope, type: inst.type)
 
+        when HIR::DefinedCheck
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          HIR::DefinedCheck.new(check_type: inst.check_type, name: inst.name, type: inst.type, result_var: new_result)
+
         when HIR::SuperCall
           new_result = inst.result_var ? prefix + inst.result_var : nil
           new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
@@ -490,6 +495,31 @@ module Konpeito
           new_proc = transform_value(inst.proc_value, prefix, param_map)
           new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
           HIR::ProcCall.new(proc_value: new_proc, args: new_args, type: inst.type, result_var: new_result)
+
+        when HIR::FiberNew
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_block_def = clone_block_def(inst.block_def, prefix, param_map)
+          HIR::FiberNew.new(block_def: new_block_def, result_var: new_result)
+
+        when HIR::FiberResume
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_fiber = transform_value(inst.fiber, prefix, param_map)
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::FiberResume.new(fiber: new_fiber, args: new_args, type: inst.type, result_var: new_result)
+
+        when HIR::FiberYield
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::FiberYield.new(args: new_args, type: inst.type, result_var: new_result)
+
+        when HIR::FiberAlive
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_fiber = transform_value(inst.fiber, prefix, param_map)
+          HIR::FiberAlive.new(fiber: new_fiber, result_var: new_result)
+
+        when HIR::FiberCurrent
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          HIR::FiberCurrent.new(result_var: new_result)
 
         when HIR::MultiWriteExtract
           new_result = inst.result_var ? prefix + inst.result_var : nil
@@ -514,6 +544,25 @@ module Konpeito
             )
             HIR::LoadLocal.new(var: new_var, type: value.type, result_var: nil)
           end
+        when HIR::StringLit
+          # Clone literal with new result_var (don't convert to LoadLocal reference)
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::StringLit.new(value: value.value, result_var: new_result)
+        when HIR::IntegerLit
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::IntegerLit.new(value: value.value, result_var: new_result)
+        when HIR::FloatLit
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::FloatLit.new(value: value.value, result_var: new_result)
+        when HIR::BoolLit
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::BoolLit.new(value: value.value, result_var: new_result)
+        when HIR::SymbolLit
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::SymbolLit.new(value: value.value, result_var: new_result)
+        when HIR::NilLit
+          new_result = value.result_var ? prefix + value.result_var : nil
+          HIR::NilLit.new(result_var: new_result)
         when HIR::Instruction
           if value.result_var
             # Create a LoadLocal to reference the renamed variable

@@ -43,6 +43,7 @@ mkdir -p "$BUILD_DIR/konpeito/runtime"
     "$SCRIPT_DIR/src/konpeito/runtime/KMath.java" \
     "$SCRIPT_DIR/src/konpeito/runtime/KRactor.java" \
     "$SCRIPT_DIR/src/konpeito/runtime/KRactorPort.java" \
+    "$SCRIPT_DIR/src/konpeito/runtime/KMatchData.java" \
     "$SCRIPT_DIR/src/konpeito/runtime/RubyDispatch.java"
 
 # Copy runtime classes to a separate directory for JAR bundling

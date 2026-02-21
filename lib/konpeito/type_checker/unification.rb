@@ -189,6 +189,12 @@ module Konpeito
         elsif literal_compatible?(t1, t2)
           # Literals are subtypes of their base type (e.g., Literal(1) <: Integer, Literal("x") <: String)
           # Unions of same-type literals are also compatible (e.g., -1 | 0 | 1 <: Integer)
+        elsif t1.is_a?(Types::Union) || t2.is_a?(Types::Union)
+          # Union type compatibility: a concrete type T unifies with Union[T, ...]
+          # if T matches any member of the union. This handles:
+          # - RBS optional params (String? = String | nil) with String args
+          # - RBS union return types (Array[U] | U) with concrete Array[T] block results
+          union_compatible?(t1, t2)
         else
           raise UnificationError.new(t1, t2)
         end
@@ -240,6 +246,37 @@ module Konpeito
         when Symbol then :Symbol
         when true, false then :Bool
         end
+      end
+
+      # Check union type compatibility.
+      # A concrete type T is compatible with Union[T, ...] if T matches any member.
+      # TypeVars within union members are unified when a match is found.
+      # If both sides are unions, check if all members of one are covered by the other.
+      def union_compatible?(t1, t2)
+        if t1.is_a?(Types::Union) && t2.is_a?(Types::Union)
+          # Both are unions — compatible if they share at least one member type
+          # or one is a subtype of the other
+          return if t1.subtype_of?(t2) || t2.subtype_of?(t1)
+
+          raise UnificationError.new(t1, t2)
+        end
+
+        # One is a union, the other is concrete
+        union, concrete = t1.is_a?(Types::Union) ? [t1, t2] : [t2, t1]
+
+        # Try to unify the concrete type with each union member.
+        # If any member succeeds, the union is compatible.
+        union.types.each do |member|
+          begin
+            unify(concrete, member)
+            return  # Success — found a matching member
+          rescue UnificationError
+            # Try next member
+          end
+        end
+
+        # No union member matched — raise error
+        raise UnificationError.new(t1, t2)
       end
 
       # Check if `from` can be widened to `to` (Java/Kotlin-style widening primitive conversion).

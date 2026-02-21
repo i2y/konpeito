@@ -297,7 +297,9 @@ module Konpeito
         @union_dispatches = {}
 
         # Group by (target, original_types)
-        grouped = @union_call_sites.group_by { |s| [s[:target], s[:original_types].map(&:to_s)] }
+        grouped = @union_call_sites
+          .select { |s| s[:original_types] }
+          .group_by { |s| [s[:target], s[:original_types].map(&:to_s)] }
 
         grouped.each do |(target, original_type_strs), sites|
           # Build a mapping from concrete types to specialized function names

@@ -644,15 +644,30 @@ module Konpeito
         else
           key_type = TypeVar.new
           value_type = TypeVar.new
+          key_fallback = false
+          value_fallback = false
 
           node.elements.each do |elem|
             if elem.is_a?(Prism::AssocNode)
-              @unifier.unify(key_type, infer(elem.key))
-              @unifier.unify(value_type, infer(elem.value))
+              begin
+                @unifier.unify(key_type, infer(elem.key)) unless key_fallback
+              rescue UnificationError
+                # Mixed key types (e.g., String and Symbol keys) — fall back to UNTYPED
+                key_fallback = true
+              end
+              begin
+                @unifier.unify(value_type, infer(elem.value)) unless value_fallback
+              rescue UnificationError
+                # Mixed value types (e.g., {name: "alice", age: 30}) — fall back to UNTYPED
+                # This is common in Ruby and should not be a compilation error.
+                value_fallback = true
+              end
             end
           end
 
-          Types.hash_type(@unifier.apply(key_type), @unifier.apply(value_type))
+          resolved_key = key_fallback ? Types::UNTYPED : @unifier.apply(key_type)
+          resolved_value = value_fallback ? Types::UNTYPED : @unifier.apply(value_type)
+          Types.hash_type(resolved_key, resolved_value)
         end
       end
 
@@ -1651,7 +1666,18 @@ module Konpeito
             return receiver_type.type_args&.first || Types::UNTYPED
           end
         # Array methods
-        when :first, :last, :sample, :min, :max, :pop, :shift
+        when :first, :last, :sample
+          # first(n) / last(n) / sample(n) with argument return Array, without return element
+          if receiver_type.is_a?(Types::ClassInstance) && receiver_type.name == :Array
+            if arg_types.size > 0
+              # With argument: returns Array (e.g., [1,2,3].first(2) => [1,2])
+              return receiver_type
+            else
+              # Without argument: returns element type
+              return receiver_type.type_args&.first || Types::UNTYPED
+            end
+          end
+        when :min, :max, :pop, :shift
           # Return element type if known, otherwise untyped
           if receiver_type.is_a?(Types::ClassInstance) && receiver_type.name == :Array
             return receiver_type.type_args&.first || Types::UNTYPED

@@ -1,0 +1,11 @@
+# JVM: NoSuchMethodError for module singleton methods defined in class << self
+# Process crashes at ScHelper.utility call
+class << self defines class method
+class << self second method works
+instance methods still work with singleton class
+class << self in module defines module method
+class << self in module second method works
+def self.method still works
+class << self method works alongside
+inherited class method from singleton class
+own singleton class method works

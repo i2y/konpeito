@@ -1,0 +1,10 @@
+# JVM: NullPointerException in String.concat when super with default args
+# Process crashes at test_super_with_default_args
+super passes args to parent method
+super returns parent value for arithmetic
+super chains through two levels
+super in initialize sets parent ivar
+child initialize sets own ivar
+multi-level super: (5 * 2) + 10 = 20
+super with default args works
+super with explicit args works

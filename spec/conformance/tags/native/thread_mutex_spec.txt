@@ -1,0 +1,11 @@
+# Native: SystemStackError — stack level too deep during compilation (type inference)
+# Process fails to compile
+Thread.new executes block and join waits
+Thread#value returns block result
+Thread#value returns string result
+first thread returns correct value
+second thread returns correct value
+Mutex.synchronize ensures correct counter with 5 threads
+Mutex lock/unlock basic usage works
+Thread captures outer variable
+Thread#join returns the thread object

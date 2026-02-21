@@ -1,0 +1,14 @@
+# JVM: NoSuchFieldError — class/module constants not generated as fields
+# Process crashes, all tests fail
+class constant integer accessible via ::
+second class constant integer accessible
+module constant string accessible via ::
+module constant boolean accessible via ::
+constants usable in class method computation
+constant usable in instance method
+outer class constant
+nested class constant
+defined? returns 'constant' for existing constant
+first constant value
+second constant value
+third constant value

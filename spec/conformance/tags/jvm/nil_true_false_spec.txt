@@ -1,2 +1,0 @@
-# nil_true_false_spec: ALL PASS
-# All 25 tests now pass on JVM backend

@@ -1,4 +1,0 @@
-# symbol_spec: 13/15 pass (2 fail due to type checker limitation)
-# Remaining failures: mixed-type hash {name: "alice", age: 30} rejected by type checker
-symbol works as hash key
-symbol hash key returns correct value

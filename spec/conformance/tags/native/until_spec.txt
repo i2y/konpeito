@@ -1,2 +1,0 @@
-# break with value from until loop returns empty instead of the value
-until returns value passed to break

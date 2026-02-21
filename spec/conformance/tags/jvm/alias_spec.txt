@@ -1,13 +1,3 @@
-# JVM: NoSuchMethodError for aliased methods
-# Process crashes at AlBasic.copied call
-original method works
-alias copies method behavior
-original method with args works
-alias with args works identically
-alias_method copies method behavior
-alias_method with args works identically
-base method works
-first alias works
-chained alias works
-redefined method returns new value
+# JVM: AOT limitation — alias preserves old behavior after method redefine
+# In AOT compilation, method redefinition replaces the original; alias points to the last definition
 alias preserves old behavior after redefine

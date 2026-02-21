@@ -83,16 +83,23 @@ module Konpeito
         # Scan HIR to register NativeClassTypes before code generation
         scan_for_native_class_types(hir_program)
 
+        # Pre-scan: detect parameters that can receive nil at call sites
+        @nil_possible_params = scan_nil_possible_params(hir_program)
+
         # Generate vtables for classes that use them
         generate_vtables
 
+        # Deduplicate functions: when a method is redefined (def speak ... def speak),
+        # keep only the last definition to avoid LLVM name collisions (.1 suffix)
+        functions = deduplicate_functions(hir_program.functions)
+
         # First pass: declare all functions (needed for forward references / monomorphization)
-        hir_program.functions.each do |func|
+        functions.each do |func|
           declare_function(func)
         end
 
         # Second pass: generate code for each function
-        hir_program.functions.each do |func|
+        functions.each do |func|
           generate_function_body(func)
         end
 
@@ -102,6 +109,18 @@ module Konpeito
         end
 
         @mod
+      end
+
+      # Remove earlier definitions when a method is redefined in the same class.
+      # Keeps the last definition (which is the override).
+      def deduplicate_functions(functions)
+        seen = {}
+        functions.each_with_index do |func, i|
+          key = [func.owner_class, func.owner_module, func.name.to_s, func.class_method?]
+          seen[key] = i
+        end
+        # Keep functions whose index matches the last occurrence
+        functions.each_with_index.select { |_, i| seen.values.include?(i) }.map(&:first)
       end
 
       # Declare a function (create LLVM function without body)
@@ -232,6 +251,53 @@ module Konpeito
             end
           end
         end
+      end
+
+      # Pre-scan all HIR functions to detect parameters that can receive nil at call sites.
+      # Returns a Hash: { "ClassName#method_name" => Set[param_index], ... }
+      # so codegen can keep those parameters as VALUE type (not unboxed).
+      def scan_nil_possible_params(hir_program)
+        # Build function index: function_name → HIR::Function (for param count)
+        func_index = {}
+        hir_program.functions.each do |func|
+          key = func.owner_class ? "#{func.owner_class}##{func.name}" : func.name
+          func_index[key] = func
+        end
+
+        nil_params = {}  # "ClassName#method" => Set[param_index]
+
+        hir_program.functions.each do |func|
+          func.body.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call)
+
+              # Detect ClassName.new(nil, ...) → maps to ClassName#initialize
+              target_key = nil
+              if inst.method_name == "new" && inst.receiver.is_a?(HIR::ConstantLookup)
+                class_name = inst.receiver.name.to_s
+                target_key = "#{class_name}#initialize"
+              elsif inst.receiver.is_a?(HIR::SelfRef) || inst.receiver.nil?
+                # Self call or bare function call
+                if func.owner_class
+                  target_key = "#{func.owner_class}##{inst.method_name}"
+                else
+                  target_key = inst.method_name
+                end
+              end
+
+              next unless target_key
+
+              inst.args.each_with_index do |arg, i|
+                if arg.is_a?(HIR::NilLit)
+                  nil_params[target_key] ||= Set.new
+                  nil_params[target_key] << i
+                end
+              end
+            end
+          end
+        end
+
+        nil_params
       end
 
       # Auto-generate NativeClassType from HM-inferred ivar types (RBS-free classes)
@@ -567,8 +633,8 @@ module Konpeito
         # void rb_cvar_set(VALUE klass, ID id, VALUE val)
         @rb_cvar_set = @mod.functions.add("rb_cvar_set", [value_type, id_type, value_type], LLVM.Void)
 
-        # VALUE rb_class_of(VALUE obj) - get class of object
-        @rb_class_of = @mod.functions.add("rb_class_of", [value_type], value_type)
+        # VALUE rb_obj_class(VALUE obj) - get class of object (exported C API)
+        @rb_obj_class = @mod.functions.add("rb_obj_class", [value_type], value_type)
 
         # Block/Yield functions
         # VALUE rb_yield(VALUE val) - yield with single value
@@ -1435,9 +1501,18 @@ module Konpeito
       def collect_local_variables_with_types(hir_func)
         vars = {}
 
+        # Build function key for nil-possible param lookup
+        func_key = hir_func.owner_class ? "#{hir_func.owner_class}##{hir_func.name}" : hir_func.name
+        nil_param_indices = @nil_possible_params&.[](func_key)
+
         # Add parameters with their types
-        hir_func.params.each do |p|
-          vars[p.name] = p.type
+        hir_func.params.each_with_index do |p, i|
+          if nil_param_indices&.include?(i)
+            # Parameter can receive nil at some call site — force VALUE type
+            vars[p.name] = TypeChecker::Types::UNTYPED
+          else
+            vars[p.name] = p.type
+          end
         end
 
         # First pass: collect temp vars that come from safe navigation calls
@@ -2457,6 +2532,13 @@ module Konpeito
             type_tag = @variable_types[var_name] || :value
             [value, type_tag]
           end
+        when HIR::SelfRef
+          # SelfRef may not have a result_var (e.g. implicit self in method calls)
+          if hir_value.result_var && @variables.key?(hir_value.result_var)
+            [@variables[hir_value.result_var], @variable_types[hir_value.result_var] || :value]
+          else
+            [get_self_value, :value]
+          end
         when HIR::Instruction
           if hir_value.result_var
             # Check if instruction was already generated
@@ -2717,7 +2799,7 @@ module Konpeito
         elsif @current_hir_func&.owner_class
           # For instance methods, get the class from self using rb_class_of
           self_value = get_self_value
-          @builder.call(@rb_class_of, self_value)
+          @builder.call(@rb_obj_class, self_value)
         else
           # Top-level: use rb_cObject (need to load the global)
           @builder.load2(value_type, @rb_cObject, "rb_cObject")
@@ -2995,7 +3077,6 @@ module Konpeito
           if arg.is_a?(HIR::SplatArg)
             # Concat the splat array into the args array
             splat_value = get_value_as_ruby(arg.expression)
-            # Convert to array if not already (rb_ary_to_ary)
             @builder.call(@rb_ary_concat, args_array, splat_value)
           else
             # Push regular arg
@@ -3668,9 +3749,21 @@ module Konpeito
 
         # Generate block body instructions
         body_result = nil
+        body_result_type = :value
+        last_body_inst = nil
         block.body.each do |basic_block|
           basic_block.instructions.each do |body_inst|
             body_result = generate_instruction(body_inst)
+            last_body_inst = body_inst
+          end
+        end
+
+        # Determine the type tag of the block body result
+        if last_body_inst
+          if last_body_inst.respond_to?(:result_var) && last_body_inst.result_var
+            body_result_type = @variable_types[last_body_inst.result_var] || :value
+          elsif last_body_inst.is_a?(HIR::StoreLocal)
+            body_result_type = @variable_types[last_body_inst.var.name] || :value
           end
         end
 
@@ -3682,16 +3775,13 @@ module Konpeito
         # Handle result based on method type
         case method_sym
         when :map, :collect
-          # Push block result to result array (box if unboxed)
+          # Push block result to result array (box if needed)
+          # Only re-box if the result is actually unboxed (not a VALUE from a method call)
           mapped_val = if body_result
-            if use_unboxed && body_result.is_a?(LLVM::Value)
-              if body_result.type == LLVM::Int64
-                @builder.call(@rb_int2inum, body_result)
-              elsif body_result.type == LLVM::Double
-                @builder.call(@rb_float_new, body_result)
-              else
-                ensure_ruby_value(body_result)
-              end
+            if body_result_type == :i64 && body_result.is_a?(LLVM::Value)
+              @builder.call(@rb_int2inum, body_result)
+            elsif body_result_type == :double && body_result.is_a?(LLVM::Value)
+              @builder.call(@rb_float_new, body_result)
             else
               ensure_ruby_value(body_result)
             end
@@ -4261,6 +4351,10 @@ module Konpeito
         #   - If argc < params.size: destructure yielded_arg with rb_ary_entry (e.g., Hash#each yields [k,v] pair)
         if block_def.params.size == 1
           param_name = block_def.params.first.name
+          # Create alloca for single parameter (needed for method calls like it.to_s)
+          param_alloca = @builder.alloca(value_type, "#{param_name}_alloca")
+          @builder.store(callback_func.params[0], param_alloca)
+          @variable_allocas[param_name] = param_alloca
           @variables[param_name] = callback_func.params[0]  # yielded_arg
           @variable_types[param_name] = :value
         elsif block_def.params.size > 1
@@ -6593,16 +6687,39 @@ module Konpeito
           return result
         end
 
-        # Look up a constant (typically a class name)
-        # Use rb_const_get(rb_cObject, rb_intern(name))
-        const_name_ptr = @builder.global_string_pointer(inst.name)
-        const_id = @builder.call(@rb_intern, const_name_ptr)
+        parts = inst.name.to_s.split("::")
 
-        # Load rb_cObject (for top-level constants)
-        rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
-
-        # Look up the constant
-        result = @builder.call(@rb_const_get, rb_cobject_val, const_id)
+        if parts.size > 1
+          # Qualified constant path (e.g., CoMath::PI, Foo::Bar::BAZ)
+          # Chain rb_const_get calls: rb_const_get(rb_const_get(rb_cObject, "CoMath"), "PI")
+          scope = @builder.load2(value_type, @rb_cObject, "rb_cObject")
+          parts.each do |part|
+            part_ptr = @builder.global_string_pointer(part)
+            part_id = @builder.call(@rb_intern, part_ptr)
+            scope = @builder.call(@rb_const_get, scope, part_id)
+          end
+          result = scope
+        else
+          # Unqualified constant - search current class/module first, then Object
+          const_name = parts.first
+          owner_class = @current_hir_func&.owner_class || @current_hir_func&.owner_module
+          if owner_class
+            # Look up constant in the owning class/module
+            owner_ptr = @builder.global_string_pointer(owner_class)
+            owner_id = @builder.call(@rb_intern, owner_ptr)
+            rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
+            owner_value = @builder.call(@rb_const_get, rb_cobject_val, owner_id)
+            const_name_ptr = @builder.global_string_pointer(const_name)
+            const_id = @builder.call(@rb_intern, const_name_ptr)
+            result = @builder.call(@rb_const_get, owner_value, const_id)
+          else
+            # Top-level constant
+            const_name_ptr = @builder.global_string_pointer(const_name)
+            const_id = @builder.call(@rb_intern, const_name_ptr)
+            rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
+            result = @builder.call(@rb_const_get, rb_cobject_val, const_id)
+          end
+        end
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -6670,16 +6787,56 @@ module Konpeito
           result = @builder.call(@rb_str_new_cstr, str_ptr)
         when :constant
           # Use rb_const_defined to check at runtime
+          # Handle path-style names like "CoMath::PI" by resolving each component
           rb_const_defined = @mod.functions["rb_const_defined"] || @mod.functions.add(
             "rb_const_defined",
             [value_type, value_type],
             LLVM::Int32
           )
-          rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
-          name_ptr = @builder.global_string_pointer(inst.name)
-          name_id = @builder.call(@rb_intern, name_ptr)
-          is_defined = @builder.call(rb_const_defined, rb_cobject_val, name_id)
-          is_true = @builder.icmp(:ne, is_defined, LLVM::Int32.from_i(0))
+
+          parts = inst.name.split("::")
+          current_mod = @builder.load2(value_type, @rb_cObject, "rb_cObject")
+
+          if parts.size == 1
+            # Simple constant: defined?(FOO)
+            name_ptr = @builder.global_string_pointer(parts[0])
+            name_id = @builder.call(@rb_intern, name_ptr)
+            is_defined = @builder.call(rb_const_defined, current_mod, name_id)
+            is_true = @builder.icmp(:ne, is_defined, LLVM::Int32.from_i(0))
+          else
+            # Path constant: defined?(Foo::Bar::BAZ)
+            # Check each component exists, then resolve all but last, check last
+            # For simplicity, check all components exist then return "constant"
+            all_ok = nil
+            parts.each_with_index do |part, i|
+              name_ptr = @builder.global_string_pointer(part)
+              name_id = @builder.call(@rb_intern, name_ptr)
+              check = @builder.call(rb_const_defined, current_mod, name_id)
+              check_bool = @builder.icmp(:ne, check, LLVM::Int32.from_i(0))
+
+              if i < parts.size - 1
+                # Resolve intermediate module (only if defined)
+                # Use rb_const_get to get the module for the next lookup
+                resolve_bb = func.basic_blocks.append("resolve_#{part}")
+                fail_bb = func.basic_blocks.append("fail_#{part}")
+                @builder.cond(check_bool, resolve_bb, fail_bb)
+
+                @builder.position_at_end(resolve_bb)
+                current_mod = @builder.call(@rb_const_get, current_mod, name_id)
+
+                # We'll merge fail paths at the end
+                if all_ok.nil?
+                  all_ok = { fail_bbs: [fail_bb] }
+                else
+                  all_ok[:fail_bbs] << fail_bb
+                end
+              else
+                # Last component: just check if defined
+                all_ok ||= { fail_bbs: [] }
+                is_true = check_bool
+              end
+            end
+          end
 
           defined_bb = func.basic_blocks.append("defined_yes")
           undefined_bb = func.basic_blocks.append("defined_no")
@@ -6692,11 +6849,22 @@ module Konpeito
           defined_val = @builder.call(@rb_str_new_cstr, str_ptr)
           @builder.br(merge_bb)
 
+          # All fail paths (intermediate components not found) go to undefined
           @builder.position_at_end(undefined_bb)
           @builder.br(merge_bb)
+          if all_ok && all_ok[:fail_bbs]
+            all_ok[:fail_bbs].each do |fail_bb|
+              @builder.position_at_end(fail_bb)
+              @builder.br(merge_bb)
+            end
+          end
 
           @builder.position_at_end(merge_bb)
-          result = @builder.phi(value_type, { defined_bb => defined_val, undefined_bb => @qnil })
+          phi_incoming = { defined_bb => defined_val, undefined_bb => @qnil }
+          if all_ok && all_ok[:fail_bbs]
+            all_ok[:fail_bbs].each { |fb| phi_incoming[fb] = @qnil }
+          end
+          result = @builder.phi(value_type, phi_incoming)
         when :method
           # Use rb_respond_to to check if method exists
           rb_respond_to = @mod.functions["rb_respond_to"] || @mod.functions.add(

@@ -1,2 +1,0 @@
-# for_spec: ALL PASS
-# All 13 tests now pass on JVM backend

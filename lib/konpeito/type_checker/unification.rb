@@ -18,8 +18,15 @@ module Konpeito
       end
 
       def to_s
+        # Guard against circular type variable references (e.g., TypeVar → Union → TypeVar)
+        visiting = Thread.current[:__typevar_visiting] ||= Set.new
+        return @name if visiting.include?(@id)
+
         if @instance
-          @instance.to_s
+          visiting.add(@id)
+          result = @instance.to_s
+          visiting.delete(@id)
+          result
         else
           @name
         end

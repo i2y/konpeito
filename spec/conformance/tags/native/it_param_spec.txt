@@ -1,4 +1,0 @@
-# it.to_s returns raw VALUE instead of string representation
-it.to_s converts first element
-it.to_s converts second element
-it.to_s converts third element

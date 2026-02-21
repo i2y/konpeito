@@ -500,6 +500,19 @@ module Konpeito
                   generate_attr_reader_method(attr_name, class_def)
                   generate_attr_writer_method(attr_name, class_def)
                 end
+              elsif child.node_type == :constant_write
+                # Constant assignment in class body (e.g., PI = 3)
+                const_name = child.node.name.to_s
+                value_node = visit_literal_value(child.children.first)
+                class_def.body_constants << [const_name, value_node]
+              elsif child.node_type == :class_variable_write
+                # Class variable initialization in class body (e.g., @@count = 0)
+                cvar_name = child.node.name.to_s
+                value_node = visit_literal_value(child.children.first)
+                class_def.body_class_vars << [cvar_name, value_node]
+                # Also track class variable for the class
+                @class_vars[name] ||= Set.new
+                @class_vars[name] << cvar_name
               else
                 visit(child)
               end
@@ -807,7 +820,11 @@ module Konpeito
               elsif child.node_type == :constant_write
                 # Handle constant assignment within module
                 const_name = child.node.name.to_s
-                module_constants[const_name] = visit(child)
+                module_constants[const_name] = visit_literal_value(child.children.first)
+              elsif child.node_type == :class_variable_write
+                # Handle class variable initialization within module
+                # (modules can have class variables too)
+                visit(child)
               else
                 visit(child)
               end
@@ -7302,6 +7319,33 @@ module Konpeito
         result = yield
         @suppress_emit = old_suppress
         result
+      end
+
+      # Extract a literal value from a typed node without emitting instructions.
+      # Used for class/module body constant and class variable initializations.
+      # Returns an HIR literal node (IntegerLit, FloatLit, StringLit, etc.) or visits the node.
+      def visit_literal_value(typed_node)
+        return NilLit.new unless typed_node
+
+        case typed_node.node_type
+        when :integer
+          IntegerLit.new(value: typed_node.node.value)
+        when :float
+          FloatLit.new(value: typed_node.node.value)
+        when :string
+          StringLit.new(value: typed_node.node.unescaped)
+        when :symbol
+          SymbolLit.new(value: typed_node.node.value.to_s)
+        when :true
+          BoolLit.new(value: true)
+        when :false
+          BoolLit.new(value: false)
+        when :nil
+          NilLit.new
+        else
+          # For non-literal values, try visiting but suppress emit
+          without_emit { visit(typed_node) }
+        end
       end
 
       def new_temp_var

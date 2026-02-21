@@ -1,2 +1,0 @@
-# Compilation fixed: mixed-type hash values fall back to UNTYPED
-# All 13 assertions pass at runtime

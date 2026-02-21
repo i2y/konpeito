@@ -1,4 +1,0 @@
-# Safe navigation on nil receiver crashes (nil check not generated for untyped nil)
-&. returns nil when receiver is nil
-&. does not call the method when receiver is nil
-&. chain returns nil when first receiver is nil

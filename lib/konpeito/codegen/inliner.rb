@@ -91,6 +91,7 @@ module Konpeito
         # Skip functions containing block calls (captures need complex transformation)
         # Skip functions containing yield (need KBlock parameter handling)
         # Skip functions containing BeginRescue (exception handling has complex sub-block structure)
+        # Skip functions containing ThreadNew/FiberNew (callbacks reference specific allocas)
         func.body.each do |block|
           block.instructions.each do |inst|
             return false if inst.is_a?(HIR::Call) && inst.block
@@ -98,6 +99,8 @@ module Konpeito
             return false if inst.is_a?(HIR::BeginRescue)
             return false if inst.is_a?(HIR::CaseStatement)
             return false if inst.is_a?(HIR::CaseMatchStatement)
+            return false if inst.is_a?(HIR::ThreadNew)
+            return false if inst.is_a?(HIR::FiberNew)
           end
         end
 
@@ -157,6 +160,9 @@ module Konpeito
 
       def can_inline_call?(inst)
         return false unless self_call?(inst)
+
+        # Don't inline calls with splat arguments - they need rb_apply
+        return false if inst.args.any? { |a| a.is_a?(HIR::SplatArg) }
 
         callee_name = inst.method_name.to_s
         @inline_candidates[callee_name] == true

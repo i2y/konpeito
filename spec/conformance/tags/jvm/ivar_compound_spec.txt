@@ -1,5 +1,5 @@
 # JVM: NullPointerException in test_ivar_and_assign_nil
-# null.longValue() when @val is nil
+# null.longValue() when @val is nil — HM infers @val as Integer but nil is passed
 # Process crashes, all tests fail
 @value += n accumulates correctly
 @value -= n subtracts correctly

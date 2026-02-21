@@ -1,5 +1,5 @@
-# JVM: compilation error — type mismatch in OpContainer (String vs Integer values)
-# Process fails to compile
+# JVM: VerifyError — unboxed long on stack where Object expected in []=
+# All tests fail at runtime
 operator + on x component
 operator + on y component
 operator - on x component

@@ -1,4 +1,0 @@
-# proc_lambda_spec: JVM lambda closure does not see updated captured variable
-# DIFF: lambda captures updated value — returns 1 (initial value) instead of 2 (updated value)
-# Cause: JVM backend captures variable by value at lambda creation time, not by reference
-lambda sees updated value of captured variable

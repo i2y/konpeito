@@ -34,6 +34,7 @@ module Konpeito
         @deferred_constraints = []  # Deferred method resolution for TypeVar receivers
         @keyword_param_vars = {}  # func_key => { :param_name => TypeVar }
         @unresolved_type_warnings = []  # Warnings for types that survived inference
+        @polymorphic_methods = {}  # qualified_key => TypeScheme for instance methods
       end
 
       # Main entry: infer types for a program AST
@@ -309,9 +310,27 @@ module Konpeito
           @function_types[node.name.to_sym] = func_type
 
           if @in_class_collect
-            # Class methods: monomorphic binding — call-site unification flows into method body
-            # This allows argument types (e.g., Array from call site) to be visible in method body
-            bind_scheme(node.name, TypeScheme.new([], func_type))
+            is_class_method = node.receiver.is_a?(Prism::SelfNode) rescue false
+            is_initialize = node.name.to_sym == :initialize
+            if is_class_method || is_initialize
+              # Class methods and initialize: monomorphic binding — call-site unification
+              # flows into method body. This allows argument types (e.g., Array from call
+              # site) to be visible in method body.
+              bind_scheme(node.name, TypeScheme.new([], func_type))
+            else
+              # Instance methods: polymorphic binding — each call site gets fresh type
+              # variables. This allows methods like []= to accept different types at
+              # different call sites (e.g., c["name"] = "Alice"; c["age"] = 30).
+              all_vars = collect_type_vars(func_type)
+              scheme = TypeScheme.new(all_vars, func_type)
+              bind_scheme(node.name, scheme)
+              # Mark this method as polymorphic for receiver-based call resolution.
+              # The actual scheme will be created lazily at the first call site,
+              # after body inference has established internal TypeVar linkages.
+              if @collect_class_name && !all_vars.empty?
+                @polymorphic_methods[:"#{@collect_class_name}##{node.name}"] = true
+              end
+            end
           else
             # Top-level functions: generalize to type scheme (all type vars are quantified)
             all_vars = collect_type_vars(func_type)
@@ -782,23 +801,43 @@ module Konpeito
 
         # Receiver-based call on user class: look up class-qualified method type
         # Walk up class hierarchy to find inherited methods
-        # Call-site unification flows argument types into method body (monomorphic binding)
         if node.receiver && receiver_type.is_a?(Types::ClassInstance)
           class_name = receiver_type.name.to_s
           cls = class_name
           func_type = nil
+          polymorphic_scheme = nil
           while cls
-            func_type = @function_types[:"#{cls}##{method_name}"]
+            qualified_key = :"#{cls}##{method_name}"
+            # Check if this method has polymorphic binding (instance methods)
+            polymorphic_scheme = @polymorphic_methods[qualified_key]
+            func_type = @function_types[qualified_key]
             break if func_type.is_a?(FunctionType)
             cls = @class_parents[cls]
           end
           if func_type.is_a?(FunctionType)
-            # Directly unify — monomorphic binding allows call-site types to flow into method body
-            unify_call_args(func_type, arg_types)
-            # Unify keyword args from call site
-            unify_keyword_args(node, :"#{class_name}##{method_name}")
-            infer_block_body_without_rbs(node.block) if node.block
-            return @unifier.apply(func_type.return_type)
+            if polymorphic_scheme
+              # Polymorphic instance methods: try unification but allow type mismatches.
+              # If a type mismatch occurs (e.g., []= called with String then Integer),
+              # fall through to dynamic dispatch (UNTYPED return).
+              begin
+                unify_call_args(func_type, arg_types)
+                unify_keyword_args(node, :"#{class_name}##{method_name}")
+                infer_block_body_without_rbs(node.block) if node.block
+                return @unifier.apply(func_type.return_type)
+              rescue UnificationError
+                # Type mismatch on polymorphic instance method — fall through to
+                # dynamic dispatch. This handles cases like c["name"] = "Alice"
+                # followed by c["age"] = 30 where val type differs across calls.
+                infer_block_body_without_rbs(node.block) if node.block
+                return Types::UNTYPED
+              end
+            else
+              # Monomorphic binding: call-site types flow into method body
+              unify_call_args(func_type, arg_types)
+              unify_keyword_args(node, :"#{class_name}##{method_name}")
+              infer_block_body_without_rbs(node.block) if node.block
+              return @unifier.apply(func_type.return_type)
+            end
           end
         end
 

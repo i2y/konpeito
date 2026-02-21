@@ -264,12 +264,12 @@ module Konpeito
             lines << "    rb_define_singleton_method(#{module_var}, \"#{method_name}\", #{mangled_name}, #{arity});"
           end
 
-          # Register module constants
-          module_def.constants.each do |const_name, _value|
-            # Constants are typically registered at runtime via rb_const_set
-            # For compile-time literals, we could use rb_define_const here
-            # For now, mark them for runtime initialization
-            lines << "    /* Module constant #{module_def.name}::#{const_name} registered at runtime */"
+          # Register module constants (e.g., VERSION = "2.0")
+          module_def.constants.each do |const_name, value_node|
+            c_value = hir_literal_to_c_value(value_node)
+            next unless c_value
+
+            lines << "    rb_const_set(#{module_var}, rb_intern(\"#{const_name}\"), #{c_value});"
           end
         end
 
@@ -344,6 +344,22 @@ module Konpeito
           # Register aliases
           class_def.aliases.each do |new_name, old_name|
             lines << "    rb_define_alias(#{class_var}, \"#{new_name}\", \"#{old_name}\");"
+          end
+
+          # Register class body constants (e.g., PI = 3, VERSION = "1.0")
+          class_def.body_constants.each do |const_name, value_node|
+            c_value = hir_literal_to_c_value(value_node)
+            next unless c_value
+
+            lines << "    rb_const_set(#{class_var}, rb_intern(\"#{const_name}\"), #{c_value});"
+          end
+
+          # Register class body class variables (e.g., @@count = 0)
+          class_def.body_class_vars.each do |cvar_name, value_node|
+            c_value = hir_literal_to_c_value(value_node)
+            next unless c_value
+
+            lines << "    rb_cvar_set(#{class_var}, rb_intern(\"#{cvar_name}\"), #{c_value});"
           end
         end
 
@@ -1039,6 +1055,43 @@ module Konpeito
 
         # Fallback: runtime constant lookup
         "rb_const_get(rb_cObject, rb_intern(\"#{superclass_name}\"))"
+      end
+
+      # Convert an HIR literal node to a C VALUE expression for use in Init function.
+      # Returns nil for non-literal nodes that cannot be statically initialized.
+      def hir_literal_to_c_value(node)
+        case node
+        when HIR::IntegerLit
+          "INT2FIX(#{node.value})"
+        when HIR::FloatLit
+          "DBL2NUM(#{node.value})"
+        when HIR::StringLit
+          escaped = node.value.to_s.gsub("\\", "\\\\\\\\").gsub('"', '\\"').gsub("\n", "\\n").gsub("\t", "\\t")
+          "rb_str_new_cstr(\"#{escaped}\")"
+        when HIR::SymbolLit
+          "ID2SYM(rb_intern(\"#{node.value}\"))"
+        when HIR::BoolLit
+          node.value ? "Qtrue" : "Qfalse"
+        when HIR::NilLit
+          "Qnil"
+        when HIR::Literal
+          # Generic literal fallback
+          case node.type
+          when TypeChecker::Types::INTEGER
+            "INT2FIX(#{node.value})"
+          when TypeChecker::Types::FLOAT
+            "DBL2NUM(#{node.value})"
+          when TypeChecker::Types::STRING
+            escaped = node.value.to_s.gsub("\\", "\\\\\\\\").gsub('"', '\\"').gsub("\n", "\\n").gsub("\t", "\\t")
+            "rb_str_new_cstr(\"#{escaped}\")"
+          when TypeChecker::Types::BOOL
+            node.value ? "Qtrue" : "Qfalse"
+          else
+            nil
+          end
+        else
+          nil
+        end
       end
 
       # Generate extern declaration for a @cfunc C function

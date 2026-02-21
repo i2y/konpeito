@@ -4106,17 +4106,15 @@ module Konpeito
         instructions = []
 
         constants.each do |const_name, value_insts|
-          # value_insts is an array of HIR instructions that produce the constant value
-          # Generate instructions to compute the value and store to static field
-          if value_insts.is_a?(Array)
-            value_insts.each do |inst|
-              instructions.concat(generate_instruction(inst))
-            end
-            # The last instruction should have produced a value — store it to the static field
-            instructions << { "op" => "putstatic", "owner" => jvm_name,
-                              "name" => const_name.to_s,
-                              "descriptor" => "Ljava/lang/Object;" }
+          # value_insts may be an Array of HIR instructions or a single HIR node
+          insts = value_insts.is_a?(Array) ? value_insts : [value_insts]
+          insts.each do |inst|
+            instructions.concat(clinit_push_value(inst))
           end
+          # The last instruction should have produced a value — store it to the static field
+          instructions << { "op" => "putstatic", "owner" => jvm_name,
+                            "name" => const_name.to_s,
+                            "descriptor" => "Ljava/lang/Object;" }
         end
 
         instructions << { "op" => "return" }
@@ -4129,6 +4127,90 @@ module Konpeito
           "access" => ["public", "static"],
           "instructions" => instructions
         }
+      end
+
+      # Generate <clinit> for class body constants and class variables
+      def generate_class_clinit(class_def, jvm_class_name)
+        body_constants = class_def.body_constants || []
+        body_class_vars = class_def.body_class_vars || []
+        return nil if body_constants.empty? && body_class_vars.empty?
+
+        instructions = []
+
+        body_constants.each do |const_name, value_node|
+          instructions.concat(clinit_push_value(value_node))
+          instructions << { "op" => "putstatic", "owner" => jvm_class_name,
+                            "name" => const_name.to_s,
+                            "descriptor" => "Ljava/lang/Object;" }
+        end
+
+        body_class_vars.each do |cvar_name, value_node|
+          # Store to main class with CLASSVAR_ prefix (matching LoadClassVar/StoreClassVar)
+          field_name = cvar_name.to_s.sub(/^@@/, "CLASSVAR_")
+          register_global_field(field_name)
+          instructions.concat(clinit_push_value(value_node))
+          instructions << { "op" => "putstatic", "owner" => main_class_name,
+                            "name" => field_name,
+                            "descriptor" => "Ljava/lang/Object;" }
+        end
+
+        instructions << { "op" => "return" }
+
+        {
+          "name" => "<clinit>",
+          "descriptor" => "()V",
+          "access" => ["public", "static"],
+          "instructions" => instructions
+        }
+      end
+
+      # Push a literal value onto the JVM operand stack (for use in <clinit>).
+      # Does not store to local variable slots.
+      def clinit_push_value(node)
+        case node
+        when HIR::IntegerLit
+          insts = []
+          val = node.value
+          if val == 0
+            insts << { "op" => "lconst_0" }
+          elsif val == 1
+            insts << { "op" => "lconst_1" }
+          else
+            insts << { "op" => "ldc2_w", "value" => val, "type" => "long" }
+          end
+          # Box to Long
+          insts << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                     "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+          insts
+        when HIR::FloatLit
+          insts = []
+          val = node.value
+          if val == 0.0
+            insts << { "op" => "dconst_0" }
+          elsif val == 1.0
+            insts << { "op" => "dconst_1" }
+          else
+            insts << { "op" => "ldc2_w", "value" => val, "type" => "double" }
+          end
+          # Box to Double
+          insts << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                     "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+          insts
+        when HIR::StringLit
+          [{ "op" => "ldc", "value" => node.value.to_s }]
+        when HIR::SymbolLit
+          [{ "op" => "ldc", "value" => ":#{node.value}" }]
+        when HIR::BoolLit
+          val = node.value ? 1 : 0
+          insts = [{ "op" => "iconst", "value" => val }]
+          insts << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
+                     "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
+          insts
+        when HIR::NilLit
+          [{ "op" => "aconst_null" }]
+        else
+          [{ "op" => "aconst_null" }]
+        end
       end
 
       # Generate a static method on a class from an extended module's instance method
@@ -4371,6 +4453,61 @@ module Konpeito
           end
         end
 
+        # Aliases — generate forwarding methods
+        (class_def.aliases || []).each do |new_name, old_name|
+          jvm_new = jvm_method_name(new_name)
+          jvm_old = jvm_method_name(old_name)
+          # Find the original method's descriptor
+          orig_key = "#{class_name}##{old_name}"
+          orig_desc = @method_descriptors[orig_key]
+          next unless orig_desc
+          # Skip if alias name collides with an already-generated method
+          next if seen_methods[new_name.to_s]
+          seen_methods[new_name.to_s] = true
+          # Build forwarding method: load this + params, invokevirtual original, return
+          fwd_instructions = []
+          fwd_instructions << { "op" => "aload", "var" => 0 }  # this
+          # Parse param types and load them
+          param_types = parse_descriptor_param_types(orig_desc)
+          slot = 1
+          param_types.each do |pt|
+            case pt
+            when :i64
+              fwd_instructions << { "op" => "lload", "var" => slot }
+              slot += 2
+            when :double
+              fwd_instructions << { "op" => "dload", "var" => slot }
+              slot += 2
+            when :i8
+              fwd_instructions << { "op" => "iload", "var" => slot }
+              slot += 1
+            else
+              fwd_instructions << { "op" => "aload", "var" => slot }
+              slot += 1
+            end
+          end
+          jvm_class = user_class_jvm_name(class_name)
+          fwd_instructions << { "op" => "invokevirtual", "owner" => jvm_class,
+                                "name" => jvm_old, "descriptor" => orig_desc }
+          # Return based on return type
+          ret_desc = orig_desc[orig_desc.index(")") + 1..]
+          case ret_desc
+          when "J" then fwd_instructions << { "op" => "lreturn" }
+          when "D" then fwd_instructions << { "op" => "dreturn" }
+          when "I" then fwd_instructions << { "op" => "ireturn" }
+          when "V" then fwd_instructions << { "op" => "return" }
+          else fwd_instructions << { "op" => "areturn" }
+          end
+          # Register descriptor for the alias
+          @method_descriptors["#{class_name}##{new_name}"] = orig_desc
+          jvm_methods << {
+            "name" => jvm_new,
+            "descriptor" => orig_desc,
+            "access" => ["public"],
+            "instructions" => fwd_instructions
+          }
+        end
+
         # Extend — generate static wrapper methods from extended modules
         (class_def.extended_modules || []).each do |mod_name|
           mod_info = @module_info[mod_name.to_s]
@@ -4399,6 +4536,22 @@ module Konpeito
             end
           end
         end
+
+        # Add static fields for class body constants
+        (class_def.body_constants || []).each do |const_name, _value_node|
+          jvm_fields << {
+            "name" => const_name.to_s,
+            "descriptor" => "Ljava/lang/Object;",
+            "access" => ["public", "static", "final"]
+          }
+        end
+
+        # Class body class variables are stored on main class (via register_global_field
+        # in generate_class_clinit), no separate fields needed on the class itself.
+
+        # Generate <clinit> for class body constants and class variables
+        clinit = generate_class_clinit(class_def, jvm_class_name)
+        jvm_methods << clinit if clinit
 
         {
           "name" => jvm_class_name,
@@ -5424,13 +5577,71 @@ module Konpeito
           ]
         else
           # Check if this constant was actually stored (has a field to load from)
-          has_field = @constant_fields&.include?(name)
-          unless has_field
-            # Check modules/classes for the constant
-            @module_info.each do |mod_name, _|
-              has_field = true if @hir_program&.modules&.any? { |m|
-                m.name.to_s == mod_name && m.respond_to?(:constants) && m.constants&.include?(name.to_sym)
+          # Handle path-style constants like "CoMath::PI"
+          const_name = name
+          scope_name = nil
+          if name.include?("::")
+            parts = name.split("::")
+            scope_name = parts[0..-2].join("::")
+            const_name = parts.last
+          end
+
+          has_field = @constant_fields&.include?(const_name)
+          found_owner = nil
+
+          # If there's a scope, look up the constant in that specific class/module
+          if scope_name && !has_field
+            # Check class body_constants
+            @hir_program&.classes&.each do |cls|
+              if cls.name.to_s == scope_name && cls.respond_to?(:body_constants) &&
+                 cls.body_constants&.any? { |cn, _| cn.to_s == const_name }
+                has_field = true
+                found_owner = user_class_jvm_name(scope_name)
+                break
+              end
+            end
+            # Check module constants
+            unless has_field
+              if @hir_program&.modules&.any? { |m|
+                m.name.to_s == scope_name && m.respond_to?(:constants) && m.constants&.any? { |k, _| k.to_s == const_name }
               }
+                has_field = true
+                found_owner = module_jvm_name(scope_name)
+              end
+            end
+            # Check module body_constants
+            unless has_field
+              @hir_program&.modules&.each do |m|
+                if m.name.to_s == scope_name && m.respond_to?(:body_constants) &&
+                   m.body_constants&.any? { |cn, _| cn.to_s == const_name }
+                  has_field = true
+                  found_owner = module_jvm_name(scope_name)
+                  break
+                end
+              end
+            end
+          end
+
+          unless has_field
+            # Check modules for the constant (unscoped)
+            @module_info.each do |mod_name, _|
+              if @hir_program&.modules&.any? { |m|
+                m.name.to_s == mod_name && m.respond_to?(:constants) && m.constants&.any? { |k, _| k.to_s == const_name }
+              }
+                has_field = true
+                found_owner = module_jvm_name(mod_name)
+                break
+              end
+            end
+          end
+          unless has_field
+            # Check class body_constants (unscoped — for constants referenced within the same class)
+            @hir_program&.classes&.each do |cls|
+              if cls.respond_to?(:body_constants) && cls.body_constants&.any? { |cn, _| cn.to_s == const_name }
+                has_field = true
+                found_owner = user_class_jvm_name(cls.name.to_s)
+                break
+              end
             end
           end
 
@@ -5439,21 +5650,15 @@ module Konpeito
             ensure_slot(result_var, :value)
             @variable_types[result_var] = :value
 
-            owner = if @constant_fields&.include?(name)
+            owner = if @constant_fields&.include?(const_name)
                       main_class_name
                     else
-                      found_owner = nil
-                      @module_info.each do |mod_name, _|
-                        found_owner = module_jvm_name(mod_name) if @hir_program&.modules&.any? { |m|
-                          m.name.to_s == mod_name && m.respond_to?(:constants) && m.constants&.include?(name.to_sym)
-                        }
-                      end
                       found_owner || main_class_name
                     end
 
             [
               { "op" => "getstatic", "owner" => owner,
-                "name" => name, "descriptor" => "Ljava/lang/Object;" },
+                "name" => const_name, "descriptor" => "Ljava/lang/Object;" },
               store_instruction(result_var, :value)
             ]
           else
@@ -5595,7 +5800,11 @@ module Konpeito
           else
             # Optional parameter not provided at call site — push default value
             param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
           end
         end
 
@@ -5863,7 +6072,11 @@ module Konpeito
           else
             # Optional parameter not provided at call site — push default value
             param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
           end
         end
 
@@ -5976,7 +6189,11 @@ module Konpeito
           else
             # Optional parameter not provided at call site — push default value
             param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
             arg_types << param_t
           end
         end
@@ -6033,7 +6250,12 @@ module Konpeito
       # ========================================================================
 
       def generate_module_method_call(inst, receiver, method_name, args, result_var)
-        mod_name = receiver.is_a?(HIR::ConstantLookup) ? receiver.name.to_s : nil
+        mod_name = if receiver.is_a?(HIR::ConstantLookup)
+                     receiver.name.to_s
+                   else
+                     var_name = extract_var_name(receiver)
+                     var_name ? @variable_class_types[var_name] : nil
+                   end
         return [] unless mod_name
 
         mod_info = @module_info[mod_name]
@@ -6074,7 +6296,11 @@ module Konpeito
           else
             # Optional parameter not provided at call site — push default value
             param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
             arg_types << param_t
           end
         end
@@ -7838,7 +8064,11 @@ module Konpeito
           else
             # Optional parameter not provided at call site — push default value
             param_t = param_type(param)
-            instructions.concat(default_value_instructions(param_t))
+            if param.default_value
+              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+            else
+              instructions.concat(default_value_instructions(param_t))
+            end
           end
         end
 
@@ -11869,6 +12099,11 @@ module Konpeito
         return false unless receiver
         if receiver.is_a?(HIR::ConstantLookup)
           return @module_info.key?(receiver.name.to_s)
+        end
+        # Check if the variable holds a module reference (not an instance)
+        var_name = extract_var_name(receiver)
+        if var_name && @variable_is_class_ref[var_name]
+          return @module_info.key?(@variable_class_types[var_name])
         end
         false
       end

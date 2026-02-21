@@ -78,8 +78,8 @@ class ClassVariableTest < Minitest::Test
       end
     RUBY
     ir = compile_to_ir(source)
-    # Instance methods need to get class from self via rb_class_of
-    assert_includes ir, "rb_class_of", "Instance method should use rb_class_of to get class"
+    # Instance methods need to get class from self via rb_obj_class
+    assert_includes ir, "rb_obj_class", "Instance method should use rb_obj_class to get class"
   end
 
   def test_class_variable_initialization

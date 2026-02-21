@@ -1,9 +1,0 @@
-# initialize argument passing crashes (wrong number of arguments)
-Class.new passes args to initialize
-initialize with default arg uses provided value
-initialize with default arg uses default when not provided
-multiple instance variables stored and read correctly
-to_s on custom class returns custom string
-methods using instance variables compute correctly
-chained inheritance resolves to nearest override
-class and instance methods coexist

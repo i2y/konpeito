@@ -1,2 +1,0 @@
-# Compilation fixed: union type unification handles String? parameter
-# All 86 assertions pass at runtime

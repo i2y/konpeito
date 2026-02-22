@@ -5199,7 +5199,7 @@ module Konpeito
         rbs_ptypes_pre = resolve_rbs_param_types(class_def.name.to_s, func.name.to_s, false)
         func.params.each_with_index do |param, i|
           rbs_t = rbs_ptypes_pre && i < rbs_ptypes_pre.size ? rbs_ptypes_pre[i] : nil
-          type = (rbs_t && rbs_t != :value && rbs_t != :void) ? rbs_t : param_type(param)
+          type = (rbs_t && rbs_t != :value && rbs_t != :void) ? rbs_t : widened_param_type(func, param, i)
           allocate_slot(param.name, type)
           if param.rest || param.keyword_rest
             @variable_collection_types[param.name.to_s] = param.rest ? :array : :hash

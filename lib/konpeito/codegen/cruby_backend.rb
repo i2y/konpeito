@@ -152,6 +152,25 @@ module Konpeito
               lines << "extern VALUE #{mangled_name}(#{(['VALUE'] * (arity + 1)).join(', ')});"
             end
           end
+
+          # Declare extern for alias-renamed functions
+          (llvm_generator.alias_renamed_methods || {}).each do |key, renamed|
+            class_name, _method_name = key.split("#", 2)
+            next unless class_name == class_def.name.to_s
+
+            owner = class_name.gsub(/[^a-zA-Z0-9_]/, "_")
+            sanitized = renamed.gsub(/[^a-zA-Z0-9_]/, "_")
+            mangled = "rn_#{owner}_#{sanitized}"
+            func = llvm_generator.mod.functions[mangled]
+            next unless func
+
+            if llvm_generator.variadic_functions[mangled]
+              lines << "extern VALUE #{mangled}(int argc, VALUE *argv, VALUE self);"
+            else
+              arity = func.params.size - 1
+              lines << "extern VALUE #{mangled}(#{(['VALUE'] * (arity + 1)).join(', ')});"
+            end
+          end
         end
 
         # Declare external functions from LLVM module (modules)
@@ -343,7 +362,25 @@ module Konpeito
 
           # Register aliases
           class_def.aliases.each do |new_name, old_name|
-            lines << "    rb_define_alias(#{class_var}, \"#{new_name}\", \"#{old_name}\");"
+            renamed_key = "#{class_def.name}##{old_name}"
+            if llvm_generator.alias_renamed_methods&.key?(renamed_key)
+              # Method was redefined after alias — point alias to renamed original
+              renamed = llvm_generator.alias_renamed_methods[renamed_key]
+              owner = class_def.name.to_s.gsub(/[^a-zA-Z0-9_]/, "_")
+              sanitized = renamed.gsub(/[^a-zA-Z0-9_]/, "_")
+              mangled = "rn_#{owner}_#{sanitized}"
+              llvm_func = llvm_generator.mod.functions[mangled]
+              if llvm_generator.variadic_functions[mangled]
+                arity = -1
+              elsif llvm_func
+                arity = llvm_func.params.size - 1
+              else
+                arity = 0
+              end
+              lines << "    rb_define_method(#{class_var}, \"#{new_name}\", #{mangled}, #{arity});"
+            else
+              lines << "    rb_define_alias(#{class_var}, \"#{new_name}\", \"#{old_name}\");"
+            end
           end
 
           # Register class body constants (e.g., PI = 3, VERSION = "1.0")

@@ -1,11 +1,3 @@
-# JVM: NullPointerException in test_ivar_and_assign_nil
-# null.longValue() when @val is nil — HM infers @val as Integer but nil is passed
-# Process crashes, all tests fail
-@value += n accumulates correctly
-@value -= n subtracts correctly
-@value *= n multiplies correctly
-@data ||= assigns when nil
-@data ||= does not overwrite existing value
-@val &&= assigns when truthy
+# JVM: nil stored to Integer field becomes 0L — &&= cannot detect nil vs 0
+# Nullable type support needed to distinguish nil from integer 0
 @val &&= does not assign when nil
-@sum += i in loop: 0+1+2+3+4 = 10

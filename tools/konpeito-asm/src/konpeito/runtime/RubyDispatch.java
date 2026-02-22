@@ -2231,4 +2231,28 @@ public class RubyDispatch {
             return parts[1];
         }
     }
+
+    /**
+     * Null-safe unboxing: Object → long. Returns 0L if null.
+     */
+    public static long unboxLong(Object o) {
+        if (o == null) return 0L;
+        return ((Number) o).longValue();
+    }
+
+    /**
+     * Null-safe unboxing: Object → double. Returns 0.0 if null.
+     */
+    public static double unboxDouble(Object o) {
+        if (o == null) return 0.0;
+        return ((Number) o).doubleValue();
+    }
+
+    /**
+     * Null-safe unboxing: Object → boolean. Returns false if null.
+     */
+    public static boolean unboxBoolean(Object o) {
+        if (o == null) return false;
+        return ((Boolean) o).booleanValue();
+    }
 }

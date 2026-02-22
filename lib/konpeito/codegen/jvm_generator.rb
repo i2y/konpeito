@@ -373,10 +373,21 @@ module Konpeito
         hir_program.functions.each do |func|
           each_instruction_recursive(func.body) do |inst|
             next unless inst.is_a?(HIR::Call)
-            next if inst.receiver && !inst.receiver.is_a?(HIR::SelfRef)
-            target = inst.method_name.to_s
-            inst.args.each_with_index do |arg, i|
-              call_arg_types[target][i] << static_arg_type(arg)
+            if inst.receiver.nil? || inst.receiver.is_a?(HIR::SelfRef)
+              # Top-level or self method call
+              target = inst.method_name.to_s
+              inst.args.each_with_index do |arg, i|
+                call_arg_types[target][i] << static_arg_type(arg)
+              end
+            elsif inst.receiver
+              # Instance method call — also collect arg types keyed by "ClassName#method"
+              recv_class = static_receiver_class(inst.receiver, func)
+              if recv_class
+                target = "#{recv_class}##{inst.method_name}"
+                inst.args.each_with_index do |arg, i|
+                  call_arg_types[target][i] << static_arg_type(arg)
+                end
+              end
             end
           end
         end
@@ -409,6 +420,56 @@ module Konpeito
 
           @widened_params[func_name] = widened unless widened.empty?
         end
+
+        # Also build widened params for class instance methods
+        hir_program.classes.each do |class_def|
+          (class_def.method_names || []).each do |method_name|
+            next if method_name.to_s == "initialize"
+            key = "#{class_def.name}##{method_name}"
+            sites = call_arg_types[key]
+            next if sites.empty?
+
+            func = find_class_instance_method(class_def.name.to_s, method_name.to_s)
+            next unless func
+
+            widened = Set.new
+            func.params.each_with_index do |param, i|
+              site_types = sites[i]
+              next if site_types.nil? || site_types.empty?
+
+              if site_types.size > 1
+                widened << i
+              elsif site_types.size == 1
+                site_type = site_types.first
+                hm_type = param_type(param)
+                if site_type != hm_type && (site_type == :value || hm_type == :value)
+                  widened << i
+                end
+              end
+            end
+
+            @widened_params[func.name.to_s] = widened unless widened.empty?
+          end
+        end
+      end
+
+      # Resolve the class name of a receiver node statically (during prescan).
+      # Traces through variable assignments to find constructor calls (ClassName.new).
+      def static_receiver_class(receiver, func)
+        return nil unless receiver
+
+        # Direct: ClassName.new stored in variable
+        if receiver.respond_to?(:type) && receiver.type
+          hir_type = receiver.type
+          hir_type = hir_type.prune if hir_type.respond_to?(:prune)
+          if hir_type.is_a?(TypeChecker::Types::ClassInstance)
+            name = hir_type.name.to_s
+            # Only return user-defined class names (not builtins like Integer, String)
+            return name if @hir_program.classes.any? { |cd| cd.name.to_s == name }
+          end
+        end
+
+        nil
       end
 
       # Infer the JVM type tag of an HIR node statically (without @variable_types).
@@ -927,6 +988,15 @@ module Konpeito
         when HIR::StaticArrayGet   then generate_jvm_native_array_get(inst)
         when HIR::StaticArraySet   then generate_jvm_native_array_set(inst)
         when HIR::StaticArraySize  then generate_jvm_static_array_size(inst)
+        when HIR::SplatArg
+          # SplatArg is handled by generate_call/generate_static_call — just store the expression
+          insts = load_value(inst.expression, :value)
+          if inst.result_var
+            ensure_slot(inst.result_var, :value)
+            insts << store_instruction(inst.result_var, :value)
+            @variable_types[inst.result_var] = :value
+          end
+          insts
         else
           # Unsupported instruction - emit warning comment
           warn "JVM: unsupported HIR instruction: #{inst.class.name}"
@@ -1326,17 +1396,17 @@ module Konpeito
       def unbox_from_object_field(expected_type)
         case expected_type
         when :i64
-          [{ "op" => "checkcast", "type" => "java/lang/Number" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Number",
-             "name" => "longValue", "descriptor" => "()J" }]
+          # Null-safe: RubyDispatch.unboxLong returns 0L for null
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxLong", "descriptor" => "(Ljava/lang/Object;)J" }]
         when :double
-          [{ "op" => "checkcast", "type" => "java/lang/Number" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Number",
-             "name" => "doubleValue", "descriptor" => "()D" }]
+          # Null-safe: RubyDispatch.unboxDouble returns 0.0 for null
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxDouble", "descriptor" => "(Ljava/lang/Object;)D" }]
         when :i8
-          [{ "op" => "checkcast", "type" => "java/lang/Boolean" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
-             "name" => "booleanValue", "descriptor" => "()Z" }]
+          # Null-safe: RubyDispatch.unboxBoolean returns false for null
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxBoolean", "descriptor" => "(Ljava/lang/Object;)Z" }]
         else
           []
         end
@@ -1445,6 +1515,7 @@ module Konpeito
         # Check for instance method call on user class object
         # Exclude comparison operators — they must go through generate_comparison_call
         # which handles == nil (ifnull), Objects.equals, etc. correctly.
+        # User-defined comparison operators (==, != etc.) are handled inside generate_comparison_call.
         if receiver && !receiver.is_a?(HIR::SelfRef) && is_user_class_receiver?(receiver) && !comparison_operator?(method_name.to_s)
           result = generate_instance_call(inst, method_name, receiver, args, result_var)
           # If generate_instance_call returns empty (method not found in user class hierarchy),
@@ -1846,6 +1917,13 @@ module Konpeito
         recv_type = :value if recv_type == :void
         arg_type = :value if arg_type == :void
 
+        # Check for user-defined comparison operator (e.g., class OpVec has def ==(other))
+        # If the user class defines the operator, dispatch to it via invokevirtual
+        # and convert the returned Object (Boolean) to an i8 boolean result.
+        if receiver && !receiver.is_a?(HIR::SelfRef) && user_class_has_method?(receiver, op)
+          return generate_user_defined_comparison(inst, op, receiver, arg, result_var)
+        end
+
         # Determine comparison type
         # If either side is nil (literal or :value variable), always use null-safe object comparison
         has_nil = receiver.is_a?(HIR::NilLit) || arg.is_a?(HIR::NilLit)
@@ -1991,6 +2069,110 @@ module Konpeito
         instructions << { "op" => "iconst", "value" => 1 }
 
         # End
+        instructions << { "op" => "label", "name" => end_label }
+        instructions << store_instruction(result_var, :i8)
+        @variable_types[result_var] = :i8
+
+        instructions
+      end
+
+      # Dispatch a comparison operator to a user-defined method (e.g., OpVec#==)
+      # and convert the returned Object to an i8 boolean result.
+      def generate_user_defined_comparison(inst, op, receiver, arg, result_var)
+        instructions = []
+        recv_class_name = resolve_receiver_class(receiver)
+        info = @class_info[recv_class_name]
+        jvm_class = info[:jvm_name]
+        jvm_name = jvm_method_name(op)
+
+        # Look up the method descriptor
+        target_func = find_class_instance_method(recv_class_name, op)
+        descriptor_key = "#{jvm_class}.#{jvm_name}"
+        desc = @method_descriptors[descriptor_key]
+
+        unless desc
+          # Build descriptor from the target function
+          param_desc = target_func ? target_func.params.each_with_index.map { |p, i|
+            t = widened_param_type(target_func, p, i)
+            type_to_descriptor(t)
+          }.join : "Ljava/lang/Object;"
+          ret_desc = "Ljava/lang/Object;"
+          desc = "(#{param_desc})#{ret_desc}"
+        end
+
+        # Load receiver + checkcast
+        instructions.concat(load_value(receiver, :value))
+        instructions << { "op" => "checkcast", "type" => jvm_class }
+
+        # Load argument
+        if target_func && target_func.params.size == 1
+          param = target_func.params.first
+          param_t = widened_param_type(target_func, param, 0)
+          instructions.concat(load_value(arg, param_t))
+          loaded_t = infer_loaded_type(arg)
+          instructions.concat(unbox_if_needed(loaded_t, param_t))
+        else
+          instructions.concat(load_value(arg, :value))
+        end
+
+        # Call the user-defined operator method
+        instructions << { "op" => "invokevirtual", "owner" => jvm_class,
+                          "name" => jvm_name, "descriptor" => desc }
+
+        # Convert the returned Object (Boolean) to i8 boolean
+        # Ruby truthiness: null → false, Boolean.FALSE → false, else → true
+        ensure_slot(result_var, :i8)
+        truthy_label = new_label("udc_truthy")
+        falsy_label = new_label("udc_falsy")
+        end_label = new_label("udc_end")
+
+        instructions << { "op" => "dup" }
+        instructions << { "op" => "ifnull", "target" => falsy_label }
+        # Not null — check for Boolean.FALSE
+        instructions << { "op" => "instanceof", "type" => "java/lang/Boolean" }
+        instructions << { "op" => "ifeq", "target" => truthy_label } # not a Boolean → truthy
+        # Reload and unbox Boolean
+        # Actually we popped the original during instanceof; we need a different approach
+        # Let's use a simpler approach: call isTruthy-style logic
+        instructions.pop(4) # remove the dup/ifnull/instanceof/ifeq
+
+        # Simpler: check if the result is Boolean.FALSE or null
+        result_tmp = "__udc_result_#{@label_counter}"
+        @label_counter += 1
+        ensure_slot(result_tmp, :value)
+        instructions << store_instruction(result_tmp, :value)
+
+        instructions << load_instruction(result_tmp, :value)
+        instructions << { "op" => "ifnull", "target" => falsy_label }
+
+        instructions << load_instruction(result_tmp, :value)
+        instructions << { "op" => "instanceof", "type" => "java/lang/Boolean" }
+        instructions << { "op" => "ifeq", "target" => truthy_label }
+
+        # It's a Boolean — unbox and check
+        instructions << load_instruction(result_tmp, :value)
+        instructions << { "op" => "checkcast", "type" => "java/lang/Boolean" }
+        instructions << { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
+                          "name" => "booleanValue", "descriptor" => "()Z" }
+        instructions << { "op" => "ifeq", "target" => falsy_label }
+        # Boolean.TRUE → true
+        instructions << { "op" => "goto", "target" => truthy_label }
+
+        instructions << { "op" => "label", "name" => falsy_label }
+        if op == "!="
+          instructions << { "op" => "iconst", "value" => 1 }
+        else
+          instructions << { "op" => "iconst", "value" => 0 }
+        end
+        instructions << { "op" => "goto", "target" => end_label }
+
+        instructions << { "op" => "label", "name" => truthy_label }
+        if op == "!="
+          instructions << { "op" => "iconst", "value" => 0 }
+        else
+          instructions << { "op" => "iconst", "value" => 1 }
+        end
+
         instructions << { "op" => "label", "name" => end_label }
         instructions << store_instruction(result_var, :i8)
         @variable_types[result_var] = :i8
@@ -3425,45 +3607,90 @@ module Konpeito
                       @hir_program.functions.find { |f| f.name == method_name }
         return [] unless target_func
 
-        # Load arguments
-        target_func.params.each_with_index do |param, i|
-          if param.rest
-            # Rest parameter (*args): collect remaining arguments into a KArray
-            rest_args = args[i..]
-            instructions << { "op" => "new", "type" => "konpeito/runtime/KArray" }
-            instructions << { "op" => "dup" }
-            instructions << { "op" => "invokespecial", "owner" => "konpeito/runtime/KArray",
-                              "name" => "<init>", "descriptor" => "()V" }
-            rest_args.each do |arg|
-              instructions.concat(load_value(arg, :value))
-              instructions << { "op" => "invokevirtual", "owner" => "konpeito/runtime/KArray",
-                                "name" => "push", "descriptor" => "(Ljava/lang/Object;)Lkonpeito/runtime/KArray;" }
+        # Check if call has splat args — needs special expansion
+        has_splat = args.any? { |a| a.is_a?(HIR::SplatArg) }
+
+        if has_splat
+          # Splat expansion: extract elements from the array for each target param
+          # For now handles the common case: regular args before splat, then *array expands to fill remaining params
+          splat_index = args.index { |a| a.is_a?(HIR::SplatArg) }
+
+          # Load regular args before the splat
+          splat_index.times do |i|
+            if i < target_func.params.size
+              param = target_func.params[i]
+              param_t = widened_param_type(target_func, param, i)
+              instructions.concat(load_value(args[i], param_t))
+              loaded_t = infer_loaded_type(args[i])
+              instructions.concat(unbox_if_needed(loaded_t, param_t))
             end
-            break  # rest param consumes all remaining args
-          elsif param.keyword_rest
-            # Keyword rest parameter (**kwargs): build a KHash from keyword_args
-            if inst.respond_to?(:keyword_args) && inst.has_keyword_args?
-              instructions.concat(build_kwargs_hash(inst.keyword_args))
-            else
-              # No keyword args provided — pass empty KHash
-              instructions << { "op" => "new", "type" => KHASH_CLASS }
+          end
+
+          # Load the splat array into a temp
+          splat_arg = args[splat_index]
+          splat_temp = "__splat_arr_#{@label_counter}"
+          @label_counter += 1
+          instructions.concat(load_value(splat_arg.expression, :value))
+          instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KArray" }
+          ensure_slot(splat_temp, :value)
+          instructions << store_instruction(splat_temp, :value)
+          @variable_types[splat_temp] = :value
+
+          # Extract elements for remaining params
+          remaining_params = target_func.params[splat_index..]
+          remaining_params.each_with_index do |param, j|
+            next if param.rest || param.keyword_rest
+            param_t = widened_param_type(target_func, param, splat_index + j)
+            # Load array, push index, call get(int)
+            instructions << load_instruction(splat_temp, :value)
+            instructions << { "op" => "iconst", "value" => j }
+            instructions << { "op" => "invokevirtual", "owner" => "konpeito/runtime/KArray",
+                              "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
+            # Unbox if needed (array elements are boxed Objects)
+            instructions.concat(unbox_if_needed(:value, param_t))
+          end
+        else
+          # Normal argument loading (no splat)
+          # Load arguments
+          target_func.params.each_with_index do |param, i|
+            if param.rest
+              # Rest parameter (*args): collect remaining arguments into a KArray
+              rest_args = args[i..]
+              instructions << { "op" => "new", "type" => "konpeito/runtime/KArray" }
               instructions << { "op" => "dup" }
-              instructions << { "op" => "invokespecial", "owner" => KHASH_CLASS,
+              instructions << { "op" => "invokespecial", "owner" => "konpeito/runtime/KArray",
                                 "name" => "<init>", "descriptor" => "()V" }
-            end
-          elsif i < args.size
-            param_t = widened_param_type(target_func, param, i)
-            instructions.concat(load_value(args[i], param_t))
-            # Unbox if loaded type is :value but function expects primitive
-            loaded_t = infer_loaded_type(args[i])
-            instructions.concat(unbox_if_needed(loaded_t, param_t))
-          else
-            # Optional parameter not provided at call site — push default value
-            param_t = widened_param_type(target_func, param, i)
-            if param.default_value
-              instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+              rest_args.each do |arg|
+                instructions.concat(load_value(arg, :value))
+                instructions << { "op" => "invokevirtual", "owner" => "konpeito/runtime/KArray",
+                                  "name" => "push", "descriptor" => "(Ljava/lang/Object;)Lkonpeito/runtime/KArray;" }
+              end
+              break  # rest param consumes all remaining args
+            elsif param.keyword_rest
+              # Keyword rest parameter (**kwargs): build a KHash from keyword_args
+              if inst.respond_to?(:keyword_args) && inst.has_keyword_args?
+                instructions.concat(build_kwargs_hash(inst.keyword_args))
+              else
+                # No keyword args provided — pass empty KHash
+                instructions << { "op" => "new", "type" => KHASH_CLASS }
+                instructions << { "op" => "dup" }
+                instructions << { "op" => "invokespecial", "owner" => KHASH_CLASS,
+                                  "name" => "<init>", "descriptor" => "()V" }
+              end
+            elsif i < args.size
+              param_t = widened_param_type(target_func, param, i)
+              instructions.concat(load_value(args[i], param_t))
+              # Unbox if loaded type is :value but function expects primitive
+              loaded_t = infer_loaded_type(args[i])
+              instructions.concat(unbox_if_needed(loaded_t, param_t))
             else
-              instructions.concat(default_value_instructions(param_t))
+              # Optional parameter not provided at call site — push default value
+              param_t = widened_param_type(target_func, param, i)
+              if param.default_value
+                instructions.concat(prism_default_to_jvm(param.default_value, param_t))
+              else
+                instructions.concat(default_value_instructions(param_t))
+              end
             end
           end
         end
@@ -4426,6 +4653,17 @@ module Konpeito
         # Constructor(s)
         jvm_methods.concat(generate_class_constructor(class_def, fields_info, super_name))
 
+        # Build set of methods overridden by prepended modules (Ruby MRO: prepend > class)
+        prepended_method_funcs = {}
+        (class_def.prepended_modules || []).each do |mod_name|
+          mod_func_list = @hir_program.functions.select { |f|
+            (f.owner_module.to_s == mod_name.to_s || f.owner_class.to_s == mod_name.to_s) && f.is_instance_method
+          }
+          mod_func_list.each do |mf|
+            prepended_method_funcs[mf.name.to_s] ||= mf
+          end
+        end
+
         # Instance methods (skip initialize — already handled as <init> constructor above)
         # Deduplicate method_names to avoid JVM ClassFormatError on method override
         seen_methods = {}
@@ -4433,8 +4671,16 @@ module Konpeito
           next if method_name.to_s == "initialize"
           next if seen_methods[method_name.to_s]
           seen_methods[method_name.to_s] = true
-          func = find_class_instance_method(class_name, method_name.to_s)
+          # If a prepended module overrides this method, use the module's version
+          func = prepended_method_funcs[method_name.to_s] || find_class_instance_method(class_name, method_name.to_s)
           next unless func
+          jvm_methods << generate_instance_method(func, class_def, fields_info)
+        end
+
+        # Add methods from prepended modules that are NOT already in the class
+        prepended_method_funcs.each do |method_name, func|
+          next if seen_methods[method_name]
+          seen_methods[method_name] = true
           jvm_methods << generate_instance_method(func, class_def, fields_info)
         end
 
@@ -4453,17 +4699,34 @@ module Konpeito
           end
         end
 
-        # Aliases — generate forwarding methods
+        # Aliases — generate forwarding or full methods
         (class_def.aliases || []).each do |new_name, old_name|
           jvm_new = jvm_method_name(new_name)
           jvm_old = jvm_method_name(old_name)
-          # Find the original method's descriptor
-          orig_key = "#{class_name}##{old_name}"
-          orig_desc = @method_descriptors[orig_key]
-          next unless orig_desc
           # Skip if alias name collides with an already-generated method
           next if seen_methods[new_name.to_s]
           seen_methods[new_name.to_s] = true
+
+          # Check if method was redefined after aliasing — if so, compile original body
+          all_matching = @hir_program.functions.select { |f|
+            f.owner_class.to_s == class_name && f.name.to_s == old_name.to_s && f.is_instance_method
+          }
+          if all_matching.size > 1
+            # Method was redefined — compile the first (original) definition as the alias
+            orig_func = all_matching.first
+            # Temporarily rename the function to generate it with the alias name
+            orig_name_backup = orig_func.name
+            orig_func.instance_variable_set(:@name, new_name.to_sym)
+            alias_method = generate_instance_method(orig_func, class_def, fields_info)
+            orig_func.instance_variable_set(:@name, orig_name_backup)
+            jvm_methods << alias_method
+            next
+          end
+
+          # Simple forwarding for non-redefined methods
+          orig_key = "#{class_name}##{old_name}"
+          orig_desc = @method_descriptors[orig_key]
+          next unless orig_desc
           # Build forwarding method: load this + params, invokevirtual original, return
           fwd_instructions = []
           fwd_instructions << { "op" => "aload", "var" => 0 }  # this
@@ -4580,7 +4843,7 @@ module Konpeito
           rbs_param_types = resolve_rbs_param_types(class_name, method_name.to_s, false)
           params_desc = func.params.each_with_index.map do |p, i|
             rbs_t = rbs_param_types && i < rbs_param_types.size ? rbs_param_types[i] : nil
-            t = (rbs_t && rbs_t != :value) ? rbs_t : param_type(p)
+            t = (rbs_t && rbs_t != :value) ? rbs_t : widened_param_type(func, p, i)
             t = :value if t == :void
             type_to_descriptor(t)
           end.join
@@ -4820,10 +5083,35 @@ module Konpeito
 
         instructions = []
 
-        # Call super() first
-        instructions << { "op" => "aload", "var" => 0 }
-        instructions << { "op" => "invokespecial", "owner" => super_name,
-                           "name" => "<init>", "descriptor" => "()V" }
+        # JVM requires invokespecial <init> before field access.
+        # Check if there's an explicit super(args) call in the initialize body.
+        # If so, call the parent's parameterized <init> with the arguments.
+        super_call = find_super_call_in_body(init_func.body)
+        if super_call && super_call.args && !super_call.args.empty?
+          # Find the parent's initialize method to get its descriptor
+          parent_class_name = find_parent_class_name(class_def.name.to_s)
+          parent_init_func = parent_class_name ? find_class_instance_method(parent_class_name, "initialize") : nil
+
+          instructions << { "op" => "aload", "var" => 0 }
+          if parent_init_func
+            # Load super call arguments matching parent init's parameter types.
+            # load_value handles boxing/unboxing based on expected type.
+            super_call.args.each_with_index do |arg, i|
+              parent_param_type = i < parent_init_func.params.size ? param_type(parent_init_func.params[i]) : :value
+              instructions.concat(load_value(arg, parent_param_type))
+            end
+            params_desc = parent_init_func.params.map { |p| type_to_descriptor(param_type(p)) }.join
+            instructions << { "op" => "invokespecial", "owner" => super_name,
+                               "name" => "<init>", "descriptor" => "(#{params_desc})V" }
+          else
+            instructions << { "op" => "invokespecial", "owner" => super_name,
+                               "name" => "<init>", "descriptor" => "()V" }
+          end
+        else
+          instructions << { "op" => "aload", "var" => 0 }
+          instructions << { "op" => "invokespecial", "owner" => super_name,
+                             "name" => "<init>", "descriptor" => "()V" }
+        end
 
         # Initialize all fields to defaults before running initialize body
         fields_info.each do |fname, ftype|
@@ -5693,21 +5981,35 @@ module Konpeito
 
         jvm_class = info[:jvm_name]
 
-        # Find the target method
-        target_func = find_class_instance_method(recv_class_name, method_name)
+        # Check prepended modules FIRST — they override class methods (Ruby MRO)
+        included_module_name = nil
+        target_func = nil
+        class_def = @hir_program.classes.find { |cd| cd.name.to_s == recv_class_name }
+        if class_def && (class_def.prepended_modules || []).any?
+          (class_def.prepended_modules || []).each do |mod_name|
+            func = find_module_instance_method(mod_name.to_s, method_name)
+            if func
+              target_func = func
+              included_module_name = mod_name.to_s
+              break
+            end
+          end
+        end
+
+        # Find the target method in class itself
+        unless target_func
+          target_func = find_class_instance_method(recv_class_name, method_name)
+        end
 
         # Also check parent classes
         unless target_func
           target_func = find_inherited_method(recv_class_name, method_name)
         end
 
-        # Check included/prepended modules for the method
-        included_module_name = nil
+        # Check included modules for the method (not prepended — already checked above)
         unless target_func
-          class_def = @hir_program.classes.find { |cd| cd.name.to_s == recv_class_name }
           if class_def
-            all_modules = (class_def.included_modules || []) + (class_def.prepended_modules || [])
-            all_modules.each do |mod_name|
+            (class_def.included_modules || []).each do |mod_name|
               func = find_module_instance_method(mod_name.to_s, method_name)
               if func
                 target_func = func
@@ -6147,14 +6449,27 @@ module Konpeito
           end
         end
 
+        # Walk up inheritance chain for class methods (JVM static methods aren't inherited)
+        owner_class = class_name
+        unless target_func
+          parent = @hir_program.classes.find { |cd| cd.name.to_s == class_name }&.superclass&.to_s
+          while parent && !target_func
+            target_func = find_class_singleton_method(parent, method_name)
+            owner_class = parent if target_func
+            parent = @hir_program.classes.find { |cd| cd.name.to_s == parent }&.superclass&.to_s
+          end
+        end
+
         return [] unless target_func
 
         # Look up the registered descriptor first to determine expected param types
-        registered = @method_descriptors["#{class_name}.#{method_name}"]
+        registered = @method_descriptors["#{owner_class}.#{method_name}"] ||
+                     @method_descriptors["#{class_name}.#{method_name}"]
         registered_param_types = registered ? parse_descriptor_param_types(registered) : nil
 
         # Resolve param types: prefer RBS types over HIR types (which may be unresolved TypeVars)
-        rbs_param_types = resolve_rbs_param_types(class_name, method_name, true)
+        rbs_param_types = resolve_rbs_param_types(owner_class, method_name, true) ||
+                          resolve_rbs_param_types(class_name, method_name, true)
 
         instructions = []
 
@@ -6211,8 +6526,12 @@ module Konpeito
         end
 
         # Use renamed static method name if it was renamed to avoid conflict with instance method
-        static_jvm_name = @static_method_renames["#{class_name}.#{method_name}"] || jvm_method_name(method_name)
-        instructions << { "op" => "invokestatic", "owner" => info[:jvm_name],
+        static_jvm_name = @static_method_renames["#{owner_class}.#{method_name}"] ||
+                          @static_method_renames["#{class_name}.#{method_name}"] ||
+                          jvm_method_name(method_name)
+        # Use the owner class's JVM name (may differ from class_name when inheriting)
+        owner_jvm_name = owner_class == class_name ? info[:jvm_name] : user_class_jvm_name(owner_class)
+        instructions << { "op" => "invokestatic", "owner" => owner_jvm_name,
                            "name" => static_jvm_name, "descriptor" => descriptor }
 
         if result_var && ret_type != :void
@@ -6735,16 +7054,15 @@ module Konpeito
 
         parent_name = parent_info[:super_name]
 
-        # In constructor (initialize), super is handled by the <init> chain.
-        # The parent <init>()V is already called at the top of generate_init_constructor.
-        # Skip the redundant super call to avoid calling parent.initialize() as a regular method.
+        # In constructor (initialize), super() was already called in <init> prologue.
+        # Skip the explicit super call to avoid calling <init> twice.
         if @current_method_name == "initialize"
-          # If super has args, they should be passed to parent <init>, but
-          # the automatic <init>()V already ran. For now, skip with a no-op.
-          # TODO: support super(args) in constructors by deferring <init> call.
           if inst.result_var
             ensure_slot(inst.result_var, :value)
-            return [{ "op" => "aconst_null" }, store_instruction(inst.result_var, :value)]
+            instructions = []
+            instructions << { "op" => "aconst_null" }
+            instructions << store_instruction(inst.result_var, :value)
+            return instructions
           end
           return []
         end
@@ -7508,6 +7826,7 @@ module Konpeito
         @label_counter = 0
         @block_phi_nodes = {}
         @block_param_slot = nil
+        @pending_exception_table = []
 
         # Allocate slots: captures first, then block params (using explicit types)
         # Note: shared mutable captures are NOT allocated slots — they use getstatic/putstatic
@@ -7658,14 +7977,17 @@ module Konpeito
         params_desc = all_param_types.map { |t| type_to_descriptor(t) }.join
         descriptor = "(#{params_desc})#{type_to_descriptor(ret_type)}"
 
-        @block_methods << {
+        block_method = {
           "name" => method_name,
           "descriptor" => descriptor,
           "access" => ["private", "static", "synthetic"],
           "instructions" => instructions
         }
+        # Attach exception table if the block body generated try/catch entries
+        block_method["exceptionTable"] = @pending_exception_table unless @pending_exception_table.empty?
+        @block_methods << block_method
 
-        # Restore function state
+        # Restore function state (including pending_exception_table)
         restore_function_state(saved_state)
 
         method_name
@@ -7695,7 +8017,8 @@ module Konpeito
           current_block_label: @current_block_label,
           block_param_slot: @block_param_slot,
           current_kblock_iface: @current_kblock_iface,
-          block_self_slot: @block_self_slot
+          block_self_slot: @block_self_slot,
+          pending_exception_table: @pending_exception_table.dup
         }
       end
 
@@ -7711,6 +8034,7 @@ module Konpeito
         @block_param_slot = state[:block_param_slot]
         @current_kblock_iface = state[:current_kblock_iface]
         @block_self_slot = state[:block_self_slot]
+        @pending_exception_table = state[:pending_exception_table]
       end
 
       # Get or create a typed KBlock interface for the given signature
@@ -11922,7 +12246,8 @@ module Konpeito
         singleton_methods = class_def ? (class_def.singleton_methods || []).map(&:to_s) : []
         instance_method_names = class_def ? (class_def.method_names || []).map(&:to_s) : []
 
-        @hir_program.functions.find { |f|
+        # Use reverse_each to find the LAST definition (handles method redefinition)
+        @hir_program.functions.reverse_each.find { |f|
           f.owner_class.to_s == class_name.to_s &&
           f.name.to_s == method_name.to_s &&
           f.is_instance_method &&
@@ -12403,17 +12728,15 @@ module Konpeito
         return [] unless actual_type == :value
         case expected_type
         when :i64
-          [{ "op" => "checkcast", "type" => "java/lang/Number" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Number",
-             "name" => "longValue", "descriptor" => "()J" }]
+          # Null-safe unboxing via RubyDispatch helper
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxLong", "descriptor" => "(Ljava/lang/Object;)J" }]
         when :double
-          [{ "op" => "checkcast", "type" => "java/lang/Number" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Number",
-             "name" => "doubleValue", "descriptor" => "()D" }]
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxDouble", "descriptor" => "(Ljava/lang/Object;)D" }]
         when :i8
-          [{ "op" => "checkcast", "type" => "java/lang/Boolean" },
-           { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
-             "name" => "booleanValue", "descriptor" => "()Z" }]
+          [{ "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+             "name" => "unboxBoolean", "descriptor" => "(Ljava/lang/Object;)Z" }]
         when :string
           [{ "op" => "checkcast", "type" => "java/lang/String" }]
         when :array
@@ -12468,30 +12791,27 @@ module Konpeito
             if incoming_val.is_a?(HIR::NilLit)
               instructions << { "op" => "lconst_0" }
             else
-              # Try to unbox; if null at runtime, this will NPE,
-              # but it satisfies the verifier
+              # Null-safe unbox via RubyDispatch.unboxLong
               instructions.concat(load_value(incoming_val, :value))
-              instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
-              instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
-                               "name" => "longValue", "descriptor" => "()J" }
+              instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                               "name" => "unboxLong", "descriptor" => "(Ljava/lang/Object;)J" }
             end
             instructions << store_instruction(phi.result_var, :i64)
           elsif phi_type == :double && incoming_type == :value
             if incoming_val.is_a?(HIR::NilLit)
               instructions << { "op" => "dconst_0" }
             else
+              # Null-safe unbox via RubyDispatch.unboxDouble
               instructions.concat(load_value(incoming_val, :value))
-              instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
-              instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
-                               "name" => "doubleValue", "descriptor" => "()D" }
+              instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                               "name" => "unboxDouble", "descriptor" => "(Ljava/lang/Object;)D" }
             end
             instructions << store_instruction(phi.result_var, :double)
           elsif phi_type == :i8 && incoming_type == :value
-            # Incoming Object but phi expects boolean — unbox
+            # Null-safe unbox via RubyDispatch.unboxBoolean
             instructions.concat(load_value(incoming_val, :value))
-            instructions << { "op" => "checkcast", "type" => "java/lang/Boolean" }
-            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
-                             "name" => "booleanValue", "descriptor" => "()Z" }
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                             "name" => "unboxBoolean", "descriptor" => "(Ljava/lang/Object;)Z" }
             instructions << store_instruction(phi.result_var, :i8)
           elsif phi_type == :value && (incoming_type == :i64 || incoming_type == :double || incoming_type == :i8)
             # Incoming is primitive but phi expects Object — box it
@@ -13106,6 +13426,23 @@ module Konpeito
 
       def comparison_operator?(name)
         %w[< > <= >= == !=].include?(name)
+      end
+
+      # Scan an initialize function body for a SuperCall node
+      def find_super_call_in_body(basic_blocks)
+        basic_blocks.each do |bb|
+          bb.instructions.each do |inst|
+            return inst if inst.is_a?(HIR::SuperCall)
+          end
+        end
+        nil
+      end
+
+      # Check if a user-defined class receiver has a specific method defined
+      def user_class_has_method?(receiver, method_name)
+        recv_class_name = resolve_receiver_class(receiver)
+        return false unless recv_class_name
+        !!find_class_instance_method(recv_class_name, method_name)
       end
 
       def arithmetic_instruction(op, type)

@@ -1,4 +1,0 @@
-# JVM: module constants not initialized, prepend not overriding
-module constant string accessible
-module constant integer accessible
-prepend overrides the class method

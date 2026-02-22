@@ -56,7 +56,7 @@ module Konpeito
         end
       end
 
-      attr_reader :profiler, :variadic_functions
+      attr_reader :profiler, :variadic_functions, :alias_renamed_methods
 
       def generate(hir_program)
         @hir_program = hir_program
@@ -114,13 +114,33 @@ module Konpeito
       # Remove earlier definitions when a method is redefined in the same class.
       # Keeps the last definition (which is the override).
       def deduplicate_functions(functions)
+        # Build alias map: method_name -> [alias_names] per class
+        alias_targets = {}  # "ClassName#method_name" -> true (method is aliased)
+        @hir_program.classes.each do |cd|
+          (cd.aliases || []).each do |new_name, old_name|
+            alias_targets["#{cd.name}##{old_name}"] = true
+          end
+        end
+
         seen = {}
+        @alias_renamed_methods = {}  # "ClassName#old_name" -> renamed_func_name
+
         functions.each_with_index do |func, i|
           key = [func.owner_class, func.owner_module, func.name.to_s, func.class_method?]
+          if seen.key?(key) && alias_targets["#{func.owner_class}##{func.name}"]
+            # This method was aliased and is now being redefined.
+            # Rename the earlier definition so the alias can point to it.
+            old_idx = seen[key]
+            old_func = functions[old_idx]
+            renamed = "#{old_func.name}$alias_orig"
+            @alias_renamed_methods["#{func.owner_class}##{func.name}"] = renamed
+            # Create a copy of the old function with the renamed name
+            old_func.instance_variable_set(:@name, renamed.to_sym)
+          end
           seen[key] = i
         end
-        # Keep functions whose index matches the last occurrence
-        functions.each_with_index.select { |_, i| seen.values.include?(i) }.map(&:first)
+        # Keep all functions (including renamed originals)
+        functions
       end
 
       # Declare a function (create LLVM function without body)

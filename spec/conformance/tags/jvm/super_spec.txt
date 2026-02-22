@@ -1,3 +1,0 @@
-# JVM: super in initialize does not set parent ivar correctly
-# Instance field defaults to 0 instead of preserving parent constructor assignment
-super in initialize sets parent ivar

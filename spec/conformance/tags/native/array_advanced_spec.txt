@@ -1,0 +1,3 @@
+# Native: Array#reverse returns a new array but the original array is also modified
+# in the compiled code (shallow copy issue)
+Array#reverse does not modify the original array

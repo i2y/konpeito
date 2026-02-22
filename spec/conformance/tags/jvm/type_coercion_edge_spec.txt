@@ -1,0 +1,6 @@
+# JVM: Kernel#Integer() and Kernel#Float() conversion methods not implemented
+Integer('42') returns 42
+Integer('0') returns 0
+Integer('-5') returns -5
+Float('3.14') returns 3.14
+Float('0') returns 0.0

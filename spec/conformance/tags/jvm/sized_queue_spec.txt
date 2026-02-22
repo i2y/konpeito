@@ -1,0 +1,2 @@
+# JVM: SizedQueue likely causes hang (same issue as ConditionVariable)
+RUNTIME_HANG

@@ -1,0 +1,2 @@
+# JVM: Hash#each_with_object is not implemented in KHash
+RUNTIME_ERROR

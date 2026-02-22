@@ -1,0 +1,2 @@
+# JVM: &blk (BlockArgumentNode) causes compilation error (same as native)
+COMPILATION_ERROR

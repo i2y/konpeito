@@ -1,0 +1,3 @@
+# JVM: Integer#upto and Integer#downto are not implemented in JVM runtime
+# RubyDispatch cannot find upto/downto methods on Long
+RUNTIME_ERROR

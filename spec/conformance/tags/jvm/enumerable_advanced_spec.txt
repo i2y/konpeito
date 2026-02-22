@@ -1,0 +1,2 @@
+# JVM: sort_by type inference error (same as native)
+COMPILATION_ERROR

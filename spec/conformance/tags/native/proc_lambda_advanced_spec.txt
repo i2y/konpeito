@@ -1,0 +1,3 @@
+# Native: &blk (BlockArgumentNode) causes NoMethodError in HM inferrer
+# BlockArgumentNode does not have a 'parameters' method (unlike BlockNode)
+COMPILATION_ERROR

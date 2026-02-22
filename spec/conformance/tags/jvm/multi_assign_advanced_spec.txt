@@ -1,0 +1,2 @@
+# JVM: Splat in multi-assign (*rest) not supported, causes NullPointerException
+RUNTIME_ERROR

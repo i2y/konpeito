@@ -1,0 +1,2 @@
+# JVM: Math::PI / Math.sqrt cause NullPointerException
+RUNTIME_ERROR

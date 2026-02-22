@@ -1,0 +1,4 @@
+# Native: include Comparable generates mComparable instead of rb_mComparable
+# The CRuby backend does not resolve Ruby stdlib module constants (Comparable, Enumerable, etc.)
+# All tests fail (compilation error)
+COMPILATION_ERROR

@@ -1,0 +1,3 @@
+# Native: Range#reduce etc. cause "undefined class/module Elem" at runtime
+# Range enumerable methods that use RBS generic type Elem fail to resolve at runtime
+RUNTIME_ERROR

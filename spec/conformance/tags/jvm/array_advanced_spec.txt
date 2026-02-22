@@ -1,0 +1,2 @@
+# JVM: KArray.concat not implemented in JVM runtime
+RUNTIME_ERROR

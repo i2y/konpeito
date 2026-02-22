@@ -1,0 +1,6 @@
+# JVM: Array#freeze/frozen? not fully supported, respond_to? limited, Integer()/Float() not implemented
+Array#freeze makes the array frozen
+Array responds to :push
+Integer() converts string to integer
+Integer() returns integer unchanged
+Integer() converts hex string

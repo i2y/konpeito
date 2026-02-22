@@ -1,0 +1,3 @@
+# Native: rest pattern (*rest) in array pattern causes runtime error
+# Pattern match collection patterns compile but *rest capture fails at runtime
+RUNTIME_ERROR

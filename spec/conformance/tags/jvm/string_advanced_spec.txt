@@ -1,0 +1,2 @@
+# JVM: Compilation fails (ArrayIndexOutOfBoundsException in code generator)
+COMPILATION_ERROR

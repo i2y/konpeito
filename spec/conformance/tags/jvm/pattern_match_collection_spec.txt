@@ -1,0 +1,2 @@
+# JVM: Collection patterns (*rest, nested) cause VerifyError at runtime
+RUNTIME_ERROR

@@ -1,0 +1,5 @@
+# JVM: Custom exception class hierarchy not fully supported
+# rescue catches wrong exception class, exception class identity lost
+parent rescue catches when specific match not found
+unmatched rescue passes to outer handler
+exception class is preserved

@@ -1,0 +1,3 @@
+# Native: LLVM IR variable name collision (%i = load i64, ptr %i)
+# The variable 'i' used in while loops conflicts with LLVM IR generation
+COMPILATION_ERROR

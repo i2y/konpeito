@@ -1247,23 +1247,29 @@ module Konpeito
         # Guard against UntypedFunction (which lacks required_positionals)
         return Types::UNTYPED if method_type.type.is_a?(RBS::Types::UntypedFunction)
 
-        # Unify argument types with parameter types from RBS
-        rbs_params = method_type.type.required_positionals + method_type.type.optional_positionals
-        arg_types.each_with_index do |arg_type, i|
-          next unless rbs_params[i]
-          expected_type = substitute_rbs_type(rbs_params[i].type, substitution)
-          @unifier.unify(arg_type, expected_type)
+        begin
+          # Unify argument types with parameter types from RBS
+          rbs_params = method_type.type.required_positionals + method_type.type.optional_positionals
+          arg_types.each_with_index do |arg_type, i|
+            next unless rbs_params[i]
+            expected_type = substitute_rbs_type(rbs_params[i].type, substitution)
+            @unifier.unify(arg_type, expected_type)
+          end
+
+          # Convert and return the return type
+          return_type = substitute_rbs_type(method_type.type.return_type, substitution)
+
+          # Handle block if present
+          if node.block && method_type.block
+            infer_block_for_rbs(node.block, method_type.block, substitution)
+          end
+
+          @unifier.apply(return_type)
+        rescue UnificationError
+          # RBS type unification failed — fall through to dynamic dispatch
+          infer_block_body_without_rbs(node.block) if node.block
+          nil
         end
-
-        # Convert and return the return type
-        return_type = substitute_rbs_type(method_type.type.return_type, substitution)
-
-        # Handle block if present
-        if node.block && method_type.block
-          infer_block_for_rbs(node.block, method_type.block, substitution)
-        end
-
-        @unifier.apply(return_type)
       end
 
       # Build substitution map for singleton method type parameters
@@ -1320,24 +1326,32 @@ module Konpeito
         # Guard against UntypedFunction (which lacks required_positionals)
         return Types::UNTYPED if method_type.type.is_a?(RBS::Types::UntypedFunction)
 
-        # Unify argument types with parameter types from RBS
-        # This allows us to infer argument types from method signatures
-        rbs_params = method_type.type.required_positionals + method_type.type.optional_positionals
-        arg_types.each_with_index do |arg_type, i|
-          next unless rbs_params[i]
-          expected_type = substitute_rbs_type(rbs_params[i].type, substitution)
-          @unifier.unify(arg_type, expected_type)
+        begin
+          # Unify argument types with parameter types from RBS
+          # This allows us to infer argument types from method signatures
+          rbs_params = method_type.type.required_positionals + method_type.type.optional_positionals
+          arg_types.each_with_index do |arg_type, i|
+            next unless rbs_params[i]
+            expected_type = substitute_rbs_type(rbs_params[i].type, substitution)
+            @unifier.unify(arg_type, expected_type)
+          end
+
+          # Substitute and convert return type
+          return_type = substitute_rbs_type(method_type.type.return_type, substitution)
+
+          # Handle block if present (for methods like map)
+          if node.block && method_type.block
+            infer_block_for_rbs(node.block, method_type.block, substitution)
+          end
+
+          @unifier.apply(return_type)
+        rescue UnificationError
+          # RBS type unification failed — Ruby stdlib RBS has complex type signatures
+          # (e.g., sort_by block returns Comparable | Array[untyped], flat_map returns Array[U] | U)
+          # that may not unify cleanly with concrete types. Fall through to dynamic dispatch.
+          infer_block_body_without_rbs(node.block) if node.block
+          nil
         end
-
-        # Substitute and convert return type
-        return_type = substitute_rbs_type(method_type.type.return_type, substitution)
-
-        # Handle block if present (for methods like map)
-        if node.block && method_type.block
-          infer_block_for_rbs(node.block, method_type.block, substitution)
-        end
-
-        @unifier.apply(return_type)
       end
 
       # Build substitution map from class type parameters to actual types

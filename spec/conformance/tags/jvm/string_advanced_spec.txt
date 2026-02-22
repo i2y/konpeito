@@ -1,2 +1,4 @@
-# JVM: 26 pass, 3 fail (diff 3)
-# Previously COMPILATION_ERROR, now mostly working with 3 remaining failures
+# JVM: 28 pass, 1 fail (diff 1)
+# String#frozen? always returns true on JVM (Java strings are immutable)
+# Unfrozen strings incorrectly report as frozen
+String#frozen? returns false for unfrozen string

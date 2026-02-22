@@ -12,6 +12,13 @@ import java.util.*;
  */
 public class KArray<T> implements List<T> {
     private final ArrayList<T> data;
+    private boolean frozen = false;
+
+    /** Ruby: arr.freeze */
+    public void freeze() { frozen = true; }
+
+    /** Ruby: arr.frozen? */
+    public boolean isFrozen() { return frozen; }
 
     // ========================================================================
     // Constructors
@@ -327,6 +334,16 @@ public class KArray<T> implements List<T> {
     public KArray<T> drop(int n) {
         KArray<T> result = new KArray<>();
         for (int i = Math.min(n, data.size()); i < data.size(); i++) {
+            result.data.add(data.get(i));
+        }
+        return result;
+    }
+
+    /** Multi-assign splat: collect elements from startIndex to size()-endOffset */
+    public KArray<T> splatSlice(int startIndex, int endOffset) {
+        KArray<T> result = new KArray<>();
+        int end = data.size() - endOffset;
+        for (int i = startIndex; i < end; i++) {
             result.data.add(data.get(i));
         }
         return result;

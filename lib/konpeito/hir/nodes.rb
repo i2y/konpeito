@@ -487,6 +487,18 @@ module Konpeito
       end
     end
 
+    # Multi-write splat extraction: a, *rest = arr → rest = arr[start..end]
+    class MultiWriteSplat < Instruction
+      attr_reader :array, :start_index, :end_offset
+
+      def initialize(array:, start_index:, end_offset:, type: TypeChecker::Types::UNTYPED, result_var: nil)
+        super(type: type, result_var: result_var)
+        @array = array
+        @start_index = start_index     # Index to start collecting from
+        @end_offset = end_offset       # Number of elements to exclude from end (for trailing targets)
+      end
+    end
+
     # Constant lookup
     class ConstantLookup < Instruction
       attr_reader :name, :scope

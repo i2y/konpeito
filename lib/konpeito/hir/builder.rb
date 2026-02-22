@@ -6456,23 +6456,58 @@ module Konpeito
         # RHS value
         rhs = visit(typed_node.children.first)
 
-        targets = typed_node.node.lefts
-        targets.each_with_index do |target, i|
-          case target
-          when Prism::LocalVariableTargetNode
+        lefts = typed_node.node.lefts
+        rest = typed_node.node.rest
+        rights = typed_node.node.rights
+
+        # Process left targets (before splat)
+        lefts.each_with_index do |target, i|
+          emit_multi_write_target(target, rhs, i)
+        end
+
+        # Process splat target: *rest
+        if rest && rest.is_a?(Prism::SplatNode) && rest.expression
+          target = rest.expression
+          if target.is_a?(Prism::LocalVariableTargetNode)
             name = target.name.to_s
-            # Extract element using MultiWriteExtract (rb_ary_entry)
-            elem_var = new_temp_var
-            elem_inst = MultiWriteExtract.new(array: rhs, index: i, type: TypeChecker::Types::UNTYPED, result_var: elem_var)
-            emit(elem_inst)
+            splat_var = new_temp_var
+            end_offset = rights ? rights.length : 0
+            splat_inst = MultiWriteSplat.new(
+              array: rhs, start_index: lefts.length, end_offset: end_offset,
+              type: TypeChecker::Types::UNTYPED, result_var: splat_var
+            )
+            emit(splat_inst)
 
             var = @local_vars[name] ||= LocalVar.new(name: name, type: TypeChecker::Types::UNTYPED)
-            store_inst = StoreLocal.new(var: var, value: elem_inst, type: TypeChecker::Types::UNTYPED)
+            store_inst = StoreLocal.new(var: var, value: splat_inst, type: TypeChecker::Types::UNTYPED)
             emit(store_inst)
           end
         end
 
+        # Process right targets (after splat) — use negative indices from end
+        if rights && !rights.empty?
+          rights.each_with_index do |target, i|
+            # Use negative index: rights[0] = arr[-rights.length], rights[1] = arr[-(rights.length-1)], etc.
+            neg_index = -(rights.length - i)
+            emit_multi_write_target(target, rhs, neg_index)
+          end
+        end
+
         rhs
+      end
+
+      def emit_multi_write_target(target, rhs, index)
+        case target
+        when Prism::LocalVariableTargetNode
+          name = target.name.to_s
+          elem_var = new_temp_var
+          elem_inst = MultiWriteExtract.new(array: rhs, index: index, type: TypeChecker::Types::UNTYPED, result_var: elem_var)
+          emit(elem_inst)
+
+          var = @local_vars[name] ||= LocalVar.new(name: name, type: TypeChecker::Types::UNTYPED)
+          store_inst = StoreLocal.new(var: var, value: elem_inst, type: TypeChecker::Types::UNTYPED)
+          emit(store_inst)
+        end
       end
 
       def visit_return(typed_node)

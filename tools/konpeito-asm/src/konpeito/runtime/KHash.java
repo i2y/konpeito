@@ -116,6 +116,45 @@ public class KHash<K, V> implements Map<K, V> {
         return new KArray<>(data.values());
     }
 
+    /** Helper for group_by: adds elem to the array at hash[key], creating it if absent */
+    @SuppressWarnings("unchecked")
+    public void groupByAdd(Object key, Object elem) {
+        Object existing = data.get((K) key);
+        KArray<Object> group;
+        if (existing instanceof KArray) {
+            group = (KArray<Object>) existing;
+        } else {
+            group = new KArray<>();
+            data.put((K) key, (V) group);
+        }
+        group.add(elem);
+    }
+
+    /** Ruby: hash.sort_by { |pair| pair[index] } — sort by element at index in each [k,v] pair.
+     *  Returns KArray of KArray pairs sorted by the element at the given index. */
+    @SuppressWarnings("unchecked")
+    public KArray<KArray<Object>> sortByIndex(int index) {
+        KArray<KArray<Object>> pairs = toArray_();
+        // Selection sort by element at given index
+        int n = pairs.size();
+        for (int i = 0; i < n - 1; i++) {
+            int minIdx = i;
+            for (int j = i + 1; j < n; j++) {
+                Comparable<Object> sj = (Comparable<Object>) pairs.get(j).get(index);
+                Comparable<Object> sm = (Comparable<Object>) pairs.get(minIdx).get(index);
+                if (sj.compareTo((Object) sm) < 0) {
+                    minIdx = j;
+                }
+            }
+            if (minIdx != i) {
+                KArray<Object> tmp = pairs.get(i);
+                pairs.set(i, pairs.get(minIdx));
+                pairs.set(minIdx, tmp);
+            }
+        }
+        return pairs;
+    }
+
     /** Sort pairs by scores — used by JVM codegen for sort_by.
      *  pairs and scores are parallel KArrays. Sorts both in-place by scores ascending. */
     @SuppressWarnings("unchecked")

@@ -102,11 +102,63 @@ public class RubyDispatch {
         Object[] methodArgs = new Object[args.length - 1];
         System.arraycopy(args, 1, methodArgs, 0, methodArgs.length);
 
-        // Handle nil (null) receiver — Ruby's NilClass methods
+        // Handle nil (null) receiver — Ruby's NilClass methods and Kernel methods
         if (receiver == null) {
             Object nilResult = tryNilDispatch(methodName, methodArgs);
             if (nilResult != SENTINEL) {
                 return nilResult;
+            }
+            // Kernel methods (top-level functions with null receiver)
+            if (methodName.equals("Integer") && methodArgs.length >= 1) {
+                Object arg = methodArgs[0];
+                if (arg instanceof Long) return arg;
+                if (arg instanceof Double) return Long.valueOf(((Double) arg).longValue());
+                if (arg instanceof String) {
+                    String s = ((String) arg).strip();
+                    if (s.startsWith("0x") || s.startsWith("0X")) {
+                        return Long.parseLong(s.substring(2), 16);
+                    }
+                    return Long.parseLong(s);
+                }
+                throw new IllegalArgumentException("invalid value for Integer(): \"" + arg + "\"");
+            }
+            if (methodName.equals("Float") && methodArgs.length >= 1) {
+                Object arg = methodArgs[0];
+                if (arg instanceof Double) return arg;
+                if (arg instanceof Long) return Double.valueOf(((Long) arg).doubleValue());
+                if (arg instanceof String) {
+                    String s = ((String) arg).strip();
+                    return Double.parseDouble(s);
+                }
+                throw new IllegalArgumentException("invalid value for Float(): \"" + arg + "\"");
+            }
+            // Kernel#sleep
+            if (methodName.equals("sleep") && methodArgs.length >= 1) {
+                double seconds;
+                if (methodArgs[0] instanceof Long) {
+                    seconds = ((Long) methodArgs[0]).doubleValue();
+                } else if (methodArgs[0] instanceof Double) {
+                    seconds = (Double) methodArgs[0];
+                } else if (methodArgs[0] instanceof Number) {
+                    seconds = ((Number) methodArgs[0]).doubleValue();
+                } else {
+                    seconds = 0;
+                }
+                try {
+                    Thread.sleep((long) (seconds * 1000));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return Long.valueOf((long) seconds);
+            }
+            // Kernel#rand
+            if (methodName.equals("rand")) {
+                if (methodArgs.length == 0) {
+                    return Math.random();
+                } else if (methodArgs[0] instanceof Long) {
+                    return Long.valueOf((long)(Math.random() * (Long) methodArgs[0]));
+                }
+                return Math.random();
             }
             throw new NullPointerException("Method '" + methodName + "' called on null receiver");
         }
@@ -114,6 +166,24 @@ public class RubyDispatch {
         Class<?> clazz = receiver.getClass();
 
         // Handle Ruby exception methods on Java Throwable/Exception objects
+        if (receiver instanceof KRubyException) {
+            KRubyException kexc = (KRubyException) receiver;
+            switch (methodName) {
+                case "message":
+                    String kmsg = kexc.getMessage();
+                    return kmsg != null ? kmsg : "";
+                case "to_s":
+                    String kts = kexc.getMessage();
+                    return kts != null ? kts : kexc.getRubyClassName();
+                case "k_class":
+                    return kexc.getRubyClassName();
+                case "inspect":
+                    String kim = kexc.getMessage();
+                    return "#<" + kexc.getRubyClassName() + ": " + (kim != null ? kim : "") + ">";
+                case "backtrace":
+                    return null;
+            }
+        }
         if (receiver instanceof Throwable) {
             Throwable throwable = (Throwable) receiver;
             switch (methodName) {
@@ -638,6 +708,16 @@ public class RubyDispatch {
                 }
             }
 
+            // String#split(separator, limit) — split with limit
+            if (methodName.equals("split") && args.length == 2 && args[0] instanceof String && args[1] instanceof Number) {
+                String pattern = (String) args[0];
+                int limit = ((Number) args[1]).intValue();
+                String[] parts = sv.split(java.util.regex.Pattern.quote(pattern), limit);
+                KArray<Object> splitArr = new KArray<>();
+                for (String part : parts) splitArr.push(part);
+                return splitArr;
+            }
+
             // String#tr(from, to) — 2 string args
             if (methodName.equals("tr") && args.length == 2 && args[0] instanceof String && args[1] instanceof String) {
                 return stringTr(sv, (String) args[0], (String) args[1]);
@@ -900,7 +980,7 @@ public class RubyDispatch {
                     case "clone": return sv;
                     case "k_class": return "String";
                     case "nil_q": return Boolean.FALSE;
-                    case "frozen_q": return Boolean.TRUE;
+                    case "frozen_q": return Boolean.FALSE; // Strings are not frozen by default in Ruby
                     case "to_a": {
                         // Range#to_a — ranges are stored as strings "start..end" or "start...end"
                         return rangeToArray(sv);
@@ -1390,6 +1470,86 @@ public class RubyDispatch {
                     }
                     break;
                 }
+                case "group_by": {
+                    if (args.length == 1) {
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Object elem : arr) {
+                            Object key = invokeBlock(args[0], elem);
+                            result.groupByAdd(key, elem);
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "each_with_object": {
+                    if (args.length == 2) {
+                        // args[0] = memo object, args[1] = block
+                        Object memo = args[0];
+                        Object block = args[1];
+                        for (Object elem : arr) {
+                            invokeBlock(block, elem, memo);
+                        }
+                        return memo;
+                    }
+                    break;
+                }
+                case "take_while": {
+                    if (args.length == 1) {
+                        KArray<Object> result = new KArray<>();
+                        for (Object elem : arr) {
+                            if (!isTruthy(invokeBlock(args[0], elem))) break;
+                            result.push(elem);
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "drop_while": {
+                    if (args.length == 1) {
+                        KArray<Object> result = new KArray<>();
+                        boolean dropping = true;
+                        for (Object elem : arr) {
+                            if (dropping && isTruthy(invokeBlock(args[0], elem))) continue;
+                            dropping = false;
+                            result.push(elem);
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "partition": {
+                    if (args.length == 1) {
+                        KArray<Object> trueArr = new KArray<>();
+                        KArray<Object> falseArr = new KArray<>();
+                        for (Object elem : arr) {
+                            if (isTruthy(invokeBlock(args[0], elem))) {
+                                trueArr.push(elem);
+                            } else {
+                                falseArr.push(elem);
+                            }
+                        }
+                        KArray<Object> result = new KArray<>();
+                        result.push(trueArr);
+                        result.push(falseArr);
+                        return result;
+                    }
+                    break;
+                }
+                case "tally": {
+                    if (args.length == 0) {
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Object elem : arr) {
+                            Object count = result.get(elem);
+                            if (count instanceof Long) {
+                                result.put(elem, (Long) count + 1L);
+                            } else {
+                                result.put(elem, 1L);
+                            }
+                        }
+                        return result;
+                    }
+                    break;
+                }
                 case "sum": {
                     if (args.length == 0) return arr.sumLong();
                     break;
@@ -1404,8 +1564,8 @@ public class RubyDispatch {
                     }
                     return Long.valueOf(arr.size());
                 }
-                case "frozen_q": return Boolean.FALSE;
-                case "freeze": return arr;
+                case "frozen_q": return Boolean.valueOf(arr.isFrozen());
+                case "freeze": { arr.freeze(); return arr; }
             }
         }
 
@@ -1648,10 +1808,9 @@ public class RubyDispatch {
                             entries.push(pair);
                         }
                         entries.sort((a, b) -> {
-                            KArray<?> pa = (KArray<?>) a;
-                            KArray<?> pb = (KArray<?>) b;
-                            Object ka = invokeBlock(args[0], pa.get(0), pa.get(1));
-                            Object kb = invokeBlock(args[0], pb.get(0), pb.get(1));
+                            // Pass pair as single arg (Ruby Hash#sort_by yields [k,v] pair)
+                            Object ka = invokeBlock(args[0], a);
+                            Object kb = invokeBlock(args[0], b);
                             if (ka instanceof Comparable && kb instanceof Comparable) {
                                 return ((Comparable) ka).compareTo(kb);
                             }
@@ -1725,17 +1884,32 @@ public class RubyDispatch {
         // General respond_to?
         if (methodName.equals("respond_to_q") && args.length == 1) {
             String checkName = String.valueOf(args[0]);
-            Method found2 = findMethod(receiver.getClass(), checkName, 0);
-            if (found2 == null) {
+            // Try multiple arities (0, 1, 2) since Ruby methods have various arities
+            for (int arity = 0; arity <= 2; arity++) {
+                Method found2 = findMethod(receiver.getClass(), checkName, arity);
+                if (found2 != null) return Boolean.TRUE;
                 String[] aliases2 = RUBY_NAME_ALIASES.get(checkName);
                 if (aliases2 != null) {
                     for (String alias : aliases2) {
-                        found2 = findMethod(receiver.getClass(), alias, 0);
-                        if (found2 != null) break;
+                        found2 = findMethod(receiver.getClass(), alias, arity);
+                        if (found2 != null) return Boolean.TRUE;
                     }
                 }
             }
-            return Boolean.valueOf(found2 != null);
+            // Check well-known built-in methods handled in tryBuiltinOperator
+            if (receiver instanceof KArray) {
+                switch (checkName) {
+                    case "push": case "pop": case "shift": case "unshift": case "first":
+                    case "last": case "length": case "size": case "empty_q": case "include_q":
+                    case "sort": case "reverse": case "flatten": case "compact": case "uniq":
+                    case "each": case "map": case "select": case "reject": case "reduce":
+                    case "find": case "any_q": case "all_q": case "none_q": case "join":
+                    case "min": case "max": case "count": case "delete": case "index":
+                    case "freeze": case "frozen_q":
+                        return Boolean.TRUE;
+                }
+            }
+            return Boolean.FALSE;
         }
 
         return SENTINEL;
@@ -2121,16 +2295,35 @@ public class RubyDispatch {
     private static Object invokeBlock(Object block, Object... blockArgs) {
         if (block == null) return null;
         try {
-            // Find the `call` method on the block's class
+            // Collect all `call` methods (both from getMethods and getDeclaredMethods)
+            java.util.List<Method> callMethods = new java.util.ArrayList<>();
             for (Method m : block.getClass().getMethods()) {
-                if (m.getName().equals("call") && m.getParameterCount() == blockArgs.length) {
+                if (m.getName().equals("call")) callMethods.add(m);
+            }
+            for (Method m : block.getClass().getDeclaredMethods()) {
+                if (m.getName().equals("call")) {
+                    boolean duplicate = false;
+                    for (Method existing : callMethods) {
+                        if (java.util.Arrays.equals(existing.getParameterTypes(), m.getParameterTypes())) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) callMethods.add(m);
+                }
+            }
+
+            // First pass: exact arity match
+            for (Method m : callMethods) {
+                if (m.getParameterCount() == blockArgs.length) {
                     m.setAccessible(true);
                     return m.invoke(block, blockArgs);
                 }
             }
-            // Try with adapted arg count - some blocks may take fewer args
-            for (Method m : block.getClass().getMethods()) {
-                if (m.getName().equals("call") && !m.isBridge()) {
+
+            // Second pass: adapted arity (fewer params than args, or more params with null padding)
+            for (Method m : callMethods) {
+                if (!m.isBridge()) {
                     m.setAccessible(true);
                     int paramCount = m.getParameterCount();
                     Object[] adapted = new Object[paramCount];
@@ -2139,6 +2332,17 @@ public class RubyDispatch {
                     }
                     return m.invoke(block, adapted);
                 }
+            }
+
+            // Third pass: use any call method (even bridge) as last resort
+            for (Method m : callMethods) {
+                m.setAccessible(true);
+                int paramCount = m.getParameterCount();
+                Object[] adapted = new Object[paramCount];
+                for (int i = 0; i < paramCount; i++) {
+                    adapted[i] = i < blockArgs.length ? blockArgs[i] : null;
+                }
+                return m.invoke(block, adapted);
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to invoke block: " + e.getMessage(), e);

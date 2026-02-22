@@ -596,6 +596,28 @@ module Konpeito
 
         instructions = []
 
+        # Register user-defined exception classes in KRubyException hierarchy
+        @hir_program.classes.each do |class_def|
+          next unless class_def.superclass
+          parent = class_def.superclass.to_s
+          # Register if parent is a known exception class or another user exception class
+          known_exceptions = %w[StandardError RuntimeError ArgumentError TypeError NameError NoMethodError
+                                ZeroDivisionError RangeError IOError Exception]
+          is_exception = known_exceptions.include?(parent) ||
+                         @hir_program.classes.any? { |cd|
+                           cd.name.to_s == parent && cd.superclass &&
+                             (known_exceptions.include?(cd.superclass.to_s) || exception_ancestor?(cd, known_exceptions))
+                         }
+          if is_exception
+            instructions << { "op" => "ldc", "value" => class_def.name.to_s }
+            instructions << { "op" => "ldc", "value" => parent }
+            instructions << { "op" => "invokestatic",
+                              "owner" => "konpeito/runtime/KRubyException",
+                              "name" => "registerExceptionClass",
+                              "descriptor" => "(Ljava/lang/String;Ljava/lang/String;)V" }
+          end
+        end
+
         if entry_func
           # Call the entry function
           desc = method_descriptor(entry_func)
@@ -930,6 +952,8 @@ module Konpeito
           generate_store_class_var(inst)
         when HIR::MultiWriteExtract
           generate_multi_write_extract(inst)
+        when HIR::MultiWriteSplat
+          generate_multi_write_splat(inst)
         when HIR::RangeLit
           generate_range_lit(inst)
         when HIR::RegexpLit
@@ -1455,6 +1479,15 @@ module Konpeito
           end
         end
 
+        # Symbol#frozen? → always true (symbols are always frozen in Ruby)
+        if method_name == "frozen?" && receiver && args.empty?
+          recv_var = extract_var_name(receiver)
+          is_sym = receiver.is_a?(HIR::SymbolLit) || (recv_var && @variable_is_symbol[recv_var])
+          if is_sym
+            return generate_string_always_true(result_var)
+          end
+        end
+
         # block_given? → null check on __block__ parameter
         if method_name == "block_given?" && (receiver.nil? || receiver.is_a?(HIR::SelfRef))
           return generate_block_given(result_var)
@@ -1653,7 +1686,11 @@ module Konpeito
 
         # Check for user-defined static method calls (top-level)
         if receiver.nil? || (receiver.is_a?(HIR::SelfRef))
-          return generate_static_call(inst, method_name, args, result_var)
+          static_result = generate_static_call(inst, method_name, args, result_var)
+          # If generate_static_call found a target function, return its result.
+          # If it returned empty (no target_func found), fall through to invokedynamic
+          # so that Kernel methods like Integer(), Float(), etc. are dispatched at runtime.
+          return static_result unless static_result.empty?
         end
 
         # Resolve receiver class from HIR type annotation (HM inferrer result) ONLY.
@@ -2309,41 +2346,71 @@ module Konpeito
       def generate_raise_call(args, result_var)
         instructions = []
 
-        instructions << { "op" => "new", "type" => "java/lang/RuntimeException" }
-        instructions << { "op" => "dup" }
+        # Detect if first arg is an exception class name (ConstantLookup)
+        exc_class_name = nil
+        if args.size >= 1 && args.first.is_a?(HIR::ConstantLookup)
+          exc_class_name = args.first.name.to_s
+        end
 
-        if args.empty?
+        if exc_class_name
+          # raise ExceptionClass, "message" → KRubyException(className, message)
+          instructions << { "op" => "new", "type" => "konpeito/runtime/KRubyException" }
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "ldc", "value" => exc_class_name }
+
+          if args.size >= 2
+            msg_arg = args.last
+            instructions.concat(load_value_as_string(msg_arg))
+          else
+            instructions << { "op" => "ldc", "value" => exc_class_name }
+          end
+
+          instructions << { "op" => "invokespecial",
+                            "owner" => "konpeito/runtime/KRubyException", "name" => "<init>",
+                            "descriptor" => "(Ljava/lang/String;Ljava/lang/String;)V" }
+        elsif args.empty?
           # raise with no args → RuntimeException()
+          instructions << { "op" => "new", "type" => "java/lang/RuntimeException" }
+          instructions << { "op" => "dup" }
           instructions << { "op" => "invokespecial",
                             "owner" => "java/lang/RuntimeException", "name" => "<init>",
                             "descriptor" => "()V" }
         else
-          # raise "message" or raise ExceptionClass, "message"
-          # For now, use last string arg as message
-          msg_arg = args.size == 1 ? args.first : args.last
-          instructions.concat(load_value(msg_arg, :string))
+          # raise "message" → KRubyException("RuntimeError", message)
+          instructions << { "op" => "new", "type" => "konpeito/runtime/KRubyException" }
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "ldc", "value" => "RuntimeError" }
 
-          # Ensure we have a String on stack (convert if needed)
-          msg_var = extract_var_name(msg_arg)
-          msg_type = msg_var ? (@variable_types[msg_var] || :value) : :value
-          if msg_type == :i64
-            instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
-                              "name" => "toString", "descriptor" => "(J)Ljava/lang/String;" }
-          elsif msg_type == :double
-            instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
-                              "name" => "toString", "descriptor" => "(D)Ljava/lang/String;" }
-          elsif msg_type == :value
-            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Object",
-                              "name" => "toString", "descriptor" => "()Ljava/lang/String;" }
-          end
+          msg_arg = args.first
+          instructions.concat(load_value_as_string(msg_arg))
 
           instructions << { "op" => "invokespecial",
-                            "owner" => "java/lang/RuntimeException", "name" => "<init>",
-                            "descriptor" => "(Ljava/lang/String;)V" }
+                            "owner" => "konpeito/runtime/KRubyException", "name" => "<init>",
+                            "descriptor" => "(Ljava/lang/String;Ljava/lang/String;)V" }
         end
 
         instructions << { "op" => "athrow" }
 
+        instructions
+      end
+
+      # Helper to load a value and ensure it's a String on stack
+      def load_value_as_string(arg)
+        instructions = []
+        arg_var = extract_var_name(arg)
+        arg_type = arg_var ? (@variable_types[arg_var] || :value) : :value
+        instructions.concat(load_value(arg, arg_type))
+
+        if arg_type == :i64
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                            "name" => "toString", "descriptor" => "(J)Ljava/lang/String;" }
+        elsif arg_type == :double
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                            "name" => "toString", "descriptor" => "(D)Ljava/lang/String;" }
+        elsif arg_type == :value
+          instructions << { "op" => "invokevirtual", "owner" => "java/lang/Object",
+                            "name" => "toString", "descriptor" => "()Ljava/lang/String;" }
+        end
         instructions
       end
 
@@ -2426,7 +2493,25 @@ module Konpeito
 
         # Register exception table entries AFTER try body is generated
         # (so nested handlers from inner BeginRescue appear before outer ones)
-        if has_rescue
+        #
+        # Strategy: If any rescue clause uses a custom (non-standard) exception class,
+        # use a single catch-all handler with runtime class checking.
+        # Otherwise, use the JVM exception table for type-based dispatch.
+        has_custom_exc = has_rescue && inst.rescue_clauses.any? { |c|
+          c.exception_classes.any? { |e| !RUBY_EXCEPTION_TO_JVM.key?(e.to_s) }
+        }
+
+        unified_handler_label = nil
+        if has_rescue && has_custom_exc
+          # Single unified handler for all rescue clauses
+          unified_handler_label = new_label("unified_handler")
+          @pending_exception_table << {
+            "start" => try_start,
+            "end" => try_end,
+            "handler" => unified_handler_label,
+            "type" => "java/lang/RuntimeException"
+          }
+        elsif has_rescue
           inst.rescue_clauses.each_with_index do |clause, i|
             clause.exception_classes.each do |exc_class|
               jvm_exc = ruby_exception_to_jvm(exc_class)
@@ -2468,7 +2553,88 @@ module Konpeito
         end
 
         # 2. Rescue handlers
-        if has_rescue
+        if has_rescue && unified_handler_label
+          # Unified handler: catch RuntimeException, then check class at runtime
+          instructions << { "op" => "label", "name" => unified_handler_label }
+
+          # Store exception to a temp slot
+          exc_temp = "__rescue_exc_#{@label_counter}"
+          ensure_slot(exc_temp, :value)
+          exc_slot_num = @variable_slots[exc_temp]
+          instructions << { "op" => "astore", "var" => exc_slot_num }
+
+          # Pre-generate labels for all rescue clause bodies and checks
+          body_labels = inst.rescue_clauses.map { |_| new_label("rescue_body") }
+          check_labels = inst.rescue_clauses.map { |_| new_label("rescue_check") }
+          rethrow_label = new_label("rethrow")
+
+          # Generate class-checking dispatch
+          inst.rescue_clauses.each_with_index do |clause, i|
+            exc_classes = clause.exception_classes
+
+            if exc_classes.empty? || exc_classes.any? { |c| c.to_s == "StandardError" }
+              # Bare rescue or StandardError → catch all, go directly to body
+              instructions << { "op" => "goto", "target" => body_labels[i] }
+            else
+              # Check if exception is KRubyException and matches the class
+              instructions << { "op" => "aload", "var" => exc_slot_num }
+              instructions << { "op" => "instanceof", "type" => "konpeito/runtime/KRubyException" }
+              instructions << { "op" => "ifeq", "target" => check_labels[i] }  # not KRubyException, skip
+
+              instructions << { "op" => "aload", "var" => exc_slot_num }
+              instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KRubyException" }
+              instructions << { "op" => "ldc", "value" => exc_classes.first.to_s }
+              instructions << { "op" => "invokevirtual",
+                                "owner" => "konpeito/runtime/KRubyException",
+                                "name" => "matchesRescueClass",
+                                "descriptor" => "(Ljava/lang/String;)Z" }
+              instructions << { "op" => "ifne", "target" => body_labels[i] }  # match → go to body
+
+              # Fall through to next check
+              instructions << { "op" => "label", "name" => check_labels[i] }
+            end
+          end
+
+          # If no clause matched, rethrow
+          instructions << { "op" => "aload", "var" => exc_slot_num }
+          instructions << { "op" => "athrow" }
+
+          # Generate rescue bodies
+          inst.rescue_clauses.each_with_index do |clause, i|
+            instructions << { "op" => "label", "name" => body_labels[i] }
+
+            # Store exception var if needed
+            if clause.exception_var
+              ev_slot = allocate_slot(clause.exception_var, :value)
+              instructions << { "op" => "aload", "var" => exc_slot_num }
+              instructions << { "op" => "astore", "var" => ev_slot }
+              @variable_types[clause.exception_var] = :value
+            end
+
+            # Generate rescue body
+            last_rescue_result = nil
+            clause.body_blocks&.each do |body_inst|
+              instructions.concat(generate_instruction(body_inst))
+              last_rescue_result = body_inst.result_var if body_inst.respond_to?(:result_var) && body_inst.result_var
+              if (store_inst = orphaned_stores[body_inst.object_id])
+                instructions.concat(generate_instruction(store_inst))
+              end
+            end
+
+            if result_var && last_rescue_result
+              last_type = @variable_types[last_rescue_result.to_s] || :value
+              instructions.concat(load_value_from_var(last_rescue_result.to_s, last_type))
+              instructions.concat(box_primitive_if_needed(last_type, :value))
+              instructions << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+            end
+
+            if has_ensure
+              instructions << { "op" => "goto", "target" => ensure_normal_label }
+            else
+              instructions << { "op" => "goto", "target" => after_all }
+            end
+          end
+        elsif has_rescue
           inst.rescue_clauses.each_with_index do |clause, i|
             instructions << { "op" => "label", "name" => handler_labels[i] }
 
@@ -3448,6 +3614,29 @@ module Konpeito
         instructions
       end
 
+      # Multi-assignment splat extraction: *rest = arr[start..-(end+1)]
+      def generate_multi_write_splat(inst)
+        instructions = []
+
+        # Load the array
+        instructions.concat(load_value(inst.array, :value))
+        # Cast to KArray
+        instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KArray" }
+        # Push start_index and end_offset
+        instructions << { "op" => "ldc", "value" => inst.start_index }
+        instructions << { "op" => "ldc", "value" => inst.end_offset }
+        # Call KArray.splatSlice(int startIndex, int endOffset)
+        instructions << { "op" => "invokevirtual", "owner" => "konpeito/runtime/KArray",
+                          "name" => "splatSlice", "descriptor" => "(II)Lkonpeito/runtime/KArray;" }
+
+        if inst.result_var
+          ensure_slot(inst.result_var, :value)
+          instructions << { "op" => "astore", "var" => @variable_slots[inst.result_var.to_s] }
+          @variable_types[inst.result_var.to_s] = :value
+        end
+        instructions
+      end
+
       # Range literal: 1..5 or 1...5
       # Represented as a string "start..end" or "start...end" for simple usage
       def generate_range_lit(inst)
@@ -3536,6 +3725,16 @@ module Konpeito
 
       def ruby_exception_to_jvm(ruby_class_name)
         RUBY_EXCEPTION_TO_JVM[ruby_class_name.to_s] || "java/lang/Exception"
+      end
+
+      # Check if a class_def is an ancestor of a known exception class
+      def exception_ancestor?(class_def, known_exceptions)
+        parent = class_def.superclass&.to_s
+        return false unless parent
+        return true if known_exceptions.include?(parent)
+
+        parent_def = @hir_program.classes.find { |cd| cd.name.to_s == parent }
+        parent_def ? exception_ancestor?(parent_def, known_exceptions) : false
       end
 
       def generate_puts_call(args, result_var)
@@ -4019,6 +4218,8 @@ module Konpeito
 
         then_label = term.then_block.to_s
         else_label = term.else_block.to_s
+
+
 
         # Generate phi stores for the else path BEFORE loading condition,
         # so they execute before the conditional jump takes us to else_label.
@@ -5035,6 +5236,25 @@ module Konpeito
           end
         end
 
+        # Scan all methods for &&=/||= patterns on ivars.
+        # These require nil truthiness checks, so the field must be :value (Object).
+        @hir_program&.functions&.each do |f|
+          next unless f.owner_class.to_s == class_def.name.to_s
+          f.body.each do |bb|
+            label = bb.label.to_s
+            # ivar_and_write_assign / ivar_or_write_assign blocks indicate &&=/||= on an ivar
+            next unless label.include?("ivar_and_write") || label.include?("ivar_or_write")
+            bb.instructions.each do |inst|
+              next unless inst.is_a?(HIR::StoreInstanceVar)
+              clean_name = inst.name.to_s.sub(/^@/, "")
+              current = fields[clean_name]
+              if current == :i64 || current == :double || current == :i8
+                fields[clean_name] = :value
+              end
+            end
+          end
+        end
+
         fields
       end
 
@@ -5152,9 +5372,46 @@ module Konpeito
         # Slot 0 = self
         allocate_slot("__self__", :value)
 
-        # Allocate params
+        # Collect ivar names that are stored from params in the initialize body.
+        # If a param is stored to a :value field (e.g., due to &&=/||= downgrade),
+        # the param must also be :value to preserve nil semantics.
+        # Track which params are stored to which ivars (possibly through temp vars).
+        # Pattern: LoadLocal(param) → result_var t1, then StoreInstanceVar(@x, LoadLocal(t1))
+        param_to_ivar = {}
+        param_names = init_func.params.map { |p| p.name.to_s }.to_set
+        temp_to_param = {}  # temp var → original param name
+        init_func.body.each do |bb|
+          bb.instructions.each do |inst|
+            if inst.is_a?(HIR::LoadLocal)
+              local_name = inst.var.is_a?(HIR::LocalVar) ? inst.var.name.to_s : inst.var.to_s
+              if param_names.include?(local_name) && inst.result_var
+                temp_to_param[inst.result_var.to_s] = local_name
+              end
+            end
+            next unless inst.is_a?(HIR::StoreInstanceVar)
+            val = inst.value
+            var_name = if val.is_a?(HIR::LoadLocal)
+                         local_name = val.var.is_a?(HIR::LocalVar) ? val.var.name.to_s : val.var.to_s
+                         # Check if direct param or resolve temp var
+                         param_names.include?(local_name) ? local_name : temp_to_param[local_name]
+                       else
+                         v = extract_var_name(val)&.to_s
+                         v && (param_names.include?(v) ? v : temp_to_param[v])
+                       end
+            if var_name
+              param_to_ivar[var_name] = inst.name.to_s.sub(/^@/, "")
+            end
+          end
+        end
+
+        # Allocate params - widen to :value if the target field is :value
         init_func.params.each do |param|
           type = param_type(param)
+          # If this param is stored to a :value field, widen param to :value
+          ivar_name = param_to_ivar[param.name.to_s]
+          if ivar_name && fields_info[ivar_name] == :value && type != :value
+            type = :value
+          end
           allocate_slot(param.name, type)
         end
 
@@ -5225,7 +5482,14 @@ module Konpeito
 
         # Build descriptor from initialize params
         # Map :void to :value — nil/void is not valid as JVM parameter type
-        init_param_types = init_func.params.map { |p| t = param_type(p); t == :void ? :value : t }
+        # Widen params that store to :value fields (e.g., due to &&=/||= downgrade)
+        init_param_types = init_func.params.map { |p|
+          t = param_type(p)
+          t = :value if t == :void
+          ivar_name = param_to_ivar[p.name.to_s]
+          t = :value if ivar_name && fields_info[ivar_name] == :value && t != :value
+          t
+        }
         params_desc = init_param_types.map { |t| type_to_descriptor(t) }.join
         init_desc = "(#{params_desc})V"
 
@@ -8855,6 +9119,8 @@ module Konpeito
           nil # Complex: requires Comparator, skip for now
         when "min_by", "max_by"
           nil # Complex: requires block-based comparison, skip for now
+        when "group_by"
+          nil # Complex: block body branches cause ASM COMPUTE_FRAMES issues, skip for now
         else
           nil  # Fall through to other dispatch
         end
@@ -9192,6 +9458,113 @@ module Konpeito
           instructions << store_instruction(result_var, :value)
           @variable_types[result_var] = :value
           @variable_collection_types[result_var] = :array
+        end
+        instructions
+      end
+
+      # Array#group_by { |x| ... } — group elements by block result into a KHash
+      def generate_array_group_by_inline(receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        counter = @block_counter
+        instructions = []
+
+        # Store array reference
+        arr_var = "__gb_arr_#{counter}"
+        ensure_slot(arr_var, :value)
+        @variable_types[arr_var] = :value
+        instructions.concat(load_karray_receiver(receiver))
+        instructions << store_instruction(arr_var, :value)
+
+        # Create result KHash
+        result_hash_var = "__gb_hash_#{counter}"
+        ensure_slot(result_hash_var, :value)
+        @variable_types[result_hash_var] = :value
+        instructions << { "op" => "new", "type" => KHASH_CLASS }
+        instructions << { "op" => "dup" }
+        instructions << { "op" => "invokespecial", "owner" => KHASH_CLASS,
+                          "name" => "<init>", "descriptor" => "()V" }
+        instructions << store_instruction(result_hash_var, :value)
+
+        # Loop setup
+        idx_var = "__gb_idx_#{counter}"
+        len_var = "__gb_len_#{counter}"
+        ensure_slot(idx_var, :long)
+        ensure_slot(len_var, :long)
+        @variable_types[idx_var] = :long
+        @variable_types[len_var] = :long
+
+        instructions << { "op" => "lconst_0" }
+        instructions << store_instruction(idx_var, :long)
+        instructions << load_instruction(arr_var, :value)
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                          "name" => "size", "descriptor" => "()I" }
+        instructions << { "op" => "i2l" }
+        instructions << store_instruction(len_var, :long)
+
+        loop_label = new_label("gb_loop")
+        end_label = new_label("gb_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(idx_var, :long)
+        instructions << load_instruction(len_var, :long)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => "ifge", "target" => end_label }
+
+        # Get element, assign to block param
+        param = block_def.params[0]
+        param_var = param ? param.name.to_s : "__gb_elem_#{counter}"
+        ensure_slot(param_var, :value)
+        @variable_types[param_var] = :value
+
+        instructions << load_instruction(arr_var, :value)
+        instructions << load_instruction(idx_var, :long)
+        instructions << { "op" => "l2i" }
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                          "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
+        instructions << store_instruction(param_var, :value)
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            instructions.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Group: hash[key] ||= []; hash[key] << elem
+        if last_var
+          key_var = "__gb_key_#{counter}"
+          ensure_slot(key_var, :value)
+          @variable_types[key_var] = :value
+          instructions << load_instruction(last_var, @variable_types[last_var] || :value)
+          instructions.concat(box_if_needed(last_var))
+          instructions << store_instruction(key_var, :value)
+
+          # Use KHash.groupByAdd(key, elem) helper to avoid branch in bytecode
+          instructions << load_instruction(result_hash_var, :value)
+          instructions << { "op" => "checkcast", "type" => KHASH_CLASS }
+          instructions << load_instruction(key_var, :value)
+          instructions << load_instruction(param_var, :value)
+          instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                            "name" => "groupByAdd",
+                            "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)V" }
+        end
+
+        # Increment counter
+        instructions << load_instruction(idx_var, :long)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(idx_var, :long)
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << load_instruction(result_hash_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
         end
         instructions
       end
@@ -10321,8 +10694,16 @@ module Konpeito
           if _block_def
             generate_hash_each_with_object_inline(receiver, args, _block_def, result_var)
           end
-        when "min_by", "max_by", "sort_by"
-          nil # Fall through to invokedynamic dispatch (complex iteration)
+        when "min_by"
+          if _block_def
+            generate_hash_min_max_by_inline(receiver, _block_def, result_var, :min)
+          end
+        when "max_by"
+          if _block_def
+            generate_hash_min_max_by_inline(receiver, _block_def, result_var, :max)
+          end
+        when "sort_by"
+          nil # Fall through — ASM COMPUTE_FRAMES issue with inline sort_by
         when "to_a"
           generate_hash_to_a(receiver, result_var)
         when "map", "collect", "flat_map", "collect_concat", "find", "detect"
@@ -11357,7 +11738,9 @@ module Konpeito
           # No-op on JVM (strings are immutable), just return the receiver
           generate_string_passthrough(receiver, result_var)
         when "frozen?"
-          # Always true on JVM (strings are immutable)
+          # On JVM, String#frozen? defaults to true since Java strings are immutable.
+          # This means "unfrozen" string tests will fail, but "freeze then frozen?" tests will pass.
+          # A proper solution would require wrapping strings in a mutable container.
           generate_string_always_true(result_var)
         when "count"
           generate_string_count(receiver, args, result_var)
@@ -11535,9 +11918,22 @@ module Konpeito
         instructions = []
         instructions.concat(load_string_receiver(receiver))
         instructions.concat(load_as_string(args.first))
-        instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
-                          "name" => "split",
-                          "descriptor" => "(Ljava/lang/String;)[Ljava/lang/String;" }
+
+        if args.size >= 2
+          # split(pattern, limit) — 2-argument form
+          instructions.concat(load_value(args[1], :long))
+          loaded_t = infer_loaded_type(args[1])
+          instructions.concat(unbox_if_needed(loaded_t, :long))
+          instructions << { "op" => "l2i" }
+          instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
+                            "name" => "split",
+                            "descriptor" => "(Ljava/lang/String;I)[Ljava/lang/String;" }
+        else
+          instructions << { "op" => "invokevirtual", "owner" => "java/lang/String",
+                            "name" => "split",
+                            "descriptor" => "(Ljava/lang/String;)[Ljava/lang/String;" }
+        end
+
         # Convert String[] to KArray via Arrays.asList then KArray(Collection)
         instructions << { "op" => "invokestatic", "owner" => "java/util/Arrays",
                           "name" => "asList",
@@ -11782,6 +12178,17 @@ module Konpeito
       def generate_string_always_true(result_var)
         instructions = []
         instructions << { "op" => "iconst", "value" => 1 }
+        if result_var
+          ensure_slot(result_var, :i8)
+          instructions << store_instruction(result_var, :i8)
+          @variable_types[result_var] = :i8
+        end
+        instructions
+      end
+
+      def generate_string_always_false(result_var)
+        instructions = []
+        instructions << { "op" => "iconst", "value" => 0 }
         if result_var
           ensure_slot(result_var, :i8)
           instructions << store_instruction(result_var, :i8)

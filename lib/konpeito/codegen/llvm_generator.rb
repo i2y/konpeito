@@ -1992,6 +1992,8 @@ module Konpeito
           generate_super_call(inst)
         when HIR::MultiWriteExtract
           generate_multi_write_extract(inst)
+        when HIR::MultiWriteSplat
+          generate_multi_write_splat(inst)
         else
           # Unknown instruction, store nil
           if inst.result_var
@@ -6802,6 +6804,65 @@ module Konpeito
           @variable_types[inst.result_var] = :value
         end
         result
+      end
+
+      # Multi-write splat extraction: *rest = arr[start..-(end_offset+1)]
+      # Collects a sub-array from the source array
+      def generate_multi_write_splat(inst)
+        array_val = get_value_as_ruby(inst.array)
+
+        # Get array length via rb_funcallv("length")
+        len_id = @builder.call(@rb_intern, @builder.global_string_pointer("length"))
+        arr_len_val = @builder.call(@rb_funcallv, array_val, len_id, LLVM::Int.from_i(0), LLVM::Pointer(LLVM::Int64).null_pointer)
+        arr_len = @builder.call(@rb_num2long, arr_len_val)
+
+        start_idx = LLVM::Int64.from_i(inst.start_index)
+        end_off = LLVM::Int64.from_i(inst.end_offset)
+
+        # splat_len = max(0, arr_len - start_index - end_offset)
+        splat_len = @builder.sub(arr_len, start_idx)
+        splat_len = @builder.sub(splat_len, end_off)
+        zero = LLVM::Int64.from_i(0)
+        is_negative = @builder.icmp(:slt, splat_len, zero)
+        splat_len = @builder.select(is_negative, zero, splat_len)
+
+        # Create new array: rb_ary_new_capa(splat_len)
+        result_arr = @builder.call(@rb_ary_new_capa, splat_len)
+
+        # Loop: for i = 0; i < splat_len; i++ { rb_ary_push(result, rb_ary_entry(arr, start + i)) }
+        func = @builder.insert_block.parent
+        loop_bb = func.basic_blocks.append("splat_loop")
+        body_bb = func.basic_blocks.append("splat_body")
+        done_bb = func.basic_blocks.append("splat_done")
+
+        # alloca for loop counter
+        counter_alloca = @builder.alloca(LLVM::Int64, "splat_i")
+        @builder.store(zero, counter_alloca)
+        @builder.br(loop_bb)
+
+        # Loop condition
+        @builder.position_at_end(loop_bb)
+        counter = @builder.load2(LLVM::Int64, counter_alloca, "splat_counter")
+        cond = @builder.icmp(:slt, counter, splat_len)
+        @builder.cond(cond, body_bb, done_bb)
+
+        # Loop body
+        @builder.position_at_end(body_bb)
+        idx = @builder.add(start_idx, counter)
+        elem = @builder.call(@rb_ary_entry, array_val, idx)
+        @builder.call(@rb_ary_push, result_arr, elem)
+        next_counter = @builder.add(counter, LLVM::Int64.from_i(1))
+        @builder.store(next_counter, counter_alloca)
+        @builder.br(loop_bb)
+
+        # Done
+        @builder.position_at_end(done_bb)
+
+        if inst.result_var
+          @variables[inst.result_var] = result_arr
+          @variable_types[inst.result_var] = :value
+        end
+        result_arr
       end
 
       # Generate defined? check

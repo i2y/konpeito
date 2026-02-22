@@ -1,2 +1,8 @@
-# JVM: Hash#each_with_object is not implemented in KHash
-RUNTIME_ERROR
+# JVM: sort_by, min_by, max_by don't work through invokedynamic with blocks
+# 14 pass, 6 fail (diff 6)
+Hash#min_by returns entry with minimum value - key
+Hash#min_by returns entry with minimum value - value
+Hash#max_by returns entry with maximum value - key
+Hash#max_by returns entry with maximum value - value
+Hash#sort_by first sorted pair key
+Hash#sort_by last sorted pair key

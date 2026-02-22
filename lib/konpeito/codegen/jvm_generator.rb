@@ -1311,15 +1311,16 @@ module Konpeito
         return [] if target_type == source_type
         if target_type == :value && (source_type == :i8 || source_type == :i64 || source_type == :double)
           box_primitive_if_needed(source_type, :value)
-        elsif (target_type == :i64) && source_type == :value
-          # Use Number (not Long) — value may be Long OR Double from invokedynamic
+        elsif (target_type == :i64) && (source_type == :value || source_type == :string || source_type == :array || source_type == :hash || source_type == :regexp)
+          # Reference type → long: cast to Number and unbox.
+          # This handles mixed-type arrays where element type tracking may be inaccurate.
           [{ "op" => "checkcast", "type" => "java/lang/Number" },
            { "op" => "invokevirtual", "owner" => "java/lang/Number", "name" => "longValue", "descriptor" => "()J" }]
-        elsif (target_type == :double) && source_type == :value
-          # Use Number (not Double) — value may be Long OR Double from invokedynamic
+        elsif (target_type == :double) && (source_type == :value || source_type == :string || source_type == :array || source_type == :hash || source_type == :regexp)
+          # Reference type → double: cast to Number and unbox.
           [{ "op" => "checkcast", "type" => "java/lang/Number" },
            { "op" => "invokevirtual", "owner" => "java/lang/Number", "name" => "doubleValue", "descriptor" => "()D" }]
-        elsif (target_type == :i8) && source_type == :value
+        elsif (target_type == :i8) && (source_type == :value || source_type == :string)
           # Unbox Boolean → int
           [{ "op" => "checkcast", "type" => "java/lang/Boolean" },
            { "op" => "invokevirtual", "owner" => "java/lang/Boolean", "name" => "booleanValue", "descriptor" => "()Z" }]
@@ -1329,6 +1330,12 @@ module Konpeito
         elsif target_type == :i64 && source_type == :double
           # double → long conversion
           [{ "op" => "d2l" }]
+        elsif target_type == :string && (source_type == :value || source_type == :array || source_type == :hash)
+          # Reference type → String: checkcast
+          [{ "op" => "checkcast", "type" => "java/lang/String" }]
+        elsif (target_type == :value) && (source_type == :string || source_type == :array || source_type == :hash || source_type == :regexp)
+          # String/Array/Hash/Regexp are already Object references — no conversion needed
+          []
         else
           []
         end
@@ -1463,7 +1470,15 @@ module Konpeito
           return generate_times_inline(inst, receiver, block_def, result_var)
         end
 
-        # Range#each/map/select/reduce with block → inline loop
+        # Integer#upto(limit) / Integer#downto(limit) with block → inline loop
+        if method_name == "upto" && block_def && receiver && args.length == 1
+          return generate_upto_inline(inst, receiver, args[0], block_def, result_var)
+        end
+        if method_name == "downto" && block_def && receiver && args.length == 1
+          return generate_downto_inline(inst, receiver, args[0], block_def, result_var)
+        end
+
+        # Range#each/map/select/reduce/any?/all?/none?/sum/min/max with block → inline loop
         if block_def && receiver && can_jvm_inline_range_loop?(inst)
           case method_name
           when "each"
@@ -1474,6 +1489,24 @@ module Konpeito
             return generate_range_select_inline(inst, receiver, block_def, result_var)
           when "reduce", "inject"
             return generate_range_reduce_inline(inst, receiver, block_def, result_var)
+          when "any?"
+            return generate_range_any_inline(inst, receiver, block_def, result_var)
+          when "all?"
+            return generate_range_all_inline(inst, receiver, block_def, result_var)
+          when "none?"
+            return generate_range_none_inline(inst, receiver, block_def, result_var)
+          end
+        end
+
+        # Range#min/max/sum without block
+        if receiver && can_jvm_inline_range_loop?(inst)
+          case method_name
+          when "min"
+            return generate_range_min_inline(inst, receiver, result_var)
+          when "max"
+            return generate_range_max_inline(inst, receiver, result_var)
+          when "sum"
+            return generate_range_sum_inline(inst, receiver, result_var)
           end
         end
 
@@ -1930,6 +1963,13 @@ module Konpeito
           return generate_user_defined_comparison(inst, op, receiver, arg, result_var)
         end
 
+        # For ordering operators (<, >, <=, >=): if receiver's class defines <=>,
+        # delegate to it: `a < b` becomes `(a <=> b) < 0`
+        if %w[< > <= >=].include?(op) && receiver && !receiver.is_a?(HIR::SelfRef) &&
+           user_class_has_method?(receiver, "<=>")
+          return generate_comparable_via_spaceship(inst, op, receiver, arg, result_var)
+        end
+
         # Determine comparison type
         # If either side is nil (literal or :value variable), always use null-safe object comparison
         has_nil = receiver.is_a?(HIR::NilLit) || arg.is_a?(HIR::NilLit)
@@ -2178,6 +2218,84 @@ module Konpeito
         else
           instructions << { "op" => "iconst", "value" => 1 }
         end
+
+        instructions << { "op" => "label", "name" => end_label }
+        instructions << store_instruction(result_var, :i8)
+        @variable_types[result_var] = :i8
+
+        instructions
+      end
+
+      # Generate comparison via <=> (Comparable pattern):
+      # `a < b` → `(a <=> b) < 0`, `a > b` → `(a <=> b) > 0`, etc.
+      def generate_comparable_via_spaceship(inst, op, receiver, arg, result_var)
+        instructions = []
+        recv_class_name = resolve_receiver_class(receiver)
+        info = @class_info[recv_class_name]
+        jvm_class = info[:jvm_name]
+
+        # Look up <=> method
+        target_func = find_class_instance_method(recv_class_name, "<=>")
+        spaceship_jvm = jvm_method_name("<=>")
+        descriptor_key = "#{jvm_class}.#{spaceship_jvm}"
+        desc = @method_descriptors[descriptor_key]
+
+        unless desc
+          param_desc = target_func ? target_func.params.each_with_index.map { |p, i|
+            t = widened_param_type(target_func, p, i)
+            type_to_descriptor(t)
+          }.join : "Ljava/lang/Object;"
+          ret_desc = "Ljava/lang/Object;"
+          desc = "(#{param_desc})#{ret_desc}"
+        end
+
+        # Load receiver + checkcast
+        instructions.concat(load_value(receiver, :value))
+        instructions << { "op" => "checkcast", "type" => jvm_class }
+
+        # Load argument
+        if target_func && target_func.params.size == 1
+          param = target_func.params.first
+          param_t = widened_param_type(target_func, param, 0)
+          instructions.concat(load_value(arg, param_t))
+          loaded_t = infer_loaded_type(arg)
+          instructions.concat(unbox_if_needed(loaded_t, param_t))
+        else
+          instructions.concat(load_value(arg, :value))
+        end
+
+        # Call <=> — returns Long (Integer result: -1, 0, 1)
+        instructions << { "op" => "invokevirtual", "owner" => jvm_class,
+                          "name" => spaceship_jvm, "descriptor" => desc }
+
+        # Unbox the result (Object → long)
+        instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+        instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                          "name" => "longValue", "descriptor" => "()J" }
+
+        # Compare with 0: lcmp result is already -1/0/1 as long; convert to int for ifXX
+        instructions << { "op" => "lconst_0" }
+        instructions << { "op" => "lcmp" }
+
+        true_label = new_label("cmp_spaceship_true")
+        end_label = new_label("cmp_spaceship_end")
+
+        jump_op = case op
+                  when "<" then "iflt"
+                  when ">" then "ifgt"
+                  when "<=" then "ifle"
+                  when ">=" then "ifge"
+                  end
+        instructions << { "op" => jump_op, "target" => true_label }
+
+        # False path
+        ensure_slot(result_var, :i8)
+        instructions << { "op" => "iconst", "value" => 0 }
+        instructions << { "op" => "goto", "target" => end_label }
+
+        # True path
+        instructions << { "op" => "label", "name" => true_label }
+        instructions << { "op" => "iconst", "value" => 1 }
 
         instructions << { "op" => "label", "name" => end_label }
         instructions << store_instruction(result_var, :i8)
@@ -3921,28 +4039,11 @@ module Konpeito
           instructions << { "op" => "pop2" }
         when :value
           # Ruby truthiness: null (nil) and Boolean.FALSE (false) are falsy.
-          # A simple ifnull misses Boolean.FALSE, causing && short-circuit bugs.
-          null_falsy = new_label("null_falsy")
-          not_boolean = new_label("not_boolean")
-          truthy_lbl = new_label("truthy")
-
-          instructions << { "op" => "dup" }
-          instructions << { "op" => "ifnull", "target" => null_falsy }
-          # Not null — check for Boolean.FALSE
-          instructions << { "op" => "dup" }
-          instructions << { "op" => "instanceof", "type" => "java/lang/Boolean" }
-          instructions << { "op" => "ifeq", "target" => not_boolean }
-          # It's a Boolean — unbox and check value
-          instructions << { "op" => "checkcast", "type" => "java/lang/Boolean" }
-          instructions << { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
-                            "name" => "booleanValue", "descriptor" => "()Z" }
+          # Use RubyDispatch.isTruthy() to avoid complex dup/pop/label patterns
+          # that confuse ASM's COMPUTE_FRAMES in methods with many merge points.
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
           instructions << { "op" => "ifeq", "target" => else_label }
-          # Boolean.TRUE → truthy
-          instructions << { "op" => "goto", "target" => truthy_lbl }
-          # Not a Boolean object → truthy (pop remaining dup'd value)
-          instructions << { "op" => "label", "name" => not_boolean }
-          instructions << { "op" => "pop" }
-          instructions << { "op" => "label", "name" => truthy_lbl }
         else
           instructions << { "op" => "ifnull", "target" => else_label }
         end
@@ -3954,13 +4055,6 @@ module Konpeito
         # Fall through to then block (no explicit jump needed if then block follows)
         # But we need to handle non-sequential blocks
         instructions << { "op" => "goto", "target" => then_label }
-
-        # Null cleanup for :value truthiness check
-        if cond_type == :value
-          instructions << { "op" => "label", "name" => null_falsy }
-          instructions << { "op" => "pop" }
-          instructions << { "op" => "goto", "target" => else_label }
-        end
 
         instructions
       end
@@ -4071,36 +4165,15 @@ module Konpeito
         else
           # Object: Ruby truthiness — nil (null) and false (Boolean.FALSE) are falsy
           # !nil → true, !false → true, !anything_else → false
-          false_label = "not_false_#{@label_counter - 1}"
-          null_label = "not_null_#{@label_counter - 1}"
-          not_boolean = "not_notbool_#{@label_counter - 1}"
-
-          instructions << { "op" => "dup" }
-          instructions << { "op" => "ifnull", "target" => null_label }
-          # Not null — check for Boolean.FALSE
-          instructions << { "op" => "dup" }
-          instructions << { "op" => "instanceof", "type" => "java/lang/Boolean" }
-          instructions << { "op" => "ifeq", "target" => not_boolean }
-          # It's a Boolean — unbox and check value
-          instructions << { "op" => "checkcast", "type" => "java/lang/Boolean" }
-          instructions << { "op" => "invokevirtual", "owner" => "java/lang/Boolean",
-                            "name" => "booleanValue", "descriptor" => "()Z" }
-          # booleanValue: true(1) → !true = false(0), false(0) → !false = true(1)
+          # Use RubyDispatch.isTruthy() to simplify frame computation.
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+          # isTruthy returns 1 for truthy, 0 for falsy. NOT inverts.
           instructions << { "op" => "ifeq", "target" => true_label }
-          # Boolean.TRUE → result is false
+          # truthy → !truthy = false (0)
           instructions << { "op" => "iconst", "value" => 0 }
           instructions << { "op" => "goto", "target" => end_label }
-          # Not a Boolean → truthy → result is false
-          instructions << { "op" => "label", "name" => not_boolean }
-          instructions << { "op" => "pop" }  # pop remaining value
-          instructions << { "op" => "iconst", "value" => 0 }
-          instructions << { "op" => "goto", "target" => end_label }
-          # null → result is true
-          instructions << { "op" => "label", "name" => null_label }
-          instructions << { "op" => "pop" }  # pop dup'd null
-          instructions << { "op" => "iconst", "value" => 1 }
-          instructions << { "op" => "goto", "target" => end_label }
-          # true_label: Boolean.FALSE → result is true
+          # falsy → !falsy = true (1)
           instructions << { "op" => "label", "name" => true_label }
           instructions << { "op" => "iconst", "value" => 1 }
           instructions << { "op" => "label", "name" => end_label }
@@ -8797,23 +8870,14 @@ module Konpeito
         instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
                           "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
 
-        # Determine element type from tracking or caller hint
-        recv_var = extract_var_name(receiver)
-        elem_type = element_type || (recv_var && @variable_array_element_types[recv_var])
-
         if result_var
-          # Only checkcast for reference types (String). Primitives (i64/double) stay as
-          # Object to avoid VerifyError when returned from blocks expecting Object.
-          if elem_type == :string
-            instructions << { "op" => "checkcast", "type" => "java/lang/String" }
-            ensure_slot(result_var, :string)
-            instructions << store_instruction(result_var, :string)
-            @variable_types[result_var] = :string
-          else
-            ensure_slot(result_var, :value)
-            instructions << store_instruction(result_var, :value)
-            @variable_types[result_var] = :value
-          end
+          # Always store as :value (Object) — array elements are heterogeneous in Ruby.
+          # checkcast should NOT be applied here because the same array may contain
+          # mixed types (e.g., [String, Integer, Integer]). The consumer of the value
+          # will apply the appropriate cast/conversion via convert_for_store.
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
         end
         instructions
       end
@@ -8881,22 +8945,11 @@ module Konpeito
         instructions << { "op" => "invokevirtual", "owner" => KARRAY_CLASS,
                           "name" => method_name, "descriptor" => descriptor }
 
-        # Determine element type from tracking or caller hint
-        recv_var = extract_var_name(receiver)
-        elem_type = element_type || (recv_var && @variable_array_element_types[recv_var])
-
         if result_var
-          # Only checkcast for reference types (String). Primitives stay as Object.
-          if elem_type == :string
-            instructions << { "op" => "checkcast", "type" => "java/lang/String" }
-            ensure_slot(result_var, :string)
-            instructions << store_instruction(result_var, :string)
-            @variable_types[result_var] = :string
-          else
-            ensure_slot(result_var, :value)
-            instructions << store_instruction(result_var, :value)
-            @variable_types[result_var] = :value
-          end
+          # Always store as :value (Object) — same reasoning as generate_array_get.
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
         end
         instructions
       end
@@ -10244,8 +10297,35 @@ module Konpeito
           generate_hash_clear(receiver, result_var)
         when "each_key", "each_value", "each_pair"
           nil # Handled via invokedynamic dispatch → RubyDispatch
-        when "select", "filter", "reject", "map", "collect", "any?", "all?", "none?",
-             "min_by", "max_by", "sort_by", "flat_map", "collect_concat", "find", "detect"
+        when "select", "filter"
+          if _block_def
+            generate_hash_select_inline(receiver, _block_def, result_var, false)
+          end
+        when "reject"
+          if _block_def
+            generate_hash_select_inline(receiver, _block_def, result_var, true)
+          end
+        when "any?"
+          if _block_def
+            generate_hash_any_inline(receiver, _block_def, result_var)
+          end
+        when "all?"
+          if _block_def
+            generate_hash_all_inline(receiver, _block_def, result_var)
+          end
+        when "none?"
+          if _block_def
+            generate_hash_none_inline(receiver, _block_def, result_var)
+          end
+        when "each_with_object"
+          if _block_def
+            generate_hash_each_with_object_inline(receiver, args, _block_def, result_var)
+          end
+        when "min_by", "max_by", "sort_by"
+          nil # Fall through to invokedynamic dispatch (complex iteration)
+        when "to_a"
+          generate_hash_to_a(receiver, result_var)
+        when "map", "collect", "flat_map", "collect_concat", "find", "detect"
           nil # Handled via invokedynamic dispatch → RubyDispatch (block-based methods)
         else
           nil
@@ -10545,6 +10625,662 @@ module Konpeito
           instructions << store_instruction(result_var, :value)
           @variable_types[result_var] = :value
           @variable_collection_types[result_var] = :hash
+        end
+        instructions
+      end
+
+      # Helper: set up hash iteration loop preamble (store hash, get iterator, start loop).
+      # Returns [instructions, hash_var, iter_var, loop_label, end_label, counter_suffix]
+      # Block params are:
+      #   1-param block: pair = [key, value] (KArray)
+      #   2-param block: key, value separately
+      def setup_hash_iteration(receiver, block_def)
+        @block_counter = (@block_counter || 0) + 1
+        counter = @block_counter
+        instructions = []
+
+        # Store hash
+        hash_var = "__hash_iter_h_#{counter}"
+        recv_type = extract_var_name(receiver) ? (@variable_types[extract_var_name(receiver)] || :value) : :value
+        hash_type = recv_type == :hash ? :hash : :value
+        ensure_slot(hash_var, hash_type)
+        instructions.concat(load_value(receiver, hash_type))
+        instructions << store_instruction(hash_var, hash_type)
+        @variable_types[hash_var] = hash_type
+
+        # Get iterator
+        iter_var = "__hash_iter_it_#{counter}"
+        ensure_slot(iter_var, :value)
+        instructions << load_instruction(hash_var, hash_type)
+        instructions << { "op" => "checkcast", "type" => KHASH_CLASS } unless hash_type == :hash
+        instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                          "name" => "entrySet", "descriptor" => "()Ljava/util/Set;" }
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Set",
+                          "name" => "iterator", "descriptor" => "()Ljava/util/Iterator;" }
+        instructions << store_instruction(iter_var, :value)
+        @variable_types[iter_var] = :value
+
+        loop_label = new_label("hash_iter_loop")
+        end_label = new_label("hash_iter_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(iter_var, :value)
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Iterator",
+                          "name" => "hasNext", "descriptor" => "()Z" }
+        instructions << { "op" => "ifeq", "target" => end_label }
+
+        # Get entry
+        instructions << load_instruction(iter_var, :value)
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Iterator",
+                          "name" => "next", "descriptor" => "()Ljava/lang/Object;" }
+        instructions << { "op" => "checkcast", "type" => "java/util/Map$Entry" }
+
+        # Extract key and value based on block params count
+        if block_def.params.size >= 2
+          # 2-param block: key, value
+          key_param = block_def.params[0]
+          value_param = block_def.params[1]
+          key_var = key_param.name.to_s
+          value_var = value_param.name.to_s
+
+          ensure_slot(key_var, :value)
+          ensure_slot(value_var, :value)
+
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getKey", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction(key_var, :value)
+          @variable_types[key_var] = :value
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getValue", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction(value_var, :value)
+          @variable_types[value_var] = :value
+        else
+          # 1-param block: pair = [key, value] as KArray
+          pair_param = block_def.params[0]
+          pair_var = pair_param ? pair_param.name.to_s : "__hash_pair_#{counter}"
+          ensure_slot(pair_var, :value)
+
+          # Build pair KArray
+          pair_tmp = "__hash_pair_tmp_#{counter}"
+          ensure_slot(pair_tmp, :value)
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getKey", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction("__hpk_#{counter}", :value)
+          ensure_slot("__hpk_#{counter}", :value)
+          @variable_types["__hpk_#{counter}"] = :value
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getValue", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction("__hpv_#{counter}", :value)
+          ensure_slot("__hpv_#{counter}", :value)
+          @variable_types["__hpv_#{counter}"] = :value
+
+          # Create KArray pair
+          instructions << { "op" => "new", "type" => KARRAY_CLASS }
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "invokespecial", "owner" => KARRAY_CLASS,
+                            "name" => "<init>", "descriptor" => "()V" }
+          instructions << store_instruction(pair_var, :value)
+          @variable_types[pair_var] = :value
+
+          instructions << load_instruction(pair_var, :value)
+          instructions << load_instruction("__hpk_#{counter}", :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                            "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "pop" }
+
+          instructions << load_instruction(pair_var, :value)
+          instructions << load_instruction("__hpv_#{counter}", :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                            "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "pop" }
+        end
+
+        [instructions, hash_var, iter_var, loop_label, end_label, counter]
+      end
+
+      # Hash#select / Hash#reject inline
+      def generate_hash_select_inline(receiver, block_def, result_var, negate)
+        insts, hash_var, _iter_var, loop_label, end_label, counter = setup_hash_iteration(receiver, block_def)
+
+        # Result hash
+        result_hash_var = "__hash_sel_res_#{counter}"
+        ensure_slot(result_hash_var, :value)
+        result_insts = []
+        result_insts << { "op" => "new", "type" => KHASH_CLASS }
+        result_insts << { "op" => "dup" }
+        result_insts << { "op" => "invokespecial", "owner" => KHASH_CLASS,
+                          "name" => "<init>", "descriptor" => "()V" }
+        result_insts << store_instruction(result_hash_var, :value)
+        @variable_types[result_hash_var] = :value
+
+        # Insert result hash creation before loop
+        insts = result_insts + insts
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Check truthiness of block result
+        add_entry_label = new_label("hash_sel_add")
+        skip_label = new_label("hash_sel_skip")
+        if last_var
+          if negate
+            # reject: skip if truthy → add if falsy
+            insts.concat(load_and_check_truthy(last_var, skip_label))
+          else
+            # select: add if truthy → skip if falsy
+            insts.concat(load_and_check_truthy(last_var, add_entry_label))
+            insts << { "op" => "goto", "target" => skip_label }
+            insts << { "op" => "label", "name" => add_entry_label }
+          end
+        end
+
+        # Add entry to result hash
+        key_var = block_def.params.size >= 2 ? block_def.params[0].name.to_s : "__hpk_#{counter}"
+        val_var = block_def.params.size >= 2 ? block_def.params[1].name.to_s : "__hpv_#{counter}"
+        insts << load_instruction(result_hash_var, :value)
+        insts << load_instruction(key_var, :value)
+        insts << load_instruction(val_var, :value)
+        insts << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                   "name" => "put",
+                   "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" }
+        insts << { "op" => "pop" }
+
+        insts << { "op" => "label", "name" => skip_label } if last_var
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << load_instruction(result_hash_var, :value)
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+        insts
+      end
+
+      # Hash#any? inline
+      def generate_hash_any_inline(receiver, block_def, result_var)
+        insts, _hash_var, _iter_var, loop_label, end_label, counter = setup_hash_iteration(receiver, block_def)
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        found_label = new_label("hash_any_found")
+        if last_var
+          insts.concat(load_and_check_truthy(last_var, found_label))
+        end
+
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        # Not found: false
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << box_boolean(false)
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+
+          done_label = new_label("hash_any_done")
+          insts << { "op" => "goto", "target" => done_label }
+          insts << { "op" => "label", "name" => found_label }
+          insts << box_boolean(true)
+          insts << store_instruction(result_var, :value)
+          insts << { "op" => "label", "name" => done_label }
+        else
+          insts << { "op" => "label", "name" => found_label }
+        end
+        insts
+      end
+
+      # Hash#all? inline
+      def generate_hash_all_inline(receiver, block_def, result_var)
+        insts, _hash_var, _iter_var, loop_label, end_label, counter = setup_hash_iteration(receiver, block_def)
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        not_all_label = new_label("hash_all_fail")
+        if last_var
+          insts.concat(load_and_check_falsy(last_var, not_all_label))
+        end
+
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        # All matched: true
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << box_boolean(true)
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+
+          done_label = new_label("hash_all_done")
+          insts << { "op" => "goto", "target" => done_label }
+          insts << { "op" => "label", "name" => not_all_label }
+          insts << box_boolean(false)
+          insts << store_instruction(result_var, :value)
+          insts << { "op" => "label", "name" => done_label }
+        else
+          insts << { "op" => "label", "name" => not_all_label }
+        end
+        insts
+      end
+
+      # Hash#none? inline
+      def generate_hash_none_inline(receiver, block_def, result_var)
+        insts, _hash_var, _iter_var, loop_label, end_label, counter = setup_hash_iteration(receiver, block_def)
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        found_label = new_label("hash_none_fail")
+        if last_var
+          insts.concat(load_and_check_truthy(last_var, found_label))
+        end
+
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << box_boolean(true)
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+
+          done_label = new_label("hash_none_done")
+          insts << { "op" => "goto", "target" => done_label }
+          insts << { "op" => "label", "name" => found_label }
+          insts << box_boolean(false)
+          insts << store_instruction(result_var, :value)
+          insts << { "op" => "label", "name" => done_label }
+        else
+          insts << { "op" => "label", "name" => found_label }
+        end
+        insts
+      end
+
+      # Hash#each_with_object inline
+      def generate_hash_each_with_object_inline(receiver, args, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        counter = @block_counter
+        instructions = []
+
+        # Initialize memo from first arg
+        memo_var = "__hash_ewo_memo_#{counter}"
+        ensure_slot(memo_var, :value)
+        instructions.concat(load_value(args.first, :value))
+        instructions << store_instruction(memo_var, :value)
+        @variable_types[memo_var] = :value
+
+        # Store hash
+        hash_var = "__hash_ewo_h_#{counter}"
+        recv_type = extract_var_name(receiver) ? (@variable_types[extract_var_name(receiver)] || :value) : :value
+        hash_type = recv_type == :hash ? :hash : :value
+        ensure_slot(hash_var, hash_type)
+        instructions.concat(load_value(receiver, hash_type))
+        instructions << store_instruction(hash_var, hash_type)
+        @variable_types[hash_var] = hash_type
+
+        # Get iterator
+        iter_var = "__hash_ewo_it_#{counter}"
+        ensure_slot(iter_var, :value)
+        instructions << load_instruction(hash_var, hash_type)
+        instructions << { "op" => "checkcast", "type" => KHASH_CLASS } unless hash_type == :hash
+        instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                          "name" => "entrySet", "descriptor" => "()Ljava/util/Set;" }
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Set",
+                          "name" => "iterator", "descriptor" => "()Ljava/util/Iterator;" }
+        instructions << store_instruction(iter_var, :value)
+        @variable_types[iter_var] = :value
+
+        loop_label = new_label("hash_ewo_loop")
+        end_label = new_label("hash_ewo_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(iter_var, :value)
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Iterator",
+                          "name" => "hasNext", "descriptor" => "()Z" }
+        instructions << { "op" => "ifeq", "target" => end_label }
+
+        instructions << load_instruction(iter_var, :value)
+        instructions << { "op" => "invokeinterface", "owner" => "java/util/Iterator",
+                          "name" => "next", "descriptor" => "()Ljava/lang/Object;" }
+        instructions << { "op" => "checkcast", "type" => "java/util/Map$Entry" }
+
+        # Block params: each_with_object yields |pair, memo| — pair is [k,v] array
+        # The block may have 1 or 2 params:
+        # 2 params: pair, memo
+        if block_def.params.size >= 2
+          pair_param = block_def.params[0]
+          memo_param = block_def.params[1]
+
+          pair_var = pair_param.name.to_s
+          memo_param_var = memo_param.name.to_s
+
+          # Build pair as KArray [key, value]
+          ensure_slot(pair_var, :value)
+          entry_tmp_k = "__ewo_ek_#{counter}"
+          entry_tmp_v = "__ewo_ev_#{counter}"
+          ensure_slot(entry_tmp_k, :value)
+          ensure_slot(entry_tmp_v, :value)
+
+          # Stack: [Entry]. Dup to get key, then use original for value
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getKey", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction(entry_tmp_k, :value)
+          @variable_types[entry_tmp_k] = :value
+          # Stack: [Entry]. Use for value
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map$Entry",
+                            "name" => "getValue", "descriptor" => "()Ljava/lang/Object;" }
+          instructions << store_instruction(entry_tmp_v, :value)
+          @variable_types[entry_tmp_v] = :value
+
+          # Create pair KArray
+          instructions << { "op" => "new", "type" => KARRAY_CLASS }
+          instructions << { "op" => "dup" }
+          instructions << { "op" => "invokespecial", "owner" => KARRAY_CLASS,
+                            "name" => "<init>", "descriptor" => "()V" }
+          instructions << store_instruction(pair_var, :value)
+          @variable_types[pair_var] = :value
+
+          instructions << load_instruction(pair_var, :value)
+          instructions << load_instruction(entry_tmp_k, :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                            "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "pop" }
+          instructions << load_instruction(pair_var, :value)
+          instructions << load_instruction(entry_tmp_v, :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/List",
+                            "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "pop" }
+
+          # Set memo param to current memo_var
+          ensure_slot(memo_param_var, :value)
+          instructions << load_instruction(memo_var, :value)
+          instructions << store_instruction(memo_param_var, :value)
+          @variable_types[memo_param_var] = :value
+        else
+          # 1-param block: pop the entry
+          instructions << { "op" => "pop" }
+        end
+
+        # Inline block body
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            instructions.concat(generate_instruction(block_inst))
+          end
+        end
+
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << load_instruction(memo_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+        instructions
+      end
+
+      # Hash#min_by / Hash#max_by inline
+      def generate_hash_min_max_by_inline(receiver, block_def, result_var, mode)
+        insts, _hash_var, _iter_var, loop_label, end_label, counter = setup_hash_iteration(receiver, block_def)
+
+        # Best value and best pair tracking
+        best_key_var = "__hash_mmb_bk_#{counter}"
+        best_val_var = "__hash_mmb_bv_#{counter}"
+        best_score_var = "__hash_mmb_bs_#{counter}"
+        first_var = "__hash_mmb_first_#{counter}"
+        ensure_slot(best_key_var, :value)
+        ensure_slot(best_val_var, :value)
+        ensure_slot(best_score_var, :value)
+        ensure_slot(first_var, :value)
+        @variable_types[best_key_var] = :value
+        @variable_types[best_val_var] = :value
+        @variable_types[best_score_var] = :value
+        @variable_types[first_var] = :value
+
+        # Initialize first=true
+        pre_insts = []
+        pre_insts << box_boolean(true)
+        pre_insts << store_instruction(first_var, :value)
+        pre_insts << { "op" => "aconst_null" }
+        pre_insts << store_instruction(best_key_var, :value)
+        pre_insts << { "op" => "aconst_null" }
+        pre_insts << store_instruction(best_val_var, :value)
+        pre_insts << { "op" => "aconst_null" }
+        pre_insts << store_instruction(best_score_var, :value)
+        insts = pre_insts + insts
+
+        # Save current key/value for possible assignment
+        curr_key_var = block_def.params.size >= 2 ? block_def.params[0].name.to_s : "__hpk_#{counter}"
+        curr_val_var = block_def.params.size >= 2 ? block_def.params[1].name.to_s : "__hpv_#{counter}"
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Compare with best
+        skip_label = new_label("hash_mmb_skip")
+        if last_var
+          # if first || score <cmp> best_score
+          update_label = new_label("hash_mmb_update")
+          insts.concat(load_and_check_truthy(first_var, update_label))
+
+          # Compare scores using Comparable
+          insts << load_instruction(last_var, @variable_types[last_var] || :value)
+          insts.concat(box_if_needed(last_var))
+          insts << { "op" => "checkcast", "type" => "java/lang/Comparable" }
+          insts << load_instruction(best_score_var, :value)
+          insts << { "op" => "invokeinterface", "owner" => "java/lang/Comparable",
+                     "name" => "compareTo", "descriptor" => "(Ljava/lang/Object;)I" }
+          if mode == :min
+            insts << { "op" => "ifge", "target" => skip_label }
+          else
+            insts << { "op" => "ifle", "target" => skip_label }
+          end
+
+          insts << { "op" => "label", "name" => update_label }
+          # Update best
+          insts << load_instruction(last_var, @variable_types[last_var] || :value)
+          insts.concat(box_if_needed(last_var))
+          insts << store_instruction(best_score_var, :value)
+          insts << load_instruction(curr_key_var, :value)
+          insts << store_instruction(best_key_var, :value)
+          insts << load_instruction(curr_val_var, :value)
+          insts << store_instruction(best_val_var, :value)
+          insts << box_boolean(false)
+          insts << store_instruction(first_var, :value)
+        end
+
+        insts << { "op" => "label", "name" => skip_label } if last_var
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        # Build result pair [best_key, best_val]
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << { "op" => "new", "type" => KARRAY_CLASS }
+          insts << { "op" => "dup" }
+          insts << { "op" => "invokespecial", "owner" => KARRAY_CLASS,
+                     "name" => "<init>", "descriptor" => "()V" }
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+
+          insts << load_instruction(result_var, :value)
+          insts << load_instruction(best_key_var, :value)
+          insts << { "op" => "invokeinterface", "owner" => "java/util/List",
+                     "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          insts << { "op" => "pop" }
+
+          insts << load_instruction(result_var, :value)
+          insts << load_instruction(best_val_var, :value)
+          insts << { "op" => "invokeinterface", "owner" => "java/util/List",
+                     "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          insts << { "op" => "pop" }
+        end
+        insts
+      end
+
+      # Hash#sort_by inline — convert to pairs, collect scores, sort via KHash.sortPairsByScores
+      def generate_hash_sort_by_inline(receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        counter = @block_counter
+        insts = []
+
+        # Convert hash to array of pairs via toArray_
+        pairs_var = "__hash_sb_pairs_#{counter}"
+        ensure_slot(pairs_var, :value)
+        @variable_types[pairs_var] = :value
+        insts.concat(load_value(receiver, :value))
+        insts << { "op" => "checkcast", "type" => KHASH_CLASS }
+        insts << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                   "name" => "toArray_", "descriptor" => "()Lkonpeito/runtime/KArray;" }
+        insts << store_instruction(pairs_var, :value)
+
+        # Collect scores into a parallel KArray
+        scores_var = "__hash_sb_scores_#{counter}"
+        ensure_slot(scores_var, :value)
+        @variable_types[scores_var] = :value
+        insts << { "op" => "new", "type" => KARRAY_CLASS }
+        insts << { "op" => "dup" }
+        insts << { "op" => "invokespecial", "owner" => KARRAY_CLASS,
+                   "name" => "<init>", "descriptor" => "()V" }
+        insts << store_instruction(scores_var, :value)
+
+        # Iterate over pairs to compute scores
+        idx_var = "__hash_sb_idx_#{counter}"
+        len_var = "__hash_sb_len_#{counter}"
+        ensure_slot(idx_var, :long)
+        ensure_slot(len_var, :long)
+        @variable_types[idx_var] = :long
+        @variable_types[len_var] = :long
+
+        insts << { "op" => "lconst_0" }
+        insts << store_instruction(idx_var, :long)
+        insts << load_instruction(pairs_var, :value)
+        insts << { "op" => "invokeinterface", "owner" => "java/util/List",
+                   "name" => "size", "descriptor" => "()I" }
+        insts << { "op" => "i2l" }
+        insts << store_instruction(len_var, :long)
+
+        loop_label = new_label("hash_sb_loop")
+        end_label = new_label("hash_sb_end")
+
+        insts << { "op" => "label", "name" => loop_label }
+        insts << load_instruction(idx_var, :long)
+        insts << load_instruction(len_var, :long)
+        insts << { "op" => "lcmp" }
+        insts << { "op" => "ifge", "target" => end_label }
+
+        # Get pair at idx → block param
+        pair_param = block_def.params[0]
+        pair_var = pair_param ? pair_param.name.to_s : "__hash_sb_pair_#{counter}"
+        ensure_slot(pair_var, :value)
+        @variable_types[pair_var] = :value
+
+        insts << load_instruction(pairs_var, :value)
+        insts << load_instruction(idx_var, :long)
+        insts << { "op" => "l2i" }
+        insts << { "op" => "invokeinterface", "owner" => "java/util/List",
+                   "name" => "get", "descriptor" => "(I)Ljava/lang/Object;" }
+        insts << store_instruction(pair_var, :value)
+
+        # Inline block body
+        last_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |block_inst|
+            insts.concat(generate_instruction(block_inst))
+            last_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+          end
+        end
+
+        # Add score to scores array
+        if last_var
+          insts << load_instruction(scores_var, :value)
+          insts << load_instruction(last_var, @variable_types[last_var] || :value)
+          insts.concat(box_if_needed(last_var))
+          insts << { "op" => "invokeinterface", "owner" => "java/util/List",
+                     "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
+          insts << { "op" => "pop" }
+        end
+
+        insts << load_instruction(idx_var, :long)
+        insts << { "op" => "lconst_1" }
+        insts << { "op" => "ladd" }
+        insts << store_instruction(idx_var, :long)
+        insts << { "op" => "goto", "target" => loop_label }
+        insts << { "op" => "label", "name" => end_label }
+
+        # Sort pairs by scores using Java-side helper
+        insts << load_instruction(pairs_var, :value)
+        insts << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        insts << load_instruction(scores_var, :value)
+        insts << { "op" => "checkcast", "type" => KARRAY_CLASS }
+        insts << { "op" => "invokestatic", "owner" => KHASH_CLASS,
+                   "name" => "sortPairsByScores",
+                   "descriptor" => "(Lkonpeito/runtime/KArray;Lkonpeito/runtime/KArray;)V" }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          insts << load_instruction(pairs_var, :value)
+          insts << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+        insts
+      end
+
+      # Hash#to_a — returns KArray of [key, value] pairs
+      def generate_hash_to_a(receiver, result_var)
+        instructions = []
+        instructions.concat(load_khash_receiver(receiver))
+        instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                          "name" => "toArray_",
+                          "descriptor" => "()Lkonpeito/runtime/KArray;" }
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
         end
         instructions
       end
@@ -11571,17 +12307,151 @@ module Konpeito
         instructions
       end
 
+      # Integer#upto(limit) inline: n.upto(m) { |i| ... }
+      def generate_upto_inline(inst, receiver, limit_arg, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+
+        # Load start (receiver) as i64
+        start_var = "__upto_start_#{@block_counter}"
+        ensure_slot(start_var, :i64)
+        recv_type = infer_loaded_type(receiver) || :i64
+        instructions.concat(load_value(receiver, recv_type))
+        instructions.concat(convert_for_store(:i64, recv_type)) if recv_type != :i64
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+
+        # Load limit as i64
+        limit_var = "__upto_limit_#{@block_counter}"
+        ensure_slot(limit_var, :i64)
+        limit_type = infer_loaded_type(limit_arg) || :i64
+        instructions.concat(load_value(limit_arg, limit_type))
+        instructions.concat(convert_for_store(:i64, limit_type)) if limit_type != :i64
+        instructions << store_instruction(limit_var, :i64)
+        @variable_types[limit_var] = :i64
+
+        # Counter = start
+        block_param = block_def.params.first
+        counter_var = block_param ? block_param.name.to_s : "__upto_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("upto_loop")
+        end_label = new_label("upto_end")
+
+        # Loop condition: counter <= limit
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(limit_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => "ifgt", "target" => end_label }
+
+        # Inline block body
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each { |bi| instructions.concat(generate_instruction(bi)) }
+        end
+
+        # Increment counter
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        # upto returns nil
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << { "op" => "aconst_null" }
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+
+        instructions
+      end
+
+      # Integer#downto(limit) inline: n.downto(m) { |i| ... }
+      def generate_downto_inline(inst, receiver, limit_arg, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+
+        # Load start (receiver) as i64
+        start_var = "__downto_start_#{@block_counter}"
+        ensure_slot(start_var, :i64)
+        recv_type = infer_loaded_type(receiver) || :i64
+        instructions.concat(load_value(receiver, recv_type))
+        instructions.concat(convert_for_store(:i64, recv_type)) if recv_type != :i64
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+
+        # Load limit as i64
+        limit_var = "__downto_limit_#{@block_counter}"
+        ensure_slot(limit_var, :i64)
+        limit_type = infer_loaded_type(limit_arg) || :i64
+        instructions.concat(load_value(limit_arg, limit_type))
+        instructions.concat(convert_for_store(:i64, limit_type)) if limit_type != :i64
+        instructions << store_instruction(limit_var, :i64)
+        @variable_types[limit_var] = :i64
+
+        # Counter = start
+        block_param = block_def.params.first
+        counter_var = block_param ? block_param.name.to_s : "__downto_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("downto_loop")
+        end_label = new_label("downto_end")
+
+        # Loop condition: counter >= limit
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(limit_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => "iflt", "target" => end_label }
+
+        # Inline block body
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each { |bi| instructions.concat(generate_instruction(bi)) }
+        end
+
+        # Decrement counter
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "lsub" }
+        instructions << store_instruction(counter_var, :i64)
+
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        # downto returns nil
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << { "op" => "aconst_null" }
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+
+        instructions
+      end
+
       # ========================================================================
       # Range Inline Iteration (JVM)
       # ========================================================================
 
       # Check if a method call can be inlined as a Range loop
       def can_jvm_inline_range_loop?(inst)
-        return false unless inst.block
-        return false unless inst.block.params.size >= 1
         receiver = inst.receiver
-        return true if receiver.is_a?(HIR::RangeLit)
-        false
+        return false unless receiver.is_a?(HIR::RangeLit)
+        # Block-less methods (min, max, sum) are allowed
+        return true unless inst.block
+        return inst.block.params.size >= 1
       end
 
       # Extract Range info: [left, right, exclusive] from a RangeLit receiver
@@ -11979,6 +12849,419 @@ module Konpeito
           instructions << load_instruction(acc_var, acc_type)
           instructions << store_instruction(result_var, acc_type)
           @variable_types[result_var] = acc_type
+        end
+        instructions
+      end
+
+      # Range#any? inline: (start..end).any? { |i| ... }
+      def generate_range_any_inline(inst, receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        left, right, exclusive = range_info
+
+        start_var = "__rany_start_#{@block_counter}"
+        end_var = "__rany_end_#{@block_counter}"
+        ensure_slot(start_var, :i64); ensure_slot(end_var, :i64)
+        instructions.concat(load_value(left, :i64))
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+        instructions.concat(load_value(right, :i64))
+        instructions << store_instruction(end_var, :i64)
+        @variable_types[end_var] = :i64
+
+        block_param = block_def.params.first
+        counter_var = block_param ? block_param.name.to_s : "__rany_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("rany_loop")
+        true_label = new_label("rany_true")
+        end_label = new_label("rany_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(end_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => (exclusive ? "ifge" : "ifgt"), "target" => end_label }
+
+        # Inline block body
+        last_result_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |bi|
+            instructions.concat(generate_instruction(bi))
+            last_result_var = bi.result_var if bi.respond_to?(:result_var) && bi.result_var
+          end
+        end
+
+        # Check truthiness — short-circuit on true
+        if last_result_var
+          instructions.concat(load_and_check_truthy(last_result_var, true_label))
+        end
+
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+        instructions << { "op" => "goto", "target" => loop_label }
+
+        # End: false (no element matched)
+        instructions << { "op" => "label", "name" => end_label }
+        ensure_slot(result_var, :i8) if result_var
+        instructions << { "op" => "iconst", "value" => 0 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+          @variable_types[result_var] = :i8
+        else
+          instructions << { "op" => "pop" }
+        end
+        done_label = new_label("rany_done")
+        instructions << { "op" => "goto", "target" => done_label }
+
+        # True: found a match
+        instructions << { "op" => "label", "name" => true_label }
+        instructions << { "op" => "iconst", "value" => 1 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions << { "op" => "label", "name" => done_label }
+        instructions
+      end
+
+      # Range#all? inline: (start..end).all? { |i| ... }
+      def generate_range_all_inline(inst, receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        left, right, exclusive = range_info
+
+        start_var = "__rall_start_#{@block_counter}"
+        end_var = "__rall_end_#{@block_counter}"
+        ensure_slot(start_var, :i64); ensure_slot(end_var, :i64)
+        instructions.concat(load_value(left, :i64))
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+        instructions.concat(load_value(right, :i64))
+        instructions << store_instruction(end_var, :i64)
+        @variable_types[end_var] = :i64
+
+        block_param = block_def.params.first
+        counter_var = block_param ? block_param.name.to_s : "__rall_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("rall_loop")
+        false_label = new_label("rall_false")
+        end_label = new_label("rall_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(end_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => (exclusive ? "ifge" : "ifgt"), "target" => end_label }
+
+        last_result_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |bi|
+            instructions.concat(generate_instruction(bi))
+            last_result_var = bi.result_var if bi.respond_to?(:result_var) && bi.result_var
+          end
+        end
+
+        # Check truthiness — short-circuit on false
+        if last_result_var
+          instructions.concat(load_and_check_falsy(last_result_var, false_label))
+        end
+
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+        instructions << { "op" => "goto", "target" => loop_label }
+
+        # End: true (all matched)
+        instructions << { "op" => "label", "name" => end_label }
+        ensure_slot(result_var, :i8) if result_var
+        instructions << { "op" => "iconst", "value" => 1 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+          @variable_types[result_var] = :i8
+        else
+          instructions << { "op" => "pop" }
+        end
+        done_label = new_label("rall_done")
+        instructions << { "op" => "goto", "target" => done_label }
+
+        # False: found a non-match
+        instructions << { "op" => "label", "name" => false_label }
+        instructions << { "op" => "iconst", "value" => 0 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions << { "op" => "label", "name" => done_label }
+        instructions
+      end
+
+      # Range#none? inline: (start..end).none? { |i| ... }
+      def generate_range_none_inline(inst, receiver, block_def, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        left, right, exclusive = range_info
+
+        start_var = "__rnone_start_#{@block_counter}"
+        end_var = "__rnone_end_#{@block_counter}"
+        ensure_slot(start_var, :i64); ensure_slot(end_var, :i64)
+        instructions.concat(load_value(left, :i64))
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+        instructions.concat(load_value(right, :i64))
+        instructions << store_instruction(end_var, :i64)
+        @variable_types[end_var] = :i64
+
+        block_param = block_def.params.first
+        counter_var = block_param ? block_param.name.to_s : "__rnone_i_#{@block_counter}"
+        ensure_slot(counter_var, :i64)
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("rnone_loop")
+        false_label = new_label("rnone_false")
+        end_label = new_label("rnone_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(end_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => (exclusive ? "ifge" : "ifgt"), "target" => end_label }
+
+        last_result_var = nil
+        block_def.body.each do |bb|
+          @current_block_label = bb.label.to_s
+          bb.instructions.each do |bi|
+            instructions.concat(generate_instruction(bi))
+            last_result_var = bi.result_var if bi.respond_to?(:result_var) && bi.result_var
+          end
+        end
+
+        # Check truthiness — short-circuit on true (found a match → none? is false)
+        if last_result_var
+          instructions.concat(load_and_check_truthy(last_result_var, false_label))
+        end
+
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+        instructions << { "op" => "goto", "target" => loop_label }
+
+        # End: true (no match found)
+        instructions << { "op" => "label", "name" => end_label }
+        ensure_slot(result_var, :i8) if result_var
+        instructions << { "op" => "iconst", "value" => 1 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+          @variable_types[result_var] = :i8
+        else
+          instructions << { "op" => "pop" }
+        end
+        done_label = new_label("rnone_done")
+        instructions << { "op" => "goto", "target" => done_label }
+
+        instructions << { "op" => "label", "name" => false_label }
+        instructions << { "op" => "iconst", "value" => 0 }
+        if result_var
+          instructions << store_instruction(result_var, :i8)
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions << { "op" => "label", "name" => done_label }
+        instructions
+      end
+
+      # Helper: load a result variable and jump to target if truthy
+      def load_and_check_truthy(result_var, target_label)
+        instructions = []
+        rt = @variable_types[result_var] || :value
+        if rt == :i8
+          instructions << load_instruction(result_var, :i8)
+          instructions << { "op" => "ifne", "target" => target_label }
+        elsif rt == :i64
+          instructions << load_instruction(result_var, :i64)
+          instructions << { "op" => "lconst_0" }
+          instructions << { "op" => "lcmp" }
+          instructions << { "op" => "ifne", "target" => target_label }
+        else
+          instructions << load_instruction(result_var, :value)
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "ifne", "target" => target_label }
+        end
+        instructions
+      end
+
+      # Helper: load a result variable and jump to target if falsy
+      def load_and_check_falsy(result_var, target_label)
+        instructions = []
+        rt = @variable_types[result_var] || :value
+        if rt == :i8
+          instructions << load_instruction(result_var, :i8)
+          instructions << { "op" => "ifeq", "target" => target_label }
+        elsif rt == :i64
+          instructions << load_instruction(result_var, :i64)
+          instructions << { "op" => "lconst_0" }
+          instructions << { "op" => "lcmp" }
+          instructions << { "op" => "ifeq", "target" => target_label }
+        else
+          instructions << load_instruction(result_var, :value)
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "ifeq", "target" => target_label }
+        end
+        instructions
+      end
+
+      # Helper: emit instructions to push a boxed Boolean on the stack
+      def box_boolean(value)
+        if value
+          { "op" => "getstatic", "owner" => "java/lang/Boolean", "name" => "TRUE",
+            "descriptor" => "Ljava/lang/Boolean;" }
+        else
+          { "op" => "getstatic", "owner" => "java/lang/Boolean", "name" => "FALSE",
+            "descriptor" => "Ljava/lang/Boolean;" }
+        end
+      end
+
+      # Helper: box a variable value if it's a primitive type, leave Object as-is.
+      # Returns an array of instructions (may be empty for already-boxed values).
+      def box_if_needed(var_name)
+        vt = @variable_types[var_name]
+        case vt
+        when :i64
+          [{ "op" => "invokestatic", "owner" => "java/lang/Long",
+             "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }]
+        when :double
+          [{ "op" => "invokestatic", "owner" => "java/lang/Double",
+             "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }]
+        when :i8
+          [{ "op" => "invokestatic", "owner" => "java/lang/Boolean",
+             "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }]
+        else
+          [] # Already Object — no boxing needed
+        end
+      end
+
+      # Range#min inline (no block): (start..end).min → start
+      def generate_range_min_inline(inst, receiver, result_var)
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        left, _right, _exclusive = range_info
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions.concat(load_value(left, :i64))
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
+        end
+        instructions
+      end
+
+      # Range#max inline (no block): (start..end).max → end (for inclusive)
+      def generate_range_max_inline(inst, receiver, result_var)
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        _left, right, exclusive = range_info
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions.concat(load_value(right, :i64))
+          if exclusive
+            # exclusive range: max = end - 1
+            instructions << { "op" => "lconst_1" }
+            instructions << { "op" => "lsub" }
+          end
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
+        end
+        instructions
+      end
+
+      # Range#sum inline (no block): (start..end).sum → arithmetic sum
+      def generate_range_sum_inline(inst, receiver, result_var)
+        @block_counter = (@block_counter || 0) + 1
+        instructions = []
+        range_info = get_jvm_range_info(inst)
+        return generate_static_call(inst, inst.method_name.to_s, inst.args || [], result_var) unless range_info
+        left, right, exclusive = range_info
+
+        start_var = "__rsum_start_#{@block_counter}"
+        end_var = "__rsum_end_#{@block_counter}"
+        sum_var = "__rsum_acc_#{@block_counter}"
+        counter_var = "__rsum_i_#{@block_counter}"
+
+        ensure_slot(start_var, :i64); ensure_slot(end_var, :i64)
+        ensure_slot(sum_var, :i64); ensure_slot(counter_var, :i64)
+
+        instructions.concat(load_value(left, :i64))
+        instructions << store_instruction(start_var, :i64)
+        @variable_types[start_var] = :i64
+        instructions.concat(load_value(right, :i64))
+        instructions << store_instruction(end_var, :i64)
+        @variable_types[end_var] = :i64
+
+        # sum = 0
+        instructions << { "op" => "lconst_0" }
+        instructions << store_instruction(sum_var, :i64)
+        @variable_types[sum_var] = :i64
+
+        # counter = start
+        instructions << load_instruction(start_var, :i64)
+        instructions << store_instruction(counter_var, :i64)
+        @variable_types[counter_var] = :i64
+
+        loop_label = new_label("rsum_loop")
+        end_label = new_label("rsum_end")
+
+        instructions << { "op" => "label", "name" => loop_label }
+        instructions << load_instruction(counter_var, :i64)
+        instructions << load_instruction(end_var, :i64)
+        instructions << { "op" => "lcmp" }
+        instructions << { "op" => (exclusive ? "ifge" : "ifgt"), "target" => end_label }
+
+        # sum += counter
+        instructions << load_instruction(sum_var, :i64)
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(sum_var, :i64)
+
+        # counter++
+        instructions << load_instruction(counter_var, :i64)
+        instructions << { "op" => "lconst_1" }
+        instructions << { "op" => "ladd" }
+        instructions << store_instruction(counter_var, :i64)
+
+        instructions << { "op" => "goto", "target" => loop_label }
+        instructions << { "op" => "label", "name" => end_label }
+
+        if result_var
+          ensure_slot(result_var, :i64)
+          instructions << load_instruction(sum_var, :i64)
+          instructions << store_instruction(result_var, :i64)
+          @variable_types[result_var] = :i64
         end
         instructions
       end

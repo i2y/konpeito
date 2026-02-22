@@ -316,17 +316,20 @@ module Konpeito
 
           # Prepend modules (must come before include to maintain proper method resolution order)
           class_def.prepended_modules.each do |module_name|
-            lines << "    rb_prepend_module(#{class_var}, m#{module_name});"
+            module_expr = resolve_module_c_expr(module_name)
+            lines << "    rb_prepend_module(#{class_var}, #{module_expr});"
           end
 
           # Include modules
           class_def.included_modules.each do |module_name|
-            lines << "    rb_include_module(#{class_var}, m#{module_name});"
+            module_expr = resolve_module_c_expr(module_name)
+            lines << "    rb_include_module(#{class_var}, #{module_expr});"
           end
 
           # Extend modules (adds module methods as singleton methods on the class)
           class_def.extended_modules.each do |module_name|
-            lines << "    rb_extend_object(#{class_var}, m#{module_name});"
+            module_expr = resolve_module_c_expr(module_name)
+            lines << "    rb_extend_object(#{class_var}, #{module_expr});"
           end
 
           class_def.method_names.each do |method_name|
@@ -1071,6 +1074,25 @@ module Konpeito
         "Struct" => "rb_cStruct",
         "Comparable" => "rb_mComparable",
       }.freeze
+
+      # Known Ruby stdlib modules that can be included/extended/prepended
+      KNOWN_MODULE_MAP = {
+        "Comparable" => "rb_mComparable",
+        "Enumerable" => "rb_mEnumerable",
+        "Kernel" => "rb_mKernel",
+        "Math" => "rb_mMath",
+      }.freeze
+
+      # Resolve a module name to its C expression for include/extend/prepend
+      def resolve_module_c_expr(module_name)
+        # Check known stdlib modules first
+        if KNOWN_MODULE_MAP[module_name]
+          return KNOWN_MODULE_MAP[module_name]
+        end
+
+        # User-defined module (defined earlier in Init function as mModuleName)
+        "m#{module_name}"
+      end
 
       def resolve_superclass_c_expr(superclass_name, non_native_classes)
         return "rb_cObject" unless superclass_name

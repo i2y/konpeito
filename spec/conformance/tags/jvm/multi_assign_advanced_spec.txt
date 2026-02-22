@@ -1,2 +1,2 @@
-# JVM: Splat in multi-assign (*rest) not supported, causes NullPointerException
-RUNTIME_ERROR
+# JVM: exit code 1 (compilation error, same as native)
+COMPILATION_ERROR

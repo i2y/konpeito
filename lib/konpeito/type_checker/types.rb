@@ -145,13 +145,13 @@ module Konpeito
 
         # Basic Ruby class hierarchy
         CLASS_HIERARCHY = {
-          Integer: [:Numeric, :Object, :BasicObject],
-          Float: [:Numeric, :Object, :BasicObject],
-          Rational: [:Numeric, :Object, :BasicObject],
+          Integer: [:Numeric, :Comparable, :Object, :BasicObject],
+          Float: [:Numeric, :Comparable, :Object, :BasicObject],
+          Rational: [:Numeric, :Comparable, :Object, :BasicObject],
           Complex: [:Numeric, :Object, :BasicObject],
-          Numeric: [:Object, :BasicObject],
-          String: [:Object, :BasicObject],
-          Symbol: [:Object, :BasicObject],
+          Numeric: [:Comparable, :Object, :BasicObject],
+          String: [:Comparable, :Object, :BasicObject],
+          Symbol: [:Comparable, :Object, :BasicObject],
           Array: [:Object, :BasicObject],
           Hash: [:Object, :BasicObject],
           TrueClass: [:Object, :BasicObject],

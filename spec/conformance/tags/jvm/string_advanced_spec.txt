@@ -1,2 +1,2 @@
-# JVM: Compilation fails (ArrayIndexOutOfBoundsException in code generator)
-COMPILATION_ERROR
+# JVM: 26 pass, 3 fail (diff 3)
+# Previously COMPILATION_ERROR, now mostly working with 3 remaining failures

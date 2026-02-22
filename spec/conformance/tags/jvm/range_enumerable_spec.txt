@@ -1,2 +1,0 @@
-# JVM: Range enumerable methods (any?, all?, etc.) not implemented in runtime
-RUNTIME_ERROR

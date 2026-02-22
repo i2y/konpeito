@@ -116,6 +116,34 @@ public class KHash<K, V> implements Map<K, V> {
         return new KArray<>(data.values());
     }
 
+    /** Sort pairs by scores — used by JVM codegen for sort_by.
+     *  pairs and scores are parallel KArrays. Sorts both in-place by scores ascending. */
+    @SuppressWarnings("unchecked")
+    public static void sortPairsByScores(KArray<Object> pairs, KArray<Object> scores) {
+        int n = pairs.size();
+        // Selection sort — simple and O(n²) is fine for small hashes
+        for (int i = 0; i < n - 1; i++) {
+            int minIdx = i;
+            for (int j = i + 1; j < n; j++) {
+                Comparable<Object> sj = (Comparable<Object>) scores.get(j);
+                Comparable<Object> sm = (Comparable<Object>) scores.get(minIdx);
+                if (sj.compareTo((Object) sm) < 0) {
+                    minIdx = j;
+                }
+            }
+            if (minIdx != i) {
+                // Swap pairs
+                Object tmp = pairs.get(i);
+                pairs.set(i, pairs.get(minIdx));
+                pairs.set(minIdx, tmp);
+                // Swap scores
+                Object stmp = scores.get(i);
+                scores.set(i, scores.get(minIdx));
+                scores.set(minIdx, stmp);
+            }
+        }
+    }
+
     // ========================================================================
     // Map<K,V> interface delegation
     // ========================================================================

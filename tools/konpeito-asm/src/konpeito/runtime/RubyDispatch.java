@@ -221,6 +221,29 @@ public class RubyDispatch {
             return arr[idx];
         }
 
+        // Comparable methods: between?, clamp — delegate to <=> if available
+        if (methodName.equals("between_q") && methodArgs.length == 2) {
+            Method spaceship = findMethod(clazz, "op_cmp", 1);
+            if (spaceship != null) {
+                spaceship.setAccessible(true);
+                long cmpLo = ((Number) spaceship.invoke(receiver, methodArgs[0])).longValue();
+                long cmpHi = ((Number) spaceship.invoke(receiver, methodArgs[1])).longValue();
+                return Boolean.valueOf(cmpLo >= 0 && cmpHi <= 0);
+            }
+        }
+
+        if (methodName.equals("clamp") && methodArgs.length == 2) {
+            Method spaceship = findMethod(clazz, "op_cmp", 1);
+            if (spaceship != null) {
+                spaceship.setAccessible(true);
+                long cmpLo = ((Number) spaceship.invoke(receiver, methodArgs[0])).longValue();
+                if (cmpLo < 0) return methodArgs[0]; // below min → return min
+                long cmpHi = ((Number) spaceship.invoke(receiver, methodArgs[1])).longValue();
+                if (cmpHi > 0) return methodArgs[1]; // above max → return max
+                return receiver; // in range → return self
+            }
+        }
+
         throw new NoSuchMethodError(
             clazz.getName() + "." + methodName + " (arity " + methodArgs.length + ")");
     }
@@ -334,6 +357,7 @@ public class RubyDispatch {
                     case "op_xor": return Long.valueOf(lv ^ rv);
                     case "op_lshift": return Long.valueOf(lv << rv);
                     case "op_rshift": return Long.valueOf(lv >> rv);
+                    case "op_aref": return Long.valueOf((lv >> rv) & 1);
                     case "op_eq": return Boolean.valueOf(lv == rv);
                     case "op_neq": return Boolean.valueOf(lv != rv);
                     case "op_lt": return Boolean.valueOf(lv < rv);
@@ -369,6 +393,17 @@ public class RubyDispatch {
                     case "integer_q": return Boolean.TRUE;
                     case "op_uminus": return Long.valueOf(-lv);
                     case "op_uplus": return receiver;
+                    case "digits": {
+                        // Integer#digits — returns array of digits in reverse order (base 10)
+                        KArray<Object> result = new KArray<>();
+                        long val = Math.abs(lv);
+                        if (val == 0) { result.add(0L); return result; }
+                        while (val > 0) {
+                            result.add(Long.valueOf(val % 10));
+                            val /= 10;
+                        }
+                        return result;
+                    }
                 }
             }
         }
@@ -2114,7 +2149,7 @@ public class RubyDispatch {
     /**
      * Ruby truthiness check: everything is truthy except null (nil) and false.
      */
-    private static boolean isTruthy(Object value) {
+    public static boolean isTruthy(Object value) {
         if (value == null) return false;
         if (value instanceof Boolean) return (Boolean) value;
         return true;

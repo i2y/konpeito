@@ -1,2 +1,0 @@
-# JVM: inherited class method from singleton class returns empty string
-inherited class method from singleton class

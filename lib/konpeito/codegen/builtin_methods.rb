@@ -69,8 +69,10 @@ module Konpeito
         :+ => { c_func: "rb_ary_plus", arity: 1, return_type: :Array, conv: :simple },
         concat: { c_func: "rb_ary_concat", arity: 1, return_type: :Array, conv: :simple },
 
-        # Array transformation - exported
-        reverse: { c_func: "rb_ary_reverse", arity: 0, return_type: :Array, conv: :simple },
+        # Array transformation
+        # Note: rb_ary_reverse is in-place mutation, so we use rb_funcallv fallback
+        # to get Ruby's Array#reverse behavior (returns new array without modifying original)
+        # reverse: removed from builtin_methods - falls back to rb_funcallv
         sort: { c_func: "rb_ary_sort", arity: 0, return_type: :Array, conv: :simple },
 
         # Array query with args - exported

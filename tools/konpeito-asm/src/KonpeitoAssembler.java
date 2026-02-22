@@ -206,7 +206,12 @@ public class KonpeitoAssembler {
             emitInstruction(mv, inst, labels);
         }
 
-        mv.visitMaxs(0, 0); // ASM COMPUTE_MAXS handles this
+        try {
+            mv.visitMaxs(0, 0); // ASM COMPUTE_MAXS handles this
+        } catch (Exception e) {
+            System.err.println("ASM error in class=" + cw + " method=" + name + " descriptor=" + descriptor);
+            throw e;
+        }
         mv.visitEnd();
     }
 
@@ -275,6 +280,13 @@ public class KonpeitoAssembler {
             // --- Arithmetic (int) ---
             case "iadd" -> mv.visitInsn(Opcodes.IADD);
             case "isub" -> mv.visitInsn(Opcodes.ISUB);
+            case "imul" -> mv.visitInsn(Opcodes.IMUL);
+            case "iand" -> mv.visitInsn(Opcodes.IAND);
+            case "ior" -> mv.visitInsn(Opcodes.IOR);
+
+            // --- Short/byte push ---
+            case "bipush" -> mv.visitIntInsn(Opcodes.BIPUSH, getInt(inst, "value"));
+            case "sipush" -> mv.visitIntInsn(Opcodes.SIPUSH, getInt(inst, "value"));
 
             // --- Arithmetic (long) ---
             case "ladd" -> mv.visitInsn(Opcodes.LADD);
@@ -441,6 +453,10 @@ public class KonpeitoAssembler {
             case "dastore" -> mv.visitInsn(Opcodes.DASTORE);
             case "aaload" -> mv.visitInsn(Opcodes.AALOAD);
             case "aastore" -> mv.visitInsn(Opcodes.AASTORE);
+            case "baload" -> mv.visitInsn(Opcodes.BALOAD);
+            case "bastore" -> mv.visitInsn(Opcodes.BASTORE);
+            case "iaload" -> mv.visitInsn(Opcodes.IALOAD);
+            case "iastore" -> mv.visitInsn(Opcodes.IASTORE);
 
             // --- Exception handling ---
             case "athrow" -> mv.visitInsn(Opcodes.ATHROW);

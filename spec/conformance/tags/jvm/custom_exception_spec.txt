@@ -1,4 +1,5 @@
 # JVM: Custom exception class hierarchy not fully supported
+# 5 pass, 3 fail (diff 3)
 # rescue catches wrong exception class, exception class identity lost
 parent rescue catches when specific match not found
 unmatched rescue passes to outer handler

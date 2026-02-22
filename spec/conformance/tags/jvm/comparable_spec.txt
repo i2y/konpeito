@@ -1,3 +1,0 @@
-# JVM: User-defined class with Comparable cannot be cast to Number
-# ClassCastException when comparing Temperature objects
-RUNTIME_ERROR

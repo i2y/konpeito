@@ -1,2 +1,2 @@
-# JVM: SizedQueue likely causes hang (same issue as ConditionVariable)
+# JVM: timeout after 10s (deadlock/hang, same issue as ConditionVariable)
 RUNTIME_HANG

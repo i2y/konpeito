@@ -1,3 +1,0 @@
-# JVM: AOT limitation — alias preserves old behavior after method redefine
-# In AOT compilation, method redefinition replaces the original; alias points to the last definition
-alias preserves old behavior after redefine

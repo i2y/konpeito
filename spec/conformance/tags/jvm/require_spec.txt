@@ -1,2 +1,2 @@
-# JVM: Math::PI / Math.sqrt cause NullPointerException
+# JVM: exit code 1 (runtime error — Math::PI / Math.sqrt cause NullPointerException)
 RUNTIME_ERROR

@@ -2310,7 +2310,7 @@ module Konpeito
           when :i8 then LLVM::Int8
           else value_type
           end
-          @builder.load2(llvm_type, alloca, var_name)
+          @builder.load2(llvm_type, alloca, "#{var_name}_val")
         else
           @variables[var_name] || @qnil
         end
@@ -3335,9 +3335,14 @@ module Konpeito
           # Bool can be either TrueClass or FalseClass; return TrueClass as representative
           @builder.load2(value_type, @rb_cTrueClass, "rb_cTrueClass")
         else
-          # For other types, use rb_path2class
-          type_ptr = @builder.global_string_pointer(type_str)
-          @builder.call(@rb_path2class, type_ptr)
+          # Skip unresolved RBS type parameters (Elem, K, V, etc.) — return rb_cObject as fallback
+          if type_str.match?(/\A[A-Z][a-z]*\z/) && %w[Elem K V U T S R E A B C D N M].include?(type_str)
+            @builder.load2(value_type, @rb_cObject, "rb_cObject")
+          else
+            # For other types, use rb_path2class
+            type_ptr = @builder.global_string_pointer(type_str)
+            @builder.call(@rb_path2class, type_ptr)
+          end
         end
       end
 
@@ -4921,10 +4926,12 @@ module Konpeito
         saved_vars = @variables.dup
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
+        saved_current_function = @current_function
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
+        @current_function = callback_func
 
         # Reset variable tracking for callback scope
         @variables = {}
@@ -4986,6 +4993,7 @@ module Konpeito
         @variables = saved_vars
         @variable_types = saved_types
         @variable_allocas = saved_allocas
+        @current_function = saved_current_function
 
         callback_func
       end

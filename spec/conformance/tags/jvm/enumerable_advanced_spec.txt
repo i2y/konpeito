@@ -1,2 +1,2 @@
-# JVM: sort_by type inference error (same as native)
+# JVM: exit code 1 (compilation error)
 COMPILATION_ERROR

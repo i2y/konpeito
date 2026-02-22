@@ -1530,10 +1530,14 @@ module Konpeito
         # The block's return type should unify with the RBS block's return type
         # For example: map's block { (Elem) -> U } means block returns U
 
+        # BlockArgumentNode (&blk) has no parameters or body — skip block inference entirely
+        return Types::UNTYPED if block_node.is_a?(Prism::BlockArgumentNode)
+
         push_env
 
         # Bind block parameters (skip if UntypedFunction)
-        if block_node.parameters && rbs_block.type.respond_to?(:required_positionals)
+        # BlockArgumentNode (&blk) does not have a parameters method - skip it
+        if !block_node.is_a?(Prism::BlockArgumentNode) && block_node.respond_to?(:parameters) && block_node.parameters && rbs_block.type.respond_to?(:required_positionals)
           if block_node.parameters.is_a?(Prism::NumberedParametersNode)
             # Numbered block parameters (_1, _2, ...)
             rbs_positionals = rbs_block.type.required_positionals

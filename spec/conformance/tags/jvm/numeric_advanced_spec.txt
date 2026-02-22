@@ -1,2 +1,0 @@
-# JVM: Integer#digits not implemented in JVM runtime
-RUNTIME_ERROR

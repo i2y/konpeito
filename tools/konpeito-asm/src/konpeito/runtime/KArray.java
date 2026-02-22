@@ -127,7 +127,26 @@ public class KArray<T> implements List<T> {
     @SuppressWarnings("unchecked")
     public KArray<T> sort() {
         KArray<T> result = new KArray<>(data);
-        result.data.sort((a, b) -> ((Comparable<T>) a).compareTo(b));
+        result.data.sort((a, b) -> {
+            // Try Java Comparable first
+            if (a instanceof Comparable) {
+                try {
+                    return ((Comparable<T>) a).compareTo(b);
+                } catch (ClassCastException e) {
+                    // Fall through to op_cmp
+                }
+            }
+            // Try Ruby <=> (op_cmp) via reflection
+            try {
+                java.lang.reflect.Method cmp = a.getClass().getMethod("op_cmp", Object.class);
+                Object res = cmp.invoke(a, b);
+                if (res instanceof Long) return ((Long) res).intValue();
+                if (res instanceof Integer) return (Integer) res;
+                return 0;
+            } catch (Exception e) {
+                throw new ClassCastException("Cannot compare " + a.getClass().getName());
+            }
+        });
         return result;
     }
 
@@ -181,6 +200,15 @@ public class KArray<T> implements List<T> {
         return this;
     }
 
+    /** Ruby: arr.concat(other) — append all elements from other array, return self */
+    @SuppressWarnings("unchecked")
+    public KArray<T> concat(Object other) {
+        if (other instanceof KArray) {
+            data.addAll(((KArray<T>) other).data);
+        }
+        return this;
+    }
+
     /** Ruby: arr.delete_at(index) — remove and return element at index */
     public T deleteAt(int index) {
         int idx = index < 0 ? data.size() + index : index;
@@ -188,10 +216,52 @@ public class KArray<T> implements List<T> {
         return data.remove(idx);
     }
 
-    /** Ruby: arr.delete(value) — remove all occurrences, return last removed or nil */
+    /** Ruby: arr.delete(value) — remove all occurrences, return value or nil */
     public T deleteValue(T value) {
-        boolean found = data.remove(value);
+        boolean found = false;
+        java.util.Iterator<T> it = data.iterator();
+        while (it.hasNext()) {
+            if (java.util.Objects.equals(it.next(), value)) {
+                it.remove();
+                found = true;
+            }
+        }
         return found ? value : null;
+    }
+
+    /** Ruby: arr.delete(value) — alias used by invokedynamic dispatch */
+    public Object delete(Object value) {
+        boolean found = false;
+        java.util.Iterator<T> it = data.iterator();
+        while (it.hasNext()) {
+            if (java.util.Objects.equals(it.next(), value)) {
+                it.remove();
+                found = true;
+            }
+        }
+        return found ? value : null;
+    }
+
+    /** Ruby: arr.rotate / arr.rotate(n) — returns new rotated array */
+    public KArray<T> rotate() {
+        return rotate(1);
+    }
+
+    /** Ruby: arr.rotate(n) — returns new rotated array by n positions */
+    public KArray<T> rotate(int n) {
+        int size = data.size();
+        if (size == 0) return new KArray<>();
+        int shift = ((n % size) + size) % size; // normalize negative
+        KArray<T> result = new KArray<>(size);
+        for (int i = 0; i < size; i++) {
+            result.data.add(data.get((i + shift) % size));
+        }
+        return result;
+    }
+
+    /** Ruby: arr.rotate(n) — overload accepting long for JVM compat */
+    public KArray<T> rotate(long n) {
+        return rotate((int) n);
     }
 
     /** Ruby: arr.sum — sum all elements (for numeric arrays) */
@@ -216,10 +286,16 @@ public class KArray<T> implements List<T> {
         return total;
     }
 
-    /** Ruby: arr.find_index(value) — returns index or -1 */
+    /** Ruby: arr.find_index(value) / arr.index(value) — returns index or nil */
     public long findIndex(T value) {
         int idx = data.indexOf(value);
         return idx;
+    }
+
+    /** Ruby: arr.index(value) — alias for findIndex, returns Long index or null (nil) */
+    public Object index(Object value) {
+        int idx = data.indexOf(value);
+        return idx >= 0 ? Long.valueOf(idx) : null;
     }
 
     /** Ruby: arr.first(n) — returns first n elements */

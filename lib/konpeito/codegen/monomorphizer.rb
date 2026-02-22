@@ -194,8 +194,10 @@ module Konpeito
         skip_functions.merge(detect_nil_compared_functions)
 
         grouped.each do |(func_name, types), sites|
-          next if types.all? { |t| t == TypeChecker::Types::UNTYPED }
+          next if types.any? { |t| t == TypeChecker::Types::UNTYPED || t.is_a?(TypeChecker::Types::Untyped) }
           next if skip_functions.include?(func_name.to_s)
+          # Skip if any type is an unresolved RBS type parameter (Elem, K, V, etc.)
+          next if types.any? { |t| t.is_a?(TypeChecker::Types::ClassInstance) && RBS_TYPE_PARAMS.include?(t.name) }
 
           type_suffix = types.map { |t| type_to_suffix(t) }.join("_")
           specialized = "#{func_name}_#{type_suffix}"
@@ -326,10 +328,20 @@ module Konpeito
         end
       end
 
+      # RBS type parameter names that should not be used as monomorphized suffixes
+      # These are unresolved generic type variables, not concrete Ruby classes
+      RBS_TYPE_PARAMS = Set.new(%w[Elem K V U T S R E A B C D N M].map(&:to_sym)).freeze
+
       def type_to_suffix(type)
         case type
         when TypeChecker::Types::ClassInstance
-          type.name.to_s
+          # If the type name is an unresolved RBS type parameter (Elem, K, V, etc.),
+          # treat it as untyped to avoid generating rb_const_get("Elem") at runtime
+          if RBS_TYPE_PARAMS.include?(type.name)
+            "Any"
+          else
+            type.name.to_s
+          end
         when TypeChecker::Types::NilType
           "Nil"
         when TypeChecker::Types::BoolType

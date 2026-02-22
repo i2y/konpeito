@@ -88,15 +88,46 @@ module Conformance
 
     def run_command(cmd, timeout:, label:)
       log("  Running [#{label}]: #{cmd.join(' ')}")
-      stdout, stderr, status = Open3.capture3(*cmd, chdir: KONPEITO_ROOT)
-      log("  [#{label}] exit=#{status.exitstatus}") if @verbose
+
+      stdout = +""
+      stderr = +""
+      status = nil
+
+      Open3.popen3(*cmd, chdir: KONPEITO_ROOT) do |stdin, out, err, wait_thr|
+        stdin.close
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+
+        out_thread = Thread.new { out.read }
+        err_thread = Thread.new { err.read }
+
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        if remaining > 0 && wait_thr.join(remaining)
+          status = wait_thr.value
+          stdout = out_thread.value || ""
+          stderr = err_thread.value || ""
+        else
+          # Timeout — kill the process
+          Process.kill("KILL", wait_thr.pid) rescue nil
+          wait_thr.join(2) rescue nil
+          out_thread.kill rescue nil
+          err_thread.kill rescue nil
+          return Result.new(
+            stdout: "",
+            stderr: "timeout after #{timeout}s",
+            success: false,
+            error: "timeout after #{timeout}s"
+          )
+        end
+      end
+
+      log("  [#{label}] exit=#{status&.exitstatus}") if @verbose
       log("  [#{label}] stderr: #{stderr.strip}") if @verbose && !stderr.strip.empty?
 
       Result.new(
         stdout: stdout,
         stderr: stderr,
-        success: status.success?,
-        error: status.success? ? nil : "exit code #{status.exitstatus}"
+        success: status&.success? || false,
+        error: status&.success? ? nil : "exit code #{status&.exitstatus}"
       )
     rescue Errno::ENOENT => e
       Result.new(stdout: "", stderr: e.message, success: false, error: e.message)

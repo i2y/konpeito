@@ -941,7 +941,13 @@ module Konpeito
           []
         when HIR::DefinedCheck
           generate_defined_check(inst)
-        # Concurrency
+        # Concurrency — Fiber
+        when HIR::FiberNew     then generate_fiber_new(inst)
+        when HIR::FiberResume  then generate_fiber_resume(inst)
+        when HIR::FiberYield   then generate_fiber_yield(inst)
+        when HIR::FiberAlive   then generate_fiber_alive(inst)
+        when HIR::FiberCurrent then generate_fiber_current(inst)
+        # Concurrency — Thread, Mutex, etc.
         when HIR::ThreadNew     then generate_thread_new(inst)
         when HIR::ThreadJoin    then generate_thread_join(inst)
         when HIR::ThreadValue   then generate_thread_value(inst)
@@ -12205,18 +12211,29 @@ module Konpeito
             end
 
             # Also check for stores inside the block body (for regular block captures)
-            block_def.body.each do |block_bb|
-              block_bb.instructions.each do |block_inst|
-                if block_inst.is_a?(HIR::StoreLocal)
-                  var_name = block_inst.var.is_a?(HIR::LocalVar) ? block_inst.var.name.to_s : block_inst.var.to_s
-                  mutable_capture_names.add(var_name) if captured_names.include?(var_name)
-                end
-              end
-            end
+            # Recursively scan nested blocks too (e.g., Thread.new { mutex.synchronize { counter = counter + 1 } })
+            scan_block_stores(block_def, captured_names, mutable_capture_names)
           end
         end
 
         mutable_capture_names
+      end
+
+      # Recursively scan block body (and nested blocks) for StoreLocal to captured variables
+      def scan_block_stores(block_def, captured_names, mutable_capture_names)
+        block_def.body.each do |block_bb|
+          block_bb.instructions.each do |block_inst|
+            if block_inst.is_a?(HIR::StoreLocal)
+              var_name = block_inst.var.is_a?(HIR::LocalVar) ? block_inst.var.name.to_s : block_inst.var.to_s
+              mutable_capture_names.add(var_name) if captured_names.include?(var_name)
+            end
+            # Recurse into nested blocks
+            nested_block = extract_block_def_from_inst(block_inst)
+            if nested_block
+              scan_block_stores(nested_block, captured_names, mutable_capture_names)
+            end
+          end
+        end
       end
 
       def extract_block_def_from_inst(inst)
@@ -13374,6 +13391,18 @@ module Konpeito
         "(#{params_desc})#{ret_desc}"
       end
 
+      # Normalize capture types for lambda/block compilation.
+      # Reference types are normalized to :value (Object) to avoid VerifyError
+      # when a captured variable's type changes in a loop (e.g., KArray → Object
+      # after invokedynamic reassignment).
+      def safe_capture_type(var_name)
+        t = @variable_types[var_name] || :value
+        case t
+        when :i64, :double, :i8 then t
+        else :value
+        end
+      end
+
       def type_to_descriptor(type)
         case type
         when :i64 then "J"
@@ -13976,6 +14005,179 @@ module Konpeito
       end
 
       # ========================================================================
+      # Concurrency — Fiber
+      # ========================================================================
+
+      KFIBER_CLASS = "konpeito/runtime/KFiber"
+
+      # Fiber.new { block } → KFiber(Callable<Object>)
+      def generate_fiber_new(inst)
+        result_var = inst.result_var
+        block_def = inst.block_def
+        return [] unless result_var && block_def
+
+        instructions = []
+
+        # Compile block as static method (same pattern as Thread.new)
+        all_captures = block_def.captures || []
+        captures = all_captures.reject { |c| @shared_mutable_captures&.include?(c.name.to_s) }
+        capture_types = captures.map { |c| safe_capture_type(c.name.to_s) }
+
+        block_method_name = compile_block_as_method_with_types(block_def, capture_types, [], :value, filtered_captures: captures)
+
+        # Load capture variables
+        captures.each_with_index do |cap, i|
+          instructions.concat(load_value(HIR::LocalVar.new(name: cap.name), capture_types[i]))
+        end
+
+        # invokedynamic to create Callable<Object> via LambdaMetafactory
+        capture_desc = capture_types.map { |t| type_to_descriptor(t) }.join
+        indy_desc = "(#{capture_desc})Ljava/util/concurrent/Callable;"
+        block_method_params_desc = capture_types.map { |t| type_to_descriptor(t) }.join
+        block_method_full_desc = "(#{block_method_params_desc})Ljava/lang/Object;"
+
+        instructions << {
+          "op" => "invokedynamic",
+          "name" => "call",
+          "descriptor" => indy_desc,
+          "bootstrapOwner" => "java/lang/invoke/LambdaMetafactory",
+          "bootstrapName" => "metafactory",
+          "bootstrapDescriptor" => "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;",
+          "bootstrapArgs" => [
+            { "type" => "methodType", "descriptor" => "()Ljava/lang/Object;" },
+            { "type" => "handle", "tag" => "H_INVOKESTATIC",
+              "owner" => @current_enclosing_class,
+              "name" => block_method_name,
+              "descriptor" => block_method_full_desc },
+            { "type" => "methodType", "descriptor" => "()Ljava/lang/Object;" }
+          ]
+        }
+
+        # new KFiber(callable)
+        temp_slot = allocate_temp_slot(:value)
+        instructions << { "op" => "astore", "var" => temp_slot }
+        instructions << { "op" => "new", "type" => KFIBER_CLASS }
+        instructions << { "op" => "dup" }
+        instructions << { "op" => "aload", "var" => temp_slot }
+        instructions << { "op" => "invokespecial",
+                          "owner" => KFIBER_CLASS,
+                          "name" => "<init>",
+                          "descriptor" => "(Ljava/util/concurrent/Callable;)V" }
+
+        ensure_slot(result_var, :value)
+        instructions << store_instruction(result_var, :value)
+        @variable_types[result_var] = :value
+        @variable_concurrency_types[result_var] = :fiber
+        instructions
+      end
+
+      # fiber.resume or fiber.resume(value) → KFiber.resume(Object)
+      def generate_fiber_resume(inst)
+        result_var = inst.result_var
+        instructions = []
+
+        instructions.concat(load_value(inst.fiber, :value))
+        instructions << { "op" => "checkcast", "type" => KFIBER_CLASS }
+
+        if inst.args && !inst.args.empty?
+          # resume with argument
+          instructions.concat(load_value(inst.args.first, :value))
+          instructions << { "op" => "invokevirtual",
+                            "owner" => KFIBER_CLASS,
+                            "name" => "resume",
+                            "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;" }
+        else
+          # resume without argument
+          instructions << { "op" => "invokevirtual",
+                            "owner" => KFIBER_CLASS,
+                            "name" => "resume",
+                            "descriptor" => "()Ljava/lang/Object;" }
+        end
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions
+      end
+
+      # Fiber.yield(value) → KFiber.fiberYield(Object)
+      def generate_fiber_yield(inst)
+        result_var = inst.result_var
+        instructions = []
+
+        if inst.args && !inst.args.empty?
+          instructions.concat(load_value(inst.args.first, :value))
+          instructions << { "op" => "invokestatic",
+                            "owner" => KFIBER_CLASS,
+                            "name" => "fiberYield",
+                            "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;" }
+        else
+          instructions << { "op" => "invokestatic",
+                            "owner" => KFIBER_CLASS,
+                            "name" => "fiberYield",
+                            "descriptor" => "()Ljava/lang/Object;" }
+        end
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions
+      end
+
+      # fiber.alive? → KFiber.isAlive()
+      def generate_fiber_alive(inst)
+        result_var = inst.result_var
+        instructions = []
+
+        instructions.concat(load_value(inst.fiber, :value))
+        instructions << { "op" => "checkcast", "type" => KFIBER_CLASS }
+        instructions << { "op" => "invokevirtual",
+                          "owner" => KFIBER_CLASS,
+                          "name" => "isAlive",
+                          "descriptor" => "()Z" }
+
+        if result_var
+          # Convert boolean to Boolean object
+          instructions << { "op" => "invokestatic",
+                            "owner" => "java/lang/Boolean",
+                            "name" => "valueOf",
+                            "descriptor" => "(Z)Ljava/lang/Boolean;" }
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        else
+          instructions << { "op" => "pop" }
+        end
+        instructions
+      end
+
+      # Fiber.current → KFiber.current()
+      def generate_fiber_current(inst)
+        result_var = inst.result_var
+        instructions = []
+
+        instructions << { "op" => "invokestatic",
+                          "owner" => KFIBER_CLASS,
+                          "name" => "current",
+                          "descriptor" => "()L#{KFIBER_CLASS};" }
+
+        if result_var
+          ensure_slot(result_var, :value)
+          instructions << store_instruction(result_var, :value)
+          @variable_types[result_var] = :value
+        end
+        instructions
+      end
+
+      # ========================================================================
       # Concurrency — Thread, Mutex, ConditionVariable, SizedQueue
       # ========================================================================
 
@@ -13988,15 +14190,17 @@ module Konpeito
         instructions = []
 
         # Compile block as static method
-        captures = block_def.captures || []
-        capture_types = captures.map { |c| @variable_types[c.name.to_s] || :value }
+        all_captures = block_def.captures || []
+        # Filter out shared mutable captures — they use static fields instead
+        captures = all_captures.reject { |c| @shared_mutable_captures&.include?(c.name.to_s) }
+        capture_types = captures.map { |c| safe_capture_type(c.name.to_s) }
 
         # Thread block always returns Object
-        block_method_name = compile_block_as_method_with_types(block_def, capture_types, [], :value)
+        block_method_name = compile_block_as_method_with_types(block_def, capture_types, [], :value, filtered_captures: captures)
 
-        # Load capture variables
-        capture_types.each_with_index do |ct, i|
-          instructions.concat(load_value(HIR::LocalVar.new(name: captures[i].name), ct))
+        # Load capture variables (only non-shared captures become lambda params)
+        captures.each_with_index do |cap, i|
+          instructions.concat(load_value(HIR::LocalVar.new(name: cap.name), capture_types[i]))
         end
 
         # invokedynamic to create Callable<Object> via LambdaMetafactory
@@ -14197,9 +14401,11 @@ module Konpeito
                           "descriptor" => "()V" }
 
         # Compile block body as static method
-        captures = block_def.captures || []
-        capture_types = captures.map { |c| @variable_types[c.name.to_s] || :value }
-        block_method_name = compile_block_as_method_with_types(block_def, capture_types, [], :value)
+        all_captures = block_def.captures || []
+        # Filter out shared mutable captures — they use static fields instead
+        captures = all_captures.reject { |c| @shared_mutable_captures&.include?(c.name.to_s) }
+        capture_types = captures.map { |c| safe_capture_type(c.name.to_s) }
+        block_method_name = compile_block_as_method_with_types(block_def, capture_types, [], :value, filtered_captures: captures)
 
         # Labels for try/finally
         try_start = new_label("sync_try_start")
@@ -14218,9 +14424,9 @@ module Konpeito
         # Try block: invoke the block
         instructions << { "op" => "label", "name" => try_start }
 
-        # Load captures and invokedynamic to get KBlock
-        capture_types.each_with_index do |ct, i|
-          instructions.concat(load_value(HIR::LocalVar.new(name: captures[i].name), ct))
+        # Load captures and invokedynamic to get KBlock (only non-shared captures)
+        captures.each_with_index do |cap, i|
+          instructions.concat(load_value(HIR::LocalVar.new(name: cap.name), capture_types[i]))
         end
 
         capture_desc = capture_types.map { |t| type_to_descriptor(t) }.join

@@ -1728,6 +1728,9 @@ public class RubyDispatch {
         if (obj instanceof KArray) return "Array";
         if (obj instanceof KHash) return "Hash";
         if (obj instanceof java.util.regex.Pattern) return "Regexp";
+        if (obj instanceof KFiber) return "Fiber";
+        if (obj instanceof KThread) return "Thread";
+        if (obj instanceof java.util.concurrent.locks.ReentrantLock) return "Mutex";
         // User-defined class: use simple name
         String name = obj.getClass().getSimpleName();
         return name;

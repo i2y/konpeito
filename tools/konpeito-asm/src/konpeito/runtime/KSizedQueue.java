@@ -46,4 +46,9 @@ public class KSizedQueue {
     public int size() {
         return queue.size();
     }
+
+    /** Ruby: sq.empty? — returns true if queue is empty */
+    public boolean empty_q() {
+        return queue.isEmpty();
+    }
 }

@@ -1,7 +1,0 @@
-# JVM: => pattern (mandatory pattern match) not implemented
-# Variables bound by => pattern are nil
-=> pattern binds first element
-=> pattern binds second element
-=> pattern binds last element
-=> hash pattern binds name
-=> hash pattern binds age

@@ -759,7 +759,7 @@ module Konpeito
         # Emit label for this block
         instructions << { "op" => "label", "name" => bb.label.to_s }
 
-        # Check if this block contains a BeginRescue
+        # Check if this block contains BeginRescue instructions.
         begin_rescue_idx = bb.instructions.index { |i| i.is_a?(HIR::BeginRescue) }
 
         if begin_rescue_idx
@@ -768,16 +768,51 @@ module Konpeito
           # Collect all owned instruction IDs (Call blocks + BeginRescue non-try instructions)
           owned = collect_block_owned_instructions(bb.instructions)
 
-          # The try body is everything before BeginRescue that's NOT owned
-          inlined_try_body = bb.instructions[0...begin_rescue_idx].reject { |i| owned.include?(i.object_id) }
-
-          # Generate BeginRescue with the inlined try body
-          instructions.concat(generate_begin_rescue(begin_rescue_inst, inlined_try_body: inlined_try_body, bb_instructions: bb.instructions))
-
-          # Process any remaining instructions after BeginRescue
-          bb.instructions[(begin_rescue_idx + 1)..]&.each do |inst|
+          # Collect any other BeginRescue instructions that appear AFTER this one
+          # in the same BB (these are outer wrappers that reference this inner BR
+          # in their try_blocks). We need to handle them specially.
+          outer_brs = []
+          bb.instructions[(begin_rescue_idx + 1)..].each do |inst|
             next if owned.include?(inst.object_id)
-            instructions.concat(generate_instruction(inst))
+            if inst.is_a?(HIR::BeginRescue)
+              outer_brs << inst
+            end
+          end
+
+          # The try body is everything before BeginRescue that's NOT owned.
+          inlined_try_body = bb.instructions[0...begin_rescue_idx].reject { |i|
+            owned.include?(i.object_id)
+          }
+
+          # Generate the inner BeginRescue with the inlined try body
+          inner_code = generate_begin_rescue(begin_rescue_inst, inlined_try_body: inlined_try_body, bb_instructions: bb.instructions)
+
+          if outer_brs.empty?
+            # No outer wrappers — just emit inner code and remaining instructions
+            instructions.concat(inner_code)
+
+            bb.instructions[(begin_rescue_idx + 1)..]&.each do |inst|
+              next if owned.include?(inst.object_id)
+              instructions.concat(generate_instruction(inst))
+            end
+          else
+            # There are outer BeginRescue wrappers. The inner code must execute
+            # within the outer's try scope so that inner rethrows are caught by
+            # the outer's handler.
+            #
+            # Strategy: wrap the inner code inside the outer BR's exception table
+            # scope by placing the outer's try_start BEFORE the inner code and
+            # try_end AFTER it. The outer's rescue/ensure handlers follow.
+            instructions.concat(generate_outer_begin_rescue_wrappers(
+              outer_brs, inner_code, begin_rescue_inst, bb.instructions, owned
+            ))
+
+            # Process any remaining non-BR instructions after the last outer BR
+            bb.instructions[(begin_rescue_idx + 1)..].each do |inst|
+              next if owned.include?(inst.object_id)
+              next if inst.is_a?(HIR::BeginRescue)
+              instructions.concat(generate_instruction(inst))
+            end
           end
         else
           # Normal block processing
@@ -791,6 +826,334 @@ module Konpeito
         # Generate terminator
         if bb.terminator
           instructions.concat(generate_terminator(bb.terminator))
+        end
+
+        instructions
+      end
+
+      # Generate outer BeginRescue wrappers around already-generated inner code.
+      # The outer's try scope wraps the inner code so that inner rethrows
+      # are caught by the outer's handler.
+      #
+      # For nested begin/rescue like:
+      #   begin          ← outer
+      #     begin        ← inner
+      #       raise "x"
+      #     rescue A
+      #       "inner"
+      #     end
+      #   rescue B
+      #     "outer"
+      #   end
+      #
+      # The JVM exception table must have:
+      #   1. Inner handler: [inner_try_start, inner_try_end) → inner handler (for A)
+      #   2. Outer handler: [outer_try_start, outer_try_end) → outer handler (for B)
+      # where outer scope encompasses inner scope (including inner's rethrow code).
+      def generate_outer_begin_rescue_wrappers(outer_brs, inner_code, inner_br, bb_instructions, owned)
+        instructions = []
+
+        # Process outer BRs from innermost to outermost
+        # (outer_brs is already in order from the BB instruction list)
+        current_code = inner_code
+
+        outer_brs.each do |outer_br|
+          has_rescue = outer_br.rescue_clauses && !outer_br.rescue_clauses.empty?
+          has_else = outer_br.else_blocks && !outer_br.else_blocks.empty?
+          has_ensure = outer_br.ensure_blocks && !outer_br.ensure_blocks.empty?
+
+          # If the outer BR has no rescue and no ensure (plain begin...end wrapper),
+          # it doesn't need exception handling — skip it
+          unless has_rescue || has_ensure
+            next
+          end
+
+          wrapped = []
+
+          try_start = new_label("try_start")
+          try_end = new_label("try_end")
+          after_all = new_label("after_all")
+
+          result_var = outer_br.result_var
+
+          # Build orphaned stores map for this outer BR
+          orphaned_stores = {}
+          if bb_instructions && outer_br.non_try_instruction_ids
+            body_expr_ids = Set.new
+            outer_br.rescue_clauses&.each do |clause|
+              clause.body_blocks&.each { |bi| body_expr_ids << bi.object_id }
+            end
+            outer_br.ensure_blocks&.each { |bi| body_expr_ids << bi.object_id }
+            outer_br.else_blocks&.each { |bi| body_expr_ids << bi.object_id }
+
+            bb_instructions.each do |bi|
+              next unless bi.is_a?(HIR::StoreLocal) && outer_br.non_try_instruction_ids.include?(bi.object_id)
+              val_id = bi.value.object_id
+              orphaned_stores[val_id] = bi if body_expr_ids.include?(val_id)
+            end
+          end
+
+          # Pre-initialize result variable
+          if result_var
+            ensure_slot(result_var, :value)
+            wrapped << { "op" => "aconst_null" }
+            wrapped << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+            @variable_types[result_var.to_s] = :value
+          end
+
+          # Labels for rescue handlers
+          handler_labels = []
+          if has_rescue
+            outer_br.rescue_clauses.each_with_index do |_clause, i|
+              handler_labels << new_label("handler_#{i}")
+            end
+          end
+
+          else_label = new_label("rescue_else") if has_else
+          ensure_normal_label = new_label("ensure_normal") if has_ensure
+          finally_handler_label = new_label("finally_handler") if has_ensure
+
+          # 1. Try block — wraps the inner code
+          wrapped << { "op" => "label", "name" => try_start }
+          wrapped.concat(current_code)
+
+          # The inner code's last result should be stored as the outer's result
+          # (the inner BR's result_var is the value of the inner begin/rescue expression)
+          if result_var && inner_br.result_var
+            inner_result = inner_br.result_var.to_s
+            inner_type = @variable_types[inner_result] || :value
+            wrapped.concat(load_value_from_var(inner_result, inner_type))
+            wrapped.concat(box_primitive_if_needed(inner_type, :value))
+            wrapped << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+          end
+
+          wrapped << { "op" => "label", "name" => try_end }
+
+          # Register exception table entries AFTER try body (so inner handlers appear first)
+          has_custom_exc = has_rescue && outer_br.rescue_clauses.any? { |c|
+            c.exception_classes.any? { |e| !RUBY_EXCEPTION_TO_JVM.key?(e.to_s) }
+          }
+
+          unified_handler_label = nil
+          if has_rescue && has_custom_exc
+            unified_handler_label = new_label("unified_handler")
+            @pending_exception_table << {
+              "start" => try_start,
+              "end" => try_end,
+              "handler" => unified_handler_label,
+              "type" => "java/lang/RuntimeException"
+            }
+          elsif has_rescue
+            outer_br.rescue_clauses.each_with_index do |clause, i|
+              clause.exception_classes.each do |exc_class|
+                jvm_exc = ruby_exception_to_jvm(exc_class)
+                @pending_exception_table << {
+                  "start" => try_start,
+                  "end" => try_end,
+                  "handler" => handler_labels[i],
+                  "type" => jvm_exc
+                }
+              end
+            end
+          end
+
+          if has_ensure
+            @pending_exception_table << {
+              "start" => try_start,
+              "end" => try_end,
+              "handler" => finally_handler_label,
+              "type" => nil
+            }
+          end
+
+          # After try: jump to else or ensure or after_all
+          if has_else
+            wrapped << { "op" => "goto", "target" => else_label }
+          elsif has_ensure
+            wrapped << { "op" => "goto", "target" => ensure_normal_label }
+          else
+            wrapped << { "op" => "goto", "target" => after_all }
+          end
+
+          # 2. Rescue handlers (same logic as generate_begin_rescue)
+          if has_rescue && unified_handler_label
+            wrapped.concat(generate_unified_rescue_handlers(
+              outer_br, unified_handler_label, result_var,
+              has_ensure, ensure_normal_label, after_all, orphaned_stores
+            ))
+          elsif has_rescue
+            outer_br.rescue_clauses.each_with_index do |clause, i|
+              wrapped << { "op" => "label", "name" => handler_labels[i] }
+
+              if clause.exception_var
+                exc_slot = allocate_slot(clause.exception_var, :value)
+                wrapped << { "op" => "astore", "var" => exc_slot }
+                @variable_types[clause.exception_var] = :value
+              else
+                wrapped << { "op" => "pop" }
+              end
+
+              last_rescue_result = nil
+              clause.body_blocks&.each do |body_inst|
+                wrapped.concat(generate_instruction(body_inst))
+                last_rescue_result = body_inst.result_var if body_inst.respond_to?(:result_var) && body_inst.result_var
+                if (store_inst = orphaned_stores[body_inst.object_id])
+                  wrapped.concat(generate_instruction(store_inst))
+                end
+              end
+
+              if result_var && last_rescue_result
+                last_type = @variable_types[last_rescue_result.to_s] || :value
+                wrapped.concat(load_value_from_var(last_rescue_result.to_s, last_type))
+                wrapped.concat(box_primitive_if_needed(last_type, :value))
+                wrapped << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+              end
+
+              if has_ensure
+                wrapped << { "op" => "goto", "target" => ensure_normal_label }
+              else
+                wrapped << { "op" => "goto", "target" => after_all }
+              end
+            end
+          end
+
+          # 3. Finally handler
+          if has_ensure
+            wrapped << { "op" => "label", "name" => finally_handler_label }
+            exc_temp_slot = @next_slot
+            @next_slot += 1
+            wrapped << { "op" => "astore", "var" => exc_temp_slot }
+
+            outer_br.ensure_blocks.each do |ensure_inst|
+              wrapped.concat(generate_instruction(ensure_inst))
+              if (store_inst = orphaned_stores[ensure_inst.object_id])
+                wrapped.concat(generate_instruction(store_inst))
+              end
+            end
+
+            wrapped << { "op" => "aload", "var" => exc_temp_slot }
+            wrapped << { "op" => "athrow" }
+          end
+
+          # 4. Else block
+          if has_else
+            wrapped << { "op" => "label", "name" => else_label }
+            last_else_result = nil
+            outer_br.else_blocks.each do |else_inst|
+              wrapped.concat(generate_instruction(else_inst))
+              last_else_result = else_inst.result_var if else_inst.respond_to?(:result_var) && else_inst.result_var
+              if (store_inst = orphaned_stores[else_inst.object_id])
+                wrapped.concat(generate_instruction(store_inst))
+              end
+            end
+            if result_var && last_else_result
+              last_type = @variable_types[last_else_result.to_s] || :value
+              wrapped.concat(load_value_from_var(last_else_result.to_s, last_type))
+              wrapped.concat(box_primitive_if_needed(last_type, :value))
+              wrapped << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+            end
+            if has_ensure
+              wrapped << { "op" => "goto", "target" => ensure_normal_label }
+            else
+              wrapped << { "op" => "goto", "target" => after_all }
+            end
+          end
+
+          # 5. Normal ensure path
+          if has_ensure
+            wrapped << { "op" => "label", "name" => ensure_normal_label }
+            outer_br.ensure_blocks.each do |ensure_inst|
+              wrapped.concat(generate_instruction(ensure_inst))
+              if (store_inst = orphaned_stores[ensure_inst.object_id])
+                wrapped.concat(generate_instruction(store_inst))
+              end
+            end
+          end
+
+          wrapped << { "op" => "label", "name" => after_all }
+
+          # For the next outer wrapper, the current wrapped code becomes the inner
+          current_code = wrapped
+          inner_br = outer_br
+        end
+
+        instructions.concat(current_code)
+        instructions
+      end
+
+      # Generate unified rescue handlers with runtime class checking.
+      # Extracted for reuse in generate_outer_begin_rescue_wrappers.
+      def generate_unified_rescue_handlers(inst, unified_handler_label, result_var,
+                                           has_ensure, ensure_normal_label, after_all, orphaned_stores)
+        instructions = []
+        instructions << { "op" => "label", "name" => unified_handler_label }
+
+        exc_temp = "__rescue_exc_#{@label_counter}"
+        ensure_slot(exc_temp, :value)
+        exc_slot_num = @variable_slots[exc_temp]
+        instructions << { "op" => "astore", "var" => exc_slot_num }
+
+        body_labels = inst.rescue_clauses.map { |_| new_label("rescue_body") }
+        check_labels = inst.rescue_clauses.map { |_| new_label("rescue_check") }
+
+        inst.rescue_clauses.each_with_index do |clause, i|
+          exc_classes = clause.exception_classes
+          if exc_classes.empty? || exc_classes.any? { |c| c.to_s == "StandardError" }
+            instructions << { "op" => "goto", "target" => body_labels[i] }
+          else
+            instructions << { "op" => "aload", "var" => exc_slot_num }
+            instructions << { "op" => "instanceof", "type" => "konpeito/runtime/KRubyException" }
+            instructions << { "op" => "ifeq", "target" => check_labels[i] }
+
+            instructions << { "op" => "aload", "var" => exc_slot_num }
+            instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KRubyException" }
+            instructions << { "op" => "ldc", "value" => exc_classes.first.to_s }
+            instructions << { "op" => "invokevirtual",
+                              "owner" => "konpeito/runtime/KRubyException",
+                              "name" => "matchesRescueClass",
+                              "descriptor" => "(Ljava/lang/String;)Z" }
+            instructions << { "op" => "ifne", "target" => body_labels[i] }
+
+            instructions << { "op" => "label", "name" => check_labels[i] }
+          end
+        end
+
+        # No match → rethrow
+        instructions << { "op" => "aload", "var" => exc_slot_num }
+        instructions << { "op" => "athrow" }
+
+        # Rescue bodies
+        inst.rescue_clauses.each_with_index do |clause, i|
+          instructions << { "op" => "label", "name" => body_labels[i] }
+
+          if clause.exception_var
+            ev_slot = allocate_slot(clause.exception_var, :value)
+            instructions << { "op" => "aload", "var" => exc_slot_num }
+            instructions << { "op" => "astore", "var" => ev_slot }
+            @variable_types[clause.exception_var] = :value
+          end
+
+          last_rescue_result = nil
+          clause.body_blocks&.each do |body_inst|
+            instructions.concat(generate_instruction(body_inst))
+            last_rescue_result = body_inst.result_var if body_inst.respond_to?(:result_var) && body_inst.result_var
+            if (store_inst = orphaned_stores[body_inst.object_id])
+              instructions.concat(generate_instruction(store_inst))
+            end
+          end
+
+          if result_var && last_rescue_result
+            last_type = @variable_types[last_rescue_result.to_s] || :value
+            instructions.concat(load_value_from_var(last_rescue_result.to_s, last_type))
+            instructions.concat(box_primitive_if_needed(last_type, :value))
+            instructions << { "op" => "astore", "var" => @variable_slots[result_var.to_s] }
+          end
+
+          if has_ensure
+            instructions << { "op" => "goto", "target" => ensure_normal_label }
+          else
+            instructions << { "op" => "goto", "target" => after_all }
+          end
         end
 
         instructions
@@ -1018,6 +1381,10 @@ module Konpeito
         when HIR::StaticArrayGet   then generate_jvm_native_array_get(inst)
         when HIR::StaticArraySet   then generate_jvm_native_array_set(inst)
         when HIR::StaticArraySize  then generate_jvm_static_array_size(inst)
+        when HIR::MatchPredicate
+          generate_match_predicate(inst)
+        when HIR::MatchRequired
+          generate_match_required(inst)
         when HIR::SplatArg
           # SplatArg is handled by generate_call/generate_static_call — just store the expression
           insts = load_value(inst.expression, :value)
@@ -3174,30 +3541,25 @@ module Konpeito
         match_fail = new_label("arr_pat_fail")
         match_done = new_label("arr_pat_done")
 
-        # Pre-allocate and null-initialize all element slots to satisfy JVM verifier.
-        # The verifier requires all slots to be initialized on all code paths.
+        # Pre-allocate element slots via allocate_temp_slot so they are registered
+        # in @variable_slots and initialized at method start by generate_function_body.
+        # This is critical for nested array patterns where inner pattern slots may
+        # not be reached if the outer pattern's size check fails.
         pre_slots = []
         total_elements = pattern.requireds.size + pattern.posts.size
         total_elements.times do
-          s = @next_slot
-          @next_slot += 1
-          instructions << { "op" => "aconst_null" }
-          instructions << { "op" => "astore", "var" => s }
+          s = allocate_temp_slot(:value)
           pre_slots << s
         end
 
         # Pre-allocate rest slot if needed
         rest_slot = nil
         if pattern.rest && pattern.rest.name
-          rest_slot = @next_slot
-          @next_slot += 1
-          instructions << { "op" => "aconst_null" }
-          instructions << { "op" => "astore", "var" => rest_slot }
+          rest_slot = allocate_temp_slot(:value)
         end
 
         # Step 1: Call deconstruct on the predicate via invokedynamic
-        deconstructed_slot = @next_slot
-        @next_slot += 1
+        deconstructed_slot = allocate_temp_slot(:value)
         instructions << { "op" => "aload", "var" => pred_slot }
         # deconstruct() takes no args: (Object receiver) -> Object
         instructions << {
@@ -3279,8 +3641,7 @@ module Konpeito
           instructions << { "op" => "iconst", "value" => pattern.posts.size - i }
           instructions << { "op" => "isub" }
           # Store index in temp, then get(index)
-          post_idx_slot = @next_slot
-          @next_slot += 1
+          post_idx_slot = allocate_temp_slot(:i8)
           instructions << { "op" => "istore", "var" => post_idx_slot }
           instructions << { "op" => "aload", "var" => deconstructed_slot }
           instructions << { "op" => "iload", "var" => post_idx_slot }
@@ -3316,13 +3677,11 @@ module Konpeito
         match_fail = new_label("hash_pat_fail")
         match_done = new_label("hash_pat_done")
 
-        # Pre-allocate and null-initialize all value slots for JVM verifier
+        # Pre-allocate value slots via allocate_temp_slot so they are registered
+        # in @variable_slots and initialized at method start by generate_function_body.
         val_slots = []
         pattern.elements.size.times do
-          s = @next_slot
-          @next_slot += 1
-          instructions << { "op" => "aconst_null" }
-          instructions << { "op" => "astore", "var" => s }
+          s = allocate_temp_slot(:value)
           val_slots << s
         end
 
@@ -3339,13 +3698,13 @@ module Konpeito
                             "name" => "add", "descriptor" => "(Ljava/lang/Object;)Z" }
           instructions << { "op" => "pop" }  # discard boolean
         end
-        keys_slot = @next_slot
-        @next_slot += 1
+        keys_slot = allocate_temp_slot(:value)
+
         instructions << { "op" => "astore", "var" => keys_slot }
 
         # Step 2: Call deconstruct_keys(keys) via invokedynamic
-        deconstructed_slot = @next_slot
-        @next_slot += 1
+        deconstructed_slot = allocate_temp_slot(:value)
+
         instructions << { "op" => "aload", "var" => pred_slot }
         instructions << { "op" => "aload", "var" => keys_slot }
         # deconstruct_keys(keys): (Object receiver, Object keys) -> Object
@@ -3419,6 +3778,90 @@ module Konpeito
             @variable_types[var_name.to_s] = :value
           end
         end
+        instructions
+      end
+
+      # ========================================================================
+      # One-line Pattern Matching: expr in pattern / expr => pattern
+      # ========================================================================
+
+      # Generate match predicate: expr in pattern (returns true/false)
+      def generate_match_predicate(inst)
+        instructions = []
+
+        # Evaluate and box the value expression
+        instructions.concat(load_value(inst.value, :value))
+        pred_slot = allocate_temp_slot(:value)
+        instructions << { "op" => "astore", "var" => pred_slot }
+
+        # Compile pattern
+        match_insts, bound_vars = compile_jvm_pattern(inst.pattern, pred_slot)
+        instructions.concat(match_insts)
+
+        # Stack has int 0/1. Convert to Boolean object.
+        true_label = new_label("mp_true")
+        end_label = new_label("mp_end")
+
+        if inst.result_var
+          ensure_slot(inst.result_var, :value)
+          instructions << { "op" => "ifne", "target" => true_label }
+          # false path
+          instructions << { "op" => "getstatic", "owner" => "java/lang/Boolean",
+                            "name" => "FALSE", "descriptor" => "Ljava/lang/Boolean;" }
+          instructions << { "op" => "goto", "target" => end_label }
+          instructions << { "op" => "label", "name" => true_label }
+          # true path: bind vars and return true
+          instructions.concat(bind_pattern_vars(bound_vars, pred_slot))
+          instructions << { "op" => "getstatic", "owner" => "java/lang/Boolean",
+                            "name" => "TRUE", "descriptor" => "Ljava/lang/Boolean;" }
+          instructions << { "op" => "label", "name" => end_label }
+          instructions << store_instruction(inst.result_var, :value)
+          @variable_types[inst.result_var] = :value
+        else
+          # No result var — just discard the match result
+          instructions << { "op" => "pop" }
+        end
+
+        instructions
+      end
+
+      # Generate match required: expr => pattern (raises NoMatchingPatternError on failure)
+      def generate_match_required(inst)
+        instructions = []
+
+        # Evaluate and box the value expression
+        instructions.concat(load_value(inst.value, :value))
+        pred_slot = allocate_temp_slot(:value)
+        instructions << { "op" => "astore", "var" => pred_slot }
+
+        # Compile pattern
+        match_insts, bound_vars = compile_jvm_pattern(inst.pattern, pred_slot)
+        instructions.concat(match_insts)
+
+        # Stack has int 0/1. Check match result.
+        success_label = new_label("mr_success")
+        instructions << { "op" => "ifne", "target" => success_label }
+
+        # Failure path: throw RuntimeException("no matching pattern")
+        instructions << { "op" => "new", "type" => "java/lang/RuntimeException" }
+        instructions << { "op" => "dup" }
+        instructions << { "op" => "ldc", "value" => "no matching pattern" }
+        instructions << { "op" => "invokespecial", "owner" => "java/lang/RuntimeException",
+                          "name" => "<init>", "descriptor" => "(Ljava/lang/String;)V" }
+        instructions << { "op" => "athrow" }
+
+        # Success path: bind pattern variables
+        instructions << { "op" => "label", "name" => success_label }
+        instructions.concat(bind_pattern_vars(bound_vars, pred_slot))
+
+        # Store result (the matched value)
+        if inst.result_var
+          ensure_slot(inst.result_var, :value)
+          instructions << { "op" => "aload", "var" => pred_slot }
+          instructions << store_instruction(inst.result_var, :value)
+          @variable_types[inst.result_var] = :value
+        end
+
         instructions
       end
 
@@ -17101,6 +17544,29 @@ module Konpeito
                               "descriptor" => "()Ljava/lang/Object;" }
             if result_var
               ensure_slot(result_var, :value)
+              instructions << store_instruction(result_var, :value)
+              @variable_types[result_var] = :value
+            end
+            return instructions
+          when "empty?"
+            instructions.concat(load_value(receiver, :value))
+            instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KSizedQueue" }
+            instructions << { "op" => "invokevirtual",
+                              "owner" => "konpeito/runtime/KSizedQueue",
+                              "name" => "empty_q",
+                              "descriptor" => "()Z" }
+            if result_var
+              true_label = new_label("sq_empty_true")
+              end_label = new_label("sq_empty_end")
+              ensure_slot(result_var, :value)
+              instructions << { "op" => "ifne", "target" => true_label }
+              instructions << { "op" => "getstatic", "owner" => "java/lang/Boolean",
+                                "name" => "FALSE", "descriptor" => "Ljava/lang/Boolean;" }
+              instructions << { "op" => "goto", "target" => end_label }
+              instructions << { "op" => "label", "name" => true_label }
+              instructions << { "op" => "getstatic", "owner" => "java/lang/Boolean",
+                                "name" => "TRUE", "descriptor" => "Ljava/lang/Boolean;" }
+              instructions << { "op" => "label", "name" => end_label }
               instructions << store_instruction(result_var, :value)
               @variable_types[result_var] = :value
             end

@@ -1,2 +1,0 @@
-# JVM: exit code 1 (compilation or runtime error)
-COMPILATION_ERROR

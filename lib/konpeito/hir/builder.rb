@@ -6778,17 +6778,16 @@ module Konpeito
         end
 
         # Build else body
-        # Use without_emit to prevent instructions from being added to current block
+        # Use with_emit_to to redirect emitted instructions to the else_body array
         else_body = nil
         else_child = typed_node.children.find { |c| c.node_type == :else }
         if else_child
           else_body = []
           else_statements = else_child.children.find { |c| c.node_type == :statements }
           if else_statements
-            without_emit do
+            with_emit_to(else_body) do
               else_statements.children.each do |stmt|
-                inst = visit(stmt)
-                else_body << inst if inst
+                visit(stmt)
               end
             end
           end
@@ -6856,16 +6855,16 @@ module Konpeito
         end
 
         # Second pass: build body with pattern variables in scope
-        # Use without_emit to prevent instructions from being added to current block
-        # They should only be stored in the InClause body
-        without_emit do
+        # Use with_emit_to to redirect emitted instructions to the body array
+        # instead of the current block. This ensures that StoreLocal instructions
+        # (from variable assignments like `captured = a`) are properly captured.
+        with_emit_to(body) do
           in_typed_node.children.each do |child|
             case child.node_type
             when :statements
               # This is the body
               child.children.each do |stmt|
-                inst = visit(stmt)
-                body << inst if inst
+                visit(stmt)
               end
             end
           end
@@ -7345,7 +7344,11 @@ module Konpeito
 
       def emit(instruction)
         return if @suppress_emit
-        @current_block.add_instruction(instruction) if @current_block
+        if @emit_collector
+          @emit_collector << instruction
+        else
+          @current_block.add_instruction(instruction) if @current_block
+        end
       end
 
       def without_emit
@@ -7354,6 +7357,18 @@ module Konpeito
         result = yield
         @suppress_emit = old_suppress
         result
+      end
+
+      # Redirect emitted instructions to the given array instead of the current block.
+      # Used for building case/in clause bodies where we need to capture all emitted
+      # instructions (including StoreLocal from variable assignments) without adding
+      # them to the current basic block.
+      def with_emit_to(collector)
+        old_collector = @emit_collector
+        @emit_collector = collector
+        yield
+      ensure
+        @emit_collector = old_collector
       end
 
       # Extract a literal value from a typed node without emitting instructions.

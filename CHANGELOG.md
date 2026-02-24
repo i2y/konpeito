@@ -5,6 +5,24 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-02-24
+
+### Added
+- Conformance test suite expansion: 77 spec files with 1,095+ assertions
+- JVM runtime: Fiber support, ConditionVariable deadlock fix, Math module (PI, E, sqrt)
+- `&blk` block argument support at call sites (e.g., `arr.map(&blk)`)
+
+### Fixed
+- Native backend: BUS error in `defined?(:method)` at top-level
+- Native backend: inliner no longer inlines functions with `&blk` block params
+- JVM backend: ConditionVariable deadlock — rewritten to release mutex during wait
+- JVM backend: Math::PI, Math::E constants and Math.sqrt dispatch
+- JVM backend: nested rescue, pattern matching, SizedQueue#empty?
+- JVM backend: Integer()/Float() kernel methods, String#split limit, sleep, Symbol#frozen?
+- JVM backend: hash iteration, KArray methods, splat args, user-defined ==, super(args)
+- JVM backend: VerifyError for widened instance method parameters
+- JVM backend: Fiber resume/yield, thread_mutex, runtime class identity
+
 ## [0.2.2] - 2026-02-21
 
 ### Added

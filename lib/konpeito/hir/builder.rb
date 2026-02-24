@@ -2133,6 +2133,42 @@ module Konpeito
           block = visit_block_def(block_child)
         end
 
+        # Handle &blk block argument reference (e.g., arr.map(&blk))
+        unless block
+          block_arg_child = typed_node.children.find { |c| c.node_type == :block_argument }
+          if block_arg_child
+            blk_node = block_arg_child.node
+            if blk_node.respond_to?(:expression) && blk_node.expression
+              blk_name = blk_node.expression.name.to_s
+              # Create a wrapper BlockDef: { |__block_arg_param| blk.call(__block_arg_param) }
+              # Load blk from captures inside the block body (not from outer scope)
+              param_name = "__block_arg_param"
+              param = Param.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+              param_var = LocalVar.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+              param_load = LoadLocal.new(var: param_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+              blk_local_var = LocalVar.new(name: blk_name, type: TypeChecker::Types::UNTYPED)
+              blk_load = LoadLocal.new(var: blk_local_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+              call_inst = Call.new(
+                receiver: blk_load,
+                method_name: "call",
+                args: [param_load],
+                type: TypeChecker::Types::UNTYPED,
+                result_var: new_temp_var
+              )
+              # Wrap in a BasicBlock (BlockDef.body expects Array[BasicBlock])
+              bb = BasicBlock.new(label: "block_arg_body")
+              bb.add_instruction(blk_load)
+              bb.add_instruction(param_load)
+              bb.add_instruction(call_inst)
+              block = BlockDef.new(
+                params: [param],
+                body: [bb],
+                captures: [Capture.new(name: blk_name, type: TypeChecker::Types::UNTYPED)]
+              )
+            end
+          end
+        end
+
         result_var = new_temp_var
         is_safe_nav = node.respond_to?(:safe_navigation?) && node.safe_navigation?
         inst = Call.new(

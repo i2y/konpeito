@@ -197,8 +197,8 @@ module Konpeito
 
       # Declare a standard Ruby function signature
       def declare_ruby_function(hir_func)
-        # Count regular parameters (non-keyword, non-keyword_rest, non-rest)
-        regular_params = hir_func.params.reject { |p| p.keyword || p.keyword_rest || p.rest }
+        # Count regular parameters (non-keyword, non-keyword_rest, non-rest, non-block)
+        regular_params = hir_func.params.reject { |p| p.keyword || p.keyword_rest || p.rest || p.block }
         keyword_params = hir_func.params.select(&:keyword)
         keyword_rest_param = hir_func.params.find(&:keyword_rest)
         rest_param = hir_func.params.find(&:rest)
@@ -667,6 +667,9 @@ module Konpeito
         # int rb_block_given_p(void) - check if block is given
         @rb_block_given_p = @mod.functions.add("rb_block_given_p", [], LLVM::Int32)
 
+        # VALUE rb_block_proc(void) - capture the current block as a Proc object
+        @rb_block_proc = @mod.functions.add("rb_block_proc", [], value_type)
+
         # rb_block_call - call method with block callback
         # VALUE rb_block_call(VALUE obj, ID mid, int argc, const VALUE *argv,
         #                     rb_block_call_func_t proc, VALUE data2)
@@ -1134,10 +1137,11 @@ module Konpeito
           @variable_types[var_name] = type_tag
         end
 
-        # Separate regular, keyword, and keyword_rest parameters
-        regular_params = hir_func.params.reject { |p| p.keyword || p.keyword_rest || p.rest }
+        # Separate regular, keyword, keyword_rest, and block parameters
+        regular_params = hir_func.params.reject { |p| p.keyword || p.keyword_rest || p.rest || p.block }
         keyword_params = hir_func.params.select(&:keyword)
         keyword_rest_param = hir_func.params.find(&:keyword_rest)
+        block_param = hir_func.params.find(&:block)
 
         # Check if this is a variadic function
         variadic_info = @variadic_functions[mangled]
@@ -1426,6 +1430,36 @@ module Konpeito
             @blocks[hir_func.body.first.label] = @builder.insert_block
           end
         end  # End of variadic_info else block
+
+        # Handle &blk block parameter: capture the current block as a Proc
+        if block_param
+          alloca = @variable_allocas[block_param.name]
+          if alloca
+            # Use rb_block_given_p to check, then rb_block_proc to capture
+            current_func = @builder.insert_block.parent
+            has_block_bb = current_func.basic_blocks.append("has_block_param")
+            no_block_bb = current_func.basic_blocks.append("no_block_param")
+            block_param_continue = current_func.basic_blocks.append("block_param_continue")
+
+            given = @builder.call(@rb_block_given_p)
+            is_given = @builder.icmp(:ne, given, LLVM::Int32.from_i(0))
+            @builder.cond(is_given, has_block_bb, no_block_bb)
+
+            @builder.position_at_end(has_block_bb)
+            proc_val = @builder.call(@rb_block_proc)
+            @builder.br(block_param_continue)
+
+            @builder.position_at_end(no_block_bb)
+            @builder.br(block_param_continue)
+
+            @builder.position_at_end(block_param_continue)
+            block_value = @builder.phi(value_type, { has_block_bb => proc_val, no_block_bb => @qnil })
+            @builder.store(block_value, alloca)
+
+            # Remap entry block since we created new basic blocks
+            @blocks[hir_func.body.first.label] = block_param_continue
+          end
+        end
 
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)
@@ -6962,9 +6996,7 @@ module Konpeito
             LLVM::Int32
           )
           # Check on main object (self)
-          self_val = @variables["self"] || @builder.call(@rb_funcallv, @rb_cObject,
-            @builder.call(@rb_intern, @builder.global_string_pointer("new")),
-            LLVM::Int32.from_i(0), LLVM::Pointer(value_type).null)
+          self_val = @variables["self"] || @builder.load2(value_type, @rb_cObject, "rb_cObject_self")
           name_ptr = @builder.global_string_pointer(inst.name)
           name_id = @builder.call(@rb_intern, name_ptr)
           is_defined = @builder.call(rb_respond_to, self_val, name_id)

@@ -1,3 +1,0 @@
-# JVM: timeout after 10s (deadlock/hang)
-# JVM thread synchronization primitives not fully implemented
-RUNTIME_HANG

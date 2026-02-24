@@ -74,9 +74,9 @@ module Konpeito
         # Skip class methods for now
         return false if func.owner_class
 
-        # Skip functions with rest params (*args) or keyword_rest (**kwargs)
-        # The inliner doesn't support rest param array aggregation
-        return false if func.params.any? { |p| p.rest || p.keyword_rest }
+        # Skip functions with rest params (*args), keyword_rest (**kwargs), or block params (&blk)
+        # The inliner doesn't support rest param array aggregation or block capture context
+        return false if func.params.any? { |p| p.rest || p.keyword_rest || p.block }
 
         # Skip functions with multiple blocks (contains if/while/etc.)
         # These have complex control flow that can't be simply inlined

@@ -285,7 +285,8 @@ module Konpeito
         hir_program.functions.each do |func|
           has_yield = body_contains_yield?(func.body)
           has_block_given = body_contains_block_given?(func.body)
-          @yield_functions.add(func.name.to_s) if has_yield || has_block_given
+          has_block_param = func.params.any?(&:block)
+          @yield_functions.add(func.name.to_s) if has_yield || has_block_given || has_block_param
         end
       end
 
@@ -670,7 +671,10 @@ module Konpeito
         @current_function_return_type = ret_type
 
         # Allocate parameter slots (use widened types for functions called with mixed arg types)
+        # Skip block params — they are handled via the __block__ slot below
+        block_param_def = func.params.find(&:block)
         func.params.each_with_index do |param, i|
+          next if param.block  # block param is handled as __block__ below
           type = widened_param_type(func, param, i)
           # :void (NilClass) is not a valid JVM parameter type — nil is null, which is Object reference
           type = :value if type == :void
@@ -681,14 +685,20 @@ module Konpeito
           end
         end
 
-        # If this function contains yield, add a __block__ parameter
+        # If this function contains yield or has &blk param, add a __block__ parameter
         @block_param_slot = nil
         @current_kblock_iface = nil
         func_has_yield = @yield_functions.include?(func.name.to_s)
         if func_has_yield
           @current_kblock_iface = yield_function_kblock_interface(func)
           @block_param_slot = @next_slot
-          allocate_slot("__block__", :value)  # KBlock interface reference (Object slot)
+          # Use block param name if available, otherwise __block__
+          block_slot_name = block_param_def ? block_param_def.name : "__block__"
+          allocate_slot(block_slot_name, :value)  # KBlock interface reference (Object slot)
+          # Track block param as kblock variable for .call() dispatch
+          if block_param_def
+            @variable_kblock_iface[block_param_def.name] = @current_kblock_iface
+          end
         end
 
         prescan_phi_nodes(func)
@@ -1926,6 +1936,23 @@ module Konpeito
           # Generate a generic KBlock0 (no-arg) or KBlockN (N-arg) call
           if recv_var
             return generate_generic_block_call(recv_var, args, result_var)
+          end
+        end
+
+        # Check for Math module method calls (Math.sqrt, Math.sin, etc.)
+        if receiver
+          math_receiver = false
+          if receiver.is_a?(HIR::ConstantLookup) && receiver.name.to_s == "Math"
+            math_receiver = true
+          else
+            recv_var = extract_var_name(receiver)
+            if recv_var && @variable_class_types[recv_var] == "Math"
+              math_receiver = true
+            end
+          end
+          if math_receiver
+            result = generate_math_call(method_name, args, result_var)
+            return result if result
           end
         end
 
@@ -4263,6 +4290,65 @@ module Konpeito
         end
 
         instructions
+      end
+
+      # Generate calls to Math module methods (Math.sqrt, Math.sin, etc.)
+      # Maps to java.lang.Math static methods.
+      MATH_METHODS = {
+        "sqrt" => "sqrt", "sin" => "sin", "cos" => "cos", "tan" => "tan",
+        "log" => "log", "log10" => "log10", "log2" => "log",
+        "exp" => "exp", "cbrt" => "cbrt",
+        "asin" => "asin", "acos" => "acos", "atan" => "atan",
+        "ceil" => "ceil", "floor" => "floor"
+      }.freeze
+
+      MATH_METHODS_2ARG = {
+        "atan2" => "atan2", "hypot" => "hypot", "pow" => "pow"
+      }.freeze
+
+      def generate_math_call(method_name, args, result_var)
+        if MATH_METHODS.key?(method_name) && args.size == 1
+          java_method = MATH_METHODS[method_name]
+          instructions = []
+          # Unbox argument to double
+          instructions.concat(load_value(args[0], :value))
+          instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+          instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                            "name" => "doubleValue", "descriptor" => "()D" }
+          # Call java.lang.Math method
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                            "name" => java_method, "descriptor" => "(D)D" }
+          # Box result
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                            "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+          if result_var
+            ensure_slot(result_var, :value)
+            instructions << store_instruction(result_var, :value)
+            @variable_types[result_var] = :value
+          end
+          return instructions
+        elsif MATH_METHODS_2ARG.key?(method_name) && args.size == 2
+          java_method = MATH_METHODS_2ARG[method_name]
+          instructions = []
+          # Unbox both arguments
+          args.each do |arg|
+            instructions.concat(load_value(arg, :value))
+            instructions << { "op" => "checkcast", "type" => "java/lang/Number" }
+            instructions << { "op" => "invokevirtual", "owner" => "java/lang/Number",
+                              "name" => "doubleValue", "descriptor" => "()D" }
+          end
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Math",
+                            "name" => java_method, "descriptor" => "(DD)D" }
+          instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                            "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+          if result_var
+            ensure_slot(result_var, :value)
+            instructions << store_instruction(result_var, :value)
+            @variable_types[result_var] = :value
+          end
+          return instructions
+        end
+        nil  # Not a known Math method
       end
 
       def generate_conversion_call(method_name, receiver, result_var)
@@ -6613,11 +6699,33 @@ module Konpeito
             store_instruction(result_var, :value)
           ]
         end
+        if name == "Math::PI"
+          ensure_slot(result_var, :value)
+          @variable_types[result_var] = :value
+          return [
+            { "op" => "getstatic", "owner" => "java/lang/Math",
+              "name" => "PI", "descriptor" => "D" },
+            { "op" => "invokestatic", "owner" => "java/lang/Double",
+              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" },
+            store_instruction(result_var, :value)
+          ]
+        end
+        if name == "Math::E"
+          ensure_slot(result_var, :value)
+          @variable_types[result_var] = :value
+          return [
+            { "op" => "getstatic", "owner" => "java/lang/Math",
+              "name" => "E", "descriptor" => "D" },
+            { "op" => "invokestatic", "owner" => "java/lang/Double",
+              "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" },
+            store_instruction(result_var, :value)
+          ]
+        end
 
         # Built-in Ruby class/module names (for ConstantLookup of Integer, String, etc.)
         builtin_classes = %w[
           Integer Float String Symbol Array Hash Regexp NilClass TrueClass FalseClass
-          Numeric Comparable Object BasicObject Kernel Enumerable
+          Numeric Comparable Object BasicObject Kernel Enumerable Math
           Range MatchData IO File Dir Time Proc Method
           StandardError RuntimeError ArgumentError TypeError NameError NoMethodError
           ZeroDivisionError RangeError IndexError KeyError IOError
@@ -8988,7 +9096,29 @@ module Konpeito
           break if yield_inst
         end
 
-        return get_or_create_kblock([], :value) unless yield_inst
+        # If no explicit yield, check for &blk.call() patterns
+        # (e.g., `def foo(&blk); arr.map(&blk); end` desugars blk.call)
+        unless yield_inst
+          block_param = func.params.find(&:block)
+          if block_param
+            blk_name = block_param.name.to_s
+            # Scan for blk.call(...) to determine the call arity
+            blk_call_inst = nil
+            each_instruction_recursive(func.body) do |inst|
+              if inst.is_a?(HIR::Call) && inst.method_name == "call"
+                recv_var = extract_var_name_from_hir(inst.receiver)
+                if recv_var == blk_name
+                  blk_call_inst = inst
+                end
+              end
+            end
+            if blk_call_inst
+              arg_types = blk_call_inst.args.map { :value }
+              return get_or_create_kblock(arg_types, :value)
+            end
+          end
+          return get_or_create_kblock([], :value)
+        end
 
         # Build a map of function parameter names to their resolved types
         param_type_map = {}
@@ -15512,7 +15642,7 @@ module Konpeito
       end
 
       def method_descriptor(func)
-        params_desc = func.params.each_with_index.map do |param, i|
+        params_desc = func.params.each_with_index.reject { |param, _i| param.block }.map do |param, i|
           t = widened_param_type(func, param, i)
           t = :value if t == :void  # Nil/void is not valid as JVM param type
           type_to_descriptor(t)
@@ -16661,10 +16791,13 @@ module Konpeito
 
         instructions.concat(load_value(inst.cv, :value))
         instructions << { "op" => "checkcast", "type" => "konpeito/runtime/KConditionVariable" }
+        # Pass the mutex so await() can release/reacquire it (Ruby CV#wait semantics)
+        instructions.concat(load_value(inst.mutex, :value))
+        instructions << { "op" => "checkcast", "type" => "java/util/concurrent/locks/ReentrantLock" }
         instructions << { "op" => "invokevirtual",
                           "owner" => "konpeito/runtime/KConditionVariable",
                           "name" => "await",
-                          "descriptor" => "()V" }
+                          "descriptor" => "(Ljava/util/concurrent/locks/ReentrantLock;)V" }
 
         if result_var
           ensure_slot(result_var, :value)

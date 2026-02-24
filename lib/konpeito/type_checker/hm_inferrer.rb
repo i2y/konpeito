@@ -1599,6 +1599,8 @@ module Konpeito
       # Infer block body without RBS block type info.
       # Block parameters become fresh TypeVars; captured variables retain outer scope types.
       def infer_block_body_without_rbs(block_node)
+        return if block_node.is_a?(Prism::BlockArgumentNode)
+
         push_env
         if block_node.parameters
           if block_node.parameters.is_a?(Prism::NumberedParametersNode)

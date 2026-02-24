@@ -1,3 +1,8 @@
-# Native: &blk (BlockArgumentNode) causes NoMethodError in HM inferrer
-# BlockArgumentNode does not have a 'parameters' method (unlike BlockNode)
-COMPILATION_ERROR
+# Native: rb_proc_new creates a Proc (not lambda), so arity returns -1, lambda? returns false
+# Lambda returning lambda has capture semantics issues with nested closures
+DIFF lambda with no args has arity 0
+DIFF lambda with one arg has arity 1
+DIFF lambda with two args has arity 2
+DIFF lambda#lambda? returns true
+DIFF lambda returning lambda captures outer variable
+DIFF lambda returning lambda reuses captured value

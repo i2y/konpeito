@@ -1,6 +1,1 @@
-# Native: rb_proc_new creates a Proc (not lambda), so arity returns -1, lambda? returns false
-# Nested closure fixed: escape-cells mode uses GC-safe Ruby Array snapshot
-DIFF lambda with no args has arity 0
-DIFF lambda with one arg has arity 1
-DIFF lambda with two args has arity 2
-DIFF lambda#lambda? returns true
+# All 10 tests pass: lambda? and arity fixed via rb_define_singleton_method; nested closures via escape-cells mode

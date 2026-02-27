@@ -639,6 +639,10 @@ module Konpeito
         # void rb_define_method(VALUE klass, const char *name, VALUE (*func)(...), int argc)
         @rb_define_method = @mod.functions.add("rb_define_method", [value_type, ptr_type, ptr_type, LLVM::Int32], LLVM.Void)
 
+        # void rb_define_singleton_method(VALUE obj, const char *name, VALUE (*func)(...), int argc)
+        @rb_define_singleton_method = @mod.functions.add("rb_define_singleton_method",
+          [value_type, ptr_type, ptr_type, LLVM::Int32], LLVM.Void)
+
         # Instance variable functions
         # VALUE rb_ivar_get(VALUE obj, ID id)
         @rb_ivar_get = @mod.functions.add("rb_ivar_get", [value_type, id_type], value_type)
@@ -4724,12 +4728,55 @@ module Konpeito
         # Call rb_proc_new to create the Proc object
         result = @builder.call(@rb_proc_new, callback_func, captures_data)
 
+        # Override lambda? and arity on the Proc singleton to match lambda semantics.
+        # rb_proc_new always creates a regular Proc (lambda?=false, arity=-1).
+        # We define singleton methods so the proc behaves like a lambda.
+        attach_lambda_singleton_methods(result, block_def.params.size)
+
         if inst.result_var
           @variables[inst.result_var] = result
           @variable_types[inst.result_var] = :value
         end
 
         result
+      end
+
+      # Attach lambda? and arity singleton methods to a Proc created via rb_proc_new.
+      # This makes the proc behave like a true Ruby lambda for introspection purposes.
+      def attach_lambda_singleton_methods(proc_val, param_count)
+        saved_block = @builder.insert_block
+
+        # --- Shared lambda_true helper (created once per module) ---
+        @lambda_true_func ||= begin
+          f = @mod.functions.add("__konpeito_lambda_true", [value_type], value_type)
+          bb = f.basic_blocks.append("entry")
+          @builder.position_at_end(bb)
+          @builder.ret(@qtrue)
+          f
+        end
+
+        # --- Per-arity helper (arity_N) ---
+        arity_func_name = "__konpeito_proc_arity_#{param_count}"
+        arity_func = @mod.functions[arity_func_name] || begin
+          f = @mod.functions.add(arity_func_name, [value_type], value_type)
+          bb = f.basic_blocks.append("entry")
+          @builder.position_at_end(bb)
+          arity_ruby = @builder.call(@rb_int2inum, LLVM::Int64.from_i(param_count), "arity_val")
+          @builder.ret(arity_ruby)
+          f
+        end
+
+        @builder.position_at_end(saved_block)
+
+        # rb_define_singleton_method(obj, name, func, argc)
+        # argc=0 means the Ruby method takes no arguments (VALUE self only in C)
+        name_lambda_q = @builder.global_string_pointer("lambda?", "str_lambda_q")
+        name_arity    = @builder.global_string_pointer("arity",    "str_arity")
+
+        @builder.call(@rb_define_singleton_method, proc_val, name_lambda_q,
+                      @lambda_true_func, LLVM::Int32.from_i(0))
+        @builder.call(@rb_define_singleton_method, proc_val, name_arity,
+                      arity_func, LLVM::Int32.from_i(0))
       end
 
       # Generate a call to a Proc object (from ProcCall HIR instruction)

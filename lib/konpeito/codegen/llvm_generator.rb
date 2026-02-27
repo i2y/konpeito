@@ -155,6 +155,16 @@ module Konpeito
       end
 
       # Declare a native function signature
+      # Infer native param type symbol from HIR param type (used when no RBS method sig is available,
+      # e.g. for monomorphized functions like dot_Vec2 whose name has no matching method entry).
+      def native_param_type_sym_from_hir(param)
+        t = param.type
+        return :Float64 if t == TypeChecker::Types::FLOAT || t&.name == :Float
+        return :Int64   if t == TypeChecker::Types::INTEGER || t&.name == :Integer
+        # Everything else (NativeClass, unknown) → use pointer (else branch in caller)
+        :OtherNativeClass
+      end
+
       def declare_native_function(hir_func, native_class_type)
         struct_type = get_or_create_native_class_struct(native_class_type)
         method_sig = native_class_type.methods[hir_func.name.to_sym]
@@ -163,11 +173,14 @@ module Konpeito
         param_types = [LLVM::Pointer(struct_type)]
 
         hir_func.params.each_with_index do |param, i|
-          param_type_sym = method_sig&.param_types&.[](i) || :Float64
+          # Prefer RBS-derived type; fall back to HIR param.type for monomorphized functions
+          # (monomorphized funcs like dot_Vec2 have no matching method_sig entry)
+          param_type_sym = method_sig&.param_types&.[](i) ||
+                           native_param_type_sym_from_hir(param)
           llvm_type = case param_type_sym
           when :Int64 then LLVM::Int64
           when :Float64 then LLVM::Double
-          else LLVM::Pointer(LLVM::Int8)  # Other NativeClass
+          else LLVM::Pointer(LLVM::Int8)  # Other NativeClass or value type
           end
           param_types << llvm_type
         end
@@ -1054,7 +1067,8 @@ module Konpeito
         # Store parameters (already unboxed)
         hir_func.params.each_with_index do |param, i|
           param_value = func.params[i + 1]  # +1 to skip self
-          param_type_sym = method_sig&.param_types&.[](i) || :Float64
+          param_type_sym = method_sig&.param_types&.[](i) ||
+                           native_param_type_sym_from_hir(param)
 
           # Determine type tag based on parameter type
           type_tag = case param_type_sym
@@ -6743,7 +6757,11 @@ module Konpeito
         # Set type tag if this is a native method call
         # Check if we're calling a method on self that's a NativeClass method
         if @current_native_class && inst.result_var
-          method_sig = @current_native_class.methods[func_name.to_sym]
+          # Try both the (possibly monomorphized) func_name and the original method name.
+          # Monomorphized names like "rn_Vec2_dot_Vec2" won't match the methods hash key
+          # ":dot", so fall back to inst.method_name to find the right method signature.
+          method_sig = @current_native_class.methods[func_name.to_sym] ||
+                       @current_native_class.methods[inst.method_name.to_sym]
           if method_sig
             result_type_tag = case method_sig.return_type
             when :Int64 then :i64

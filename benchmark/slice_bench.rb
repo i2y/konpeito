@@ -157,8 +157,8 @@ def create_slice_benchmark
       def self.new: (Integer size) -> SliceInt64
       def self.empty: () -> SliceInt64
       def []: (Integer index) -> Integer
+            | (Integer start, Integer count) -> SliceInt64
       def []=: (Integer index, Integer value) -> Integer
-      def []: (Integer start, Integer count) -> SliceInt64
       def size: () -> Integer
       def copy_from: (SliceInt64 source) -> SliceInt64
       def fill: (Integer value) -> SliceInt64
@@ -169,8 +169,8 @@ def create_slice_benchmark
       def self.new: (Integer size) -> SliceFloat64
       def self.empty: () -> SliceFloat64
       def []: (Integer index) -> Float
+            | (Integer start, Integer count) -> SliceFloat64
       def []=: (Integer index, Float value) -> Float
-      def []: (Integer start, Integer count) -> SliceFloat64
       def size: () -> Integer
       def copy_from: (SliceFloat64 source) -> SliceFloat64
       def fill: (Float value) -> SliceFloat64

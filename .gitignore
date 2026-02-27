@@ -42,6 +42,7 @@ Thumbs.db
 /out/
 /*.bundle
 /*.class
+*.class
 /*.jar
 
 # Root-level test/debug artifacts

@@ -1,1 +1,0 @@
-# JVM: All 25 tests pass (Integer()/Float() kernel methods now dispatched via invokedynamic)

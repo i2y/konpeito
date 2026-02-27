@@ -26,6 +26,11 @@ public class RubyDispatch {
      * jvm_method_name() converts: [] → op_aref, []= → op_aset, << → op_lshift,
      * empty? → empty_q, include? → include_q, etc.
      */
+    // Track frozen state for strings (Java strings are always immutable, but Ruby semantics
+    // distinguish between unfrozen and frozen strings). Uses identity comparison.
+    private static final java.util.Map<String, Boolean> FROZEN_STRINGS =
+        java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+
     private static final java.util.Map<String, String[]> RUBY_NAME_ALIASES = new java.util.HashMap<>();
     static {
         // Operator aliases
@@ -159,6 +164,13 @@ public class RubyDispatch {
                     return Long.valueOf((long)(Math.random() * (Long) methodArgs[0]));
                 }
                 return Math.random();
+            }
+            // Kernel#sprintf / Kernel#format
+            if ((methodName.equals("sprintf") || methodName.equals("format")) && methodArgs.length >= 1) {
+                String fmt = String.valueOf(methodArgs[0]);
+                Object[] fmtArgs = new Object[methodArgs.length - 1];
+                System.arraycopy(methodArgs, 1, fmtArgs, 0, fmtArgs.length);
+                return rubyFormatString(fmt, fmtArgs);
             }
             throw new NullPointerException("Method '" + methodName + "' called on null receiver");
         }
@@ -474,7 +486,33 @@ public class RubyDispatch {
                         }
                         return result;
                     }
+                    case "succ": case "next": return Long.valueOf(lv + 1);
+                    case "pred": return Long.valueOf(lv - 1);
+                    case "bit_length": return Long.valueOf(lv == 0 ? 0 : 64 - Long.numberOfLeadingZeros(Math.abs(lv)));
                 }
+            }
+            // Integer#upto(limit) { |i| ... }
+            if (args.length == 2 && args[0] instanceof Number && methodName.equals("upto")) {
+                long limit = ((Number) args[0]).longValue();
+                for (long i = lv; i <= limit; i++) invokeBlock(args[1], Long.valueOf(i));
+                return receiver;
+            }
+            // Integer#downto(limit) { |i| ... }
+            if (args.length == 2 && args[0] instanceof Number && methodName.equals("downto")) {
+                long limit = ((Number) args[0]).longValue();
+                for (long i = lv; i >= limit; i--) invokeBlock(args[1], Long.valueOf(i));
+                return receiver;
+            }
+            // Integer#step(limit, step) { |i| ... }
+            if (args.length == 3 && args[0] instanceof Number && args[1] instanceof Number && methodName.equals("step")) {
+                long limit = ((Number) args[0]).longValue();
+                long stepSize = ((Number) args[1]).longValue();
+                if (stepSize > 0) {
+                    for (long i = lv; i <= limit; i += stepSize) invokeBlock(args[2], Long.valueOf(i));
+                } else if (stepSize < 0) {
+                    for (long i = lv; i >= limit; i += stepSize) invokeBlock(args[2], Long.valueOf(i));
+                }
+                return receiver;
             }
         }
 
@@ -632,11 +670,26 @@ public class RubyDispatch {
                 if (methodName.equals("include_q") && args.length == 1) {
                     return rangeInclude(sv, args[0]);
                 }
+                if ((methodName.equals("cover_q") || methodName.equals("member_q")) && args.length == 1) {
+                    return rangeInclude(sv, args[0]);
+                }
                 if (methodName.equals("size") && args.length == 0) {
                     return rangeSize(sv);
                 }
                 if (methodName.equals("length") && args.length == 0) {
                     return rangeSize(sv);
+                }
+                if (methodName.equals("count") && args.length == 0) {
+                    return rangeSize(sv);
+                }
+                if (methodName.equals("count") && args.length == 1) {
+                    // count with block
+                    KArray<Object> elems = rangeToArray(sv);
+                    long count = 0;
+                    for (Object elem : elems) {
+                        if (isTruthy(invokeBlock(args[0], elem))) count++;
+                    }
+                    return Long.valueOf(count);
                 }
                 if (methodName.equals("min") && args.length == 0) {
                     return rangeMin(sv);
@@ -647,11 +700,29 @@ public class RubyDispatch {
                 if (methodName.equals("first") && args.length == 0) {
                     return rangeMin(sv);
                 }
+                if (methodName.equals("first") && args.length == 1 && args[0] instanceof Number) {
+                    int n = ((Number) args[0]).intValue();
+                    KArray<Object> all = rangeToArray(sv);
+                    KArray<Object> result = new KArray<>();
+                    for (int i = 0; i < Math.min(n, all.size()); i++) result.push(all.get(i));
+                    return result;
+                }
                 if (methodName.equals("last") && args.length == 0) {
                     return rangeMax(sv);
                 }
+                if (methodName.equals("last") && args.length == 1 && args[0] instanceof Number) {
+                    int n = ((Number) args[0]).intValue();
+                    KArray<Object> all = rangeToArray(sv);
+                    KArray<Object> result = new KArray<>();
+                    int start = Math.max(0, all.size() - n);
+                    for (int i = start; i < all.size(); i++) result.push(all.get(i));
+                    return result;
+                }
                 if (methodName.equals("k_class") && args.length == 0) {
                     return "Range";
+                }
+                if (methodName.equals("nil_q") && args.length == 0) {
+                    return Boolean.FALSE;
                 }
                 if (methodName.equals("to_s") && args.length == 0) {
                     return sv; // Range#to_s returns "start..end"
@@ -659,9 +730,71 @@ public class RubyDispatch {
                 if (methodName.equals("inspect") && args.length == 0) {
                     return sv;
                 }
+                if (methodName.equals("to_a") && args.length == 0) {
+                    return rangeToArray(sv);
+                }
                 if (methodName.equals("each") && args.length == 0) {
                     return rangeToArray(sv);
                 }
+                if (methodName.equals("each") && args.length == 1) {
+                    KArray<Object> elems = rangeToArray(sv);
+                    for (Object elem : elems) invokeBlock(args[0], elem);
+                    return receiver;
+                }
+                if (methodName.equals("map") && args.length == 1) {
+                    KArray<Object> elems = rangeToArray(sv);
+                    KArray<Object> result = new KArray<>();
+                    for (Object elem : elems) result.push(invokeBlock(args[0], elem));
+                    return result;
+                }
+                if (methodName.equals("select") && args.length == 1) {
+                    KArray<Object> elems = rangeToArray(sv);
+                    KArray<Object> result = new KArray<>();
+                    for (Object elem : elems) {
+                        if (isTruthy(invokeBlock(args[0], elem))) result.push(elem);
+                    }
+                    return result;
+                }
+                if (methodName.equals("reduce") || methodName.equals("inject")) {
+                    KArray<Object> elems = rangeToArray(sv);
+                    if (args.length == 1) {
+                        if (elems.isEmpty()) return null;
+                        Object acc = elems.get(0);
+                        for (int i = 1; i < elems.size(); i++) acc = invokeBlock(args[0], acc, elems.get(i));
+                        return acc;
+                    }
+                    if (args.length == 2) {
+                        Object acc = args[0];
+                        for (Object elem : elems) acc = invokeBlock(args[1], acc, elem);
+                        return acc;
+                    }
+                }
+                if (methodName.equals("step") && args.length == 2 && args[0] instanceof Number) {
+                    // step(n, block) — iterate with step
+                    long stepSize = ((Number) args[0]).longValue();
+                    Object[] parsed = parseRangeString(sv);
+                    try {
+                        long start = Long.parseLong((String) parsed[0]);
+                        long end = Long.parseLong((String) parsed[1]);
+                        boolean exclusive = (Boolean) parsed[2];
+                        for (long i = start; exclusive ? i < end : i <= end; i += stepSize) {
+                            invokeBlock(args[1], Long.valueOf(i));
+                        }
+                    } catch (NumberFormatException e) { /* ignore */ }
+                    return receiver;
+                }
+                if (methodName.equals("is_a_q") || methodName.equals("kind_of_q")) {
+                    if (args.length == 1) {
+                        String cn = classNameOf(args[0]);
+                        if ("Range".equals(cn) || "Enumerable".equals(cn) || "Object".equals(cn) || "BasicObject".equals(cn))
+                            return Boolean.TRUE;
+                        return Boolean.FALSE;
+                    }
+                }
+            }
+            // Proc.new { block } — when receiver is the String constant "Proc"
+            if ("Proc".equals(sv) && methodName.equals("new") && args.length == 1) {
+                return args[0]; // the block IS the proc in JVM backend
             }
 
             // String comparison and concatenation operators
@@ -705,6 +838,42 @@ public class RubyDispatch {
                         return idx >= 0 ? Long.valueOf(idx) : null;
                     }
                     case "encode": return sv; // Simplified: return self for encoding
+                    case "casecmp": return Long.valueOf(sv.compareToIgnoreCase(rv));
+                    case "casecmp_q": return Boolean.valueOf(sv.equalsIgnoreCase(rv));
+                    case "partition": {
+                        int idx = sv.indexOf(rv);
+                        if (idx < 0) {
+                            KArray<Object> r = new KArray<>(); r.push(sv); r.push(""); r.push(""); return r;
+                        }
+                        KArray<Object> r = new KArray<>();
+                        r.push(sv.substring(0, idx));
+                        r.push(rv);
+                        r.push(sv.substring(idx + rv.length()));
+                        return r;
+                    }
+                    case "rpartition": {
+                        int idx = sv.lastIndexOf(rv);
+                        if (idx < 0) {
+                            KArray<Object> r = new KArray<>(); r.push(""); r.push(""); r.push(sv); return r;
+                        }
+                        KArray<Object> r = new KArray<>();
+                        r.push(sv.substring(0, idx));
+                        r.push(rv);
+                        r.push(sv.substring(idx + rv.length()));
+                        return r;
+                    }
+                }
+            }
+
+            // String#% — format string
+            if (methodName.equals("op_mod") && args.length == 1) {
+                if (args[0] instanceof KArray) {
+                    KArray<?> fmtArr = (KArray<?>) args[0];
+                    Object[] fmtArgs = new Object[fmtArr.size()];
+                    for (int i = 0; i < fmtArr.size(); i++) fmtArgs[i] = fmtArr.get(i);
+                    return rubyFormatString(sv, fmtArgs);
+                } else {
+                    return rubyFormatString(sv, new Object[]{args[0]});
                 }
             }
 
@@ -823,7 +992,16 @@ public class RubyDispatch {
                     for (int i = 1; i <= m.groupCount(); i++) {
                         groups.push(m.group(i));
                     }
-                    return new KMatchData(groups, sv);
+                    java.util.Map<String, String> namedGrps = new java.util.LinkedHashMap<>();
+                    try {
+                        java.util.regex.Matcher nm = p.matcher(sv);
+                        if (nm.find()) {
+                            for (String gname : namedGroupNames(p)) {
+                                namedGrps.put(gname, nm.group(gname));
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                    return new KMatchData(groups, sv, m.start(), m.end(), namedGrps);
                 }
                 return null;
             }
@@ -975,12 +1153,15 @@ public class RubyDispatch {
                         }
                         return result;
                     }
-                    case "freeze": return sv; // Strings are immutable in Java
-                    case "dup": return sv;
+                    case "freeze": FROZEN_STRINGS.put(sv, Boolean.TRUE); return sv;
+                    case "dup": return sv; // dup returns unfrozen copy (same string in JVM)
                     case "clone": return sv;
+                    case "ord": return Long.valueOf(sv.isEmpty() ? 0L : sv.codePointAt(0));
+                    case "succ": case "next": return stringSucc(sv);
                     case "k_class": return "String";
                     case "nil_q": return Boolean.FALSE;
-                    case "frozen_q": return Boolean.FALSE; // Strings are not frozen by default in Ruby
+                    case "frozen_q": return FROZEN_STRINGS.getOrDefault(sv, Boolean.FALSE);
+                    case "encoding": return "UTF-8";
                     case "to_a": {
                         // Range#to_a — ranges are stored as strings "start..end" or "start...end"
                         return rangeToArray(sv);
@@ -1106,7 +1287,11 @@ public class RubyDispatch {
                             for (int gi = 1; gi <= m.groupCount(); gi++) {
                                 groups.push(m.group(gi));
                             }
-                            return new KMatchData(groups, str);
+                            java.util.Map<String, String> ng = new java.util.LinkedHashMap<>();
+                            try {
+                                for (String gn : namedGroupNames(pat)) { ng.put(gn, m.group(gn)); }
+                            } catch (Exception ignored) {}
+                            return new KMatchData(groups, str, m.start(), m.end(), ng);
                         }
                         return null;
                     }
@@ -1137,7 +1322,14 @@ public class RubyDispatch {
                     if (args.length == 1 && args[0] instanceof Long) {
                         return md.get(((Long) args[0]).intValue());
                     }
+                    // Named capture access: md[:name] or md["name"]
+                    if (args.length == 1 && args[0] instanceof String) {
+                        return md.getByName((String) args[0]);
+                    }
                     break;
+                case "pre_match": return md.pre_match();
+                case "post_match": return md.post_match();
+                case "named_captures": return md.named_captures();
                 case "to_s": return md.toString();
                 case "string": return md.string();
                 case "captures": return md.captures();
@@ -1564,6 +1756,162 @@ public class RubyDispatch {
                     }
                     return Long.valueOf(arr.size());
                 }
+                case "each_cons": {
+                    if (args.length == 2 && args[0] instanceof Number) {
+                        int n = ((Number) args[0]).intValue();
+                        Object blk = args[1];
+                        for (int i = 0; i <= arr.size() - n; i++) {
+                            KArray<Object> cons = new KArray<>();
+                            for (int j = i; j < i + n; j++) cons.push(arr.get(j));
+                            invokeBlock(blk, cons);
+                        }
+                        return null;
+                    }
+                    break;
+                }
+                case "each_slice": {
+                    if (args.length == 2 && args[0] instanceof Number) {
+                        int n = ((Number) args[0]).intValue();
+                        Object blk = args[1];
+                        for (int i = 0; i < arr.size(); i += n) {
+                            KArray<Object> slice = new KArray<>();
+                            for (int j = i; j < Math.min(i + n, arr.size()); j++) slice.push(arr.get(j));
+                            invokeBlock(blk, slice);
+                        }
+                        return null;
+                    }
+                    break;
+                }
+                case "combination": {
+                    if (args.length == 2 && args[0] instanceof Number) {
+                        int n = ((Number) args[0]).intValue();
+                        Object blk = args[1];
+                        int[] indices = new int[n];
+                        for (int i = 0; i < n; i++) indices[i] = i;
+                        while (indices.length > 0 && indices[0] <= arr.size() - n) {
+                            KArray<Object> combo = new KArray<>();
+                            for (int idx : indices) combo.push(arr.get(idx));
+                            invokeBlock(blk, combo);
+                            int i = n - 1;
+                            while (i >= 0 && indices[i] == arr.size() - n + i) i--;
+                            if (i < 0) break;
+                            indices[i]++;
+                            for (int j = i + 1; j < n; j++) indices[j] = indices[j - 1] + 1;
+                        }
+                        return arr;
+                    }
+                    if (args.length == 1 && args[0] instanceof Number) {
+                        int n = ((Number) args[0]).intValue();
+                        KArray<Object> result = new KArray<>();
+                        int[] indices = new int[n];
+                        for (int i = 0; i < n; i++) indices[i] = i;
+                        while (indices.length > 0 && indices[0] <= arr.size() - n) {
+                            KArray<Object> combo = new KArray<>();
+                            for (int idx : indices) combo.push(arr.get(idx));
+                            result.push(combo);
+                            int i = n - 1;
+                            while (i >= 0 && indices[i] == arr.size() - n + i) i--;
+                            if (i < 0) break;
+                            indices[i]++;
+                            for (int j = i + 1; j < n; j++) indices[j] = indices[j - 1] + 1;
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "permutation": {
+                    int n = (args.length >= 1 && args[0] instanceof Number) ? ((Number) args[0]).intValue() : arr.size();
+                    Object blk = (args.length >= 2) ? args[1] : (args.length == 1 && isCallable(args[0]) ? args[0] : null);
+                    // Generate all permutations using Heap's algorithm approach
+                    int[] idxs = new int[arr.size()];
+                    boolean[] used = new boolean[arr.size()];
+                    KArray<Object> perms = new KArray<>();
+                    generatePerms(arr, n, idxs, used, 0, perms);
+                    if (blk != null) {
+                        for (Object p2 : perms) invokeBlock(blk, p2);
+                        return arr;
+                    }
+                    return perms;
+                }
+                case "product": {
+                    if (args.length >= 1) {
+                        Object blk = null;
+                        java.util.List<KArray<?>> others = new java.util.ArrayList<>();
+                        for (Object a : args) {
+                            if (a instanceof KArray) others.add((KArray<?>) a);
+                            else if (isCallable(a)) blk = a;
+                        }
+                        // Start with single-element arrays for each element of arr
+                        KArray<Object> result = new KArray<>();
+                        for (Object elem : arr) {
+                            KArray<Object> wrap = new KArray<>();
+                            wrap.push(elem);
+                            result.push(wrap);
+                        }
+                        for (KArray<?> other : others) {
+                            KArray<Object> newResult = new KArray<>();
+                            for (Object left : result) {
+                                @SuppressWarnings("unchecked")
+                                KArray<Object> leftArr = (KArray<Object>) left;
+                                for (Object right : other) {
+                                    KArray<Object> combo = new KArray<>(leftArr);
+                                    combo.push(right);
+                                    newResult.push(combo);
+                                }
+                            }
+                            result = newResult;
+                        }
+                        if (blk != null) {
+                            for (Object p2 : result) invokeBlock(blk, p2);
+                            return arr;
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "uniq": {
+                    if (args.length == 0) {
+                        KArray<Object> result = new KArray<>();
+                        java.util.LinkedHashSet<Object> seen = new java.util.LinkedHashSet<>();
+                        for (Object elem : arr) {
+                            if (seen.add(elem)) result.push(elem);
+                        }
+                        return result;
+                    }
+                    if (args.length == 1) {
+                        KArray<Object> result = new KArray<>();
+                        java.util.LinkedHashSet<Object> seen = new java.util.LinkedHashSet<>();
+                        for (Object elem : arr) {
+                            Object key = invokeBlock(args[0], elem);
+                            if (seen.add(key)) result.push(elem);
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "to_h": {
+                    // Array of [k, v] pairs → Hash
+                    @SuppressWarnings("unchecked")
+                    KHash<Object, Object> result = new KHash<>();
+                    if (args.length == 0) {
+                        for (Object elem : arr) {
+                            if (elem instanceof KArray) {
+                                KArray<?> pair = (KArray<?>) elem;
+                                if (pair.size() >= 2) result.put(pair.get(0), pair.get(1));
+                            }
+                        }
+                    } else if (args.length == 1) {
+                        // with block: each element → block returns [k, v]
+                        for (Object elem : arr) {
+                            Object blockResult = invokeBlock(args[0], elem);
+                            if (blockResult instanceof KArray) {
+                                KArray<?> pair = (KArray<?>) blockResult;
+                                if (pair.size() >= 2) result.put(pair.get(0), pair.get(1));
+                            }
+                        }
+                    }
+                    return result;
+                }
                 case "frozen_q": return Boolean.valueOf(arr.isFrozen());
                 case "freeze": { arr.freeze(); return arr; }
             }
@@ -1611,8 +1959,17 @@ public class RubyDispatch {
                 case "fetch": {
                     if (args.length == 1) {
                         Object val = hash.get(args[0]);
-                        if (val != null) return val;
+                        if (val != null || hash.containsKey(args[0])) return val;
                         throw new RuntimeException("KeyError: key not found: " + args[0]);
+                    }
+                    if (args.length == 2) {
+                        Object val = hash.get(args[0]);
+                        if (val != null || hash.containsKey(args[0])) return val;
+                        // args[1] is a default value or block
+                        if (isCallable(args[1])) {
+                            return invokeBlock(args[1], args[0]);
+                        }
+                        return args[1];
                     }
                     break;
                 }
@@ -1736,8 +2093,8 @@ public class RubyDispatch {
                     }
                     return Long.valueOf(hash.size());
                 }
-                case "frozen_q": return Boolean.FALSE;
-                case "freeze": return hash;
+                case "frozen_q": return Boolean.valueOf(hash.isFrozen());
+                case "freeze": { hash.freeze(); return hash; }
                 case "to_a": {
                     KArray<Object> result = new KArray<>();
                     for (Map.Entry<?, ?> entry : hash.entrySet()) {
@@ -1829,6 +2186,85 @@ public class RubyDispatch {
                     }
                     break;
                 }
+                case "transform_keys": {
+                    if (args.length == 1) {
+                        @SuppressWarnings("unchecked")
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Map.Entry<?, ?> entry : hash.entrySet()) {
+                            Object newKey = invokeBlock(args[0], entry.getKey());
+                            result.put(newKey, entry.getValue());
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "transform_values": {
+                    if (args.length == 1) {
+                        @SuppressWarnings("unchecked")
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Map.Entry<?, ?> entry : hash.entrySet()) {
+                            Object newVal = invokeBlock(args[0], entry.getValue());
+                            result.put(entry.getKey(), newVal);
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "compact": {
+                    if (args.length == 0) {
+                        @SuppressWarnings("unchecked")
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Map.Entry<?, ?> entry : hash.entrySet()) {
+                            if (entry.getValue() != null) result.put(entry.getKey(), entry.getValue());
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "except": {
+                    @SuppressWarnings("unchecked")
+                    KHash<Object, Object> result = new KHash<>(hash);
+                    for (Object k : args) result.remove(k);
+                    return result;
+                }
+                case "slice": {
+                    @SuppressWarnings("unchecked")
+                    KHash<Object, Object> result = new KHash<>();
+                    for (Object k : args) {
+                        Object v = hash.get(k);
+                        if (v != null || hash.containsKey(k)) result.put(k, v);
+                    }
+                    return result;
+                }
+                case "invert": {
+                    if (args.length == 0) {
+                        @SuppressWarnings("unchecked")
+                        KHash<Object, Object> result = new KHash<>();
+                        for (Map.Entry<?, ?> entry : hash.entrySet()) {
+                            result.put(entry.getValue(), entry.getKey());
+                        }
+                        return result;
+                    }
+                    break;
+                }
+                case "dig": {
+                    if (args.length >= 1) {
+                        Object val = hash.get(args[0]);
+                        for (int i = 1; i < args.length; i++) {
+                            if (val == null) return null;
+                            if (val instanceof KHash) {
+                                val = ((KHash<?, ?>) val).get(args[i]);
+                            } else if (val instanceof KArray) {
+                                int idx = ((Number) args[i]).intValue();
+                                val = ((KArray<?>) val).get(idx);
+                            } else {
+                                return null;
+                            }
+                        }
+                        return val;
+                    }
+                    break;
+                }
             }
         }
 
@@ -1845,6 +2281,10 @@ public class RubyDispatch {
             String receiverClassName = rubyClassName(receiver);
             if (className != null) {
                 if (className.equals(receiverClassName) || className.equals("Object") || className.equals("BasicObject")) {
+                    return Boolean.TRUE;
+                }
+                // Callable/lambda/proc receivers respond to is_a?(Proc)
+                if (className.equals("Proc") && isCallable(receiver)) {
                     return Boolean.TRUE;
                 }
                 // Check if the receiver's class is a subclass (via Java inheritance)
@@ -1905,11 +2345,108 @@ public class RubyDispatch {
                     case "each": case "map": case "select": case "reject": case "reduce":
                     case "find": case "any_q": case "all_q": case "none_q": case "join":
                     case "min": case "max": case "count": case "delete": case "index":
+                    case "freeze": case "frozen_q": case "tally": case "zip": case "each_cons":
+                    case "each_slice": case "each_with_index": case "each_with_object":
+                    case "sort_by": case "min_by": case "max_by": case "group_by":
+                    case "flat_map": case "take": case "drop": case "combination": case "permutation":
+                    case "product": case "to_h":
+                        return Boolean.TRUE;
+                }
+            }
+            if (receiver instanceof String) {
+                switch (checkName) {
+                    case "upcase": case "downcase": case "length": case "size": case "strip":
+                    case "chomp": case "chop": case "reverse": case "chars": case "bytes":
+                    case "split": case "include_q": case "start_with_q": case "end_with_q":
+                    case "gsub": case "sub": case "match": case "replace": case "to_i": case "to_f":
+                    case "to_s": case "empty_q": case "frozen_q": case "freeze": case "ord":
+                    case "succ": case "next": case "swapcase": case "capitalize": case "lstrip":
+                    case "rstrip": case "index": case "tr": case "count": case "delete":
+                    case "encode": case "force_encoding": case "encoding": case "bytesize":
+                    case "center": case "ljust": case "rjust": case "casecmp": case "casecmp_q":
+                    case "partition": case "rpartition": case "scan":
+                        return Boolean.TRUE;
+                }
+            }
+            if (receiver instanceof Long || receiver instanceof Double) {
+                switch (checkName) {
+                    case "to_i": case "to_f": case "to_s": case "abs": case "zero_q":
+                    case "positive_q": case "negative_q": case "even_q": case "odd_q":
+                    case "times": case "upto": case "downto": case "succ": case "next": case "pred":
+                    case "frozen_q": case "ceil": case "floor": case "round":
+                        return Boolean.TRUE;
+                }
+            }
+            if (receiver instanceof KHash) {
+                switch (checkName) {
+                    case "keys": case "values": case "each": case "map": case "select":
+                    case "reject": case "merge": case "store": case "delete": case "fetch":
+                    case "include_q": case "key_q": case "has_key_q": case "size": case "length":
+                    case "empty_q": case "to_a": case "flatten": case "any_q": case "all_q":
+                    case "none_q": case "count": case "transform_keys": case "transform_values":
+                    case "compact": case "except": case "slice": case "invert": case "dig":
+                    case "min_by": case "max_by": case "sort_by": case "group_by":
                     case "freeze": case "frozen_q":
                         return Boolean.TRUE;
                 }
             }
+            if (isCallable(receiver)) {
+                switch (checkName) {
+                    case "call": case "arity": case "lambda_q": case "curry":
+                        return Boolean.TRUE;
+                }
+            }
             return Boolean.FALSE;
+        }
+
+        // Callable/Block/Lambda methods: arity, lambda?, is_a?(Proc), call
+        if (isCallable(receiver)) {
+            if (methodName.equals("arity") && args.length == 0) {
+                for (java.lang.reflect.Method m : receiver.getClass().getMethods()) {
+                    if (m.getName().equals("call") && !m.isBridge()) {
+                        return Long.valueOf(m.getParameterCount());
+                    }
+                }
+                return 0L;
+            }
+            if ((methodName.equals("lambda_q")) && args.length == 0) {
+                return Boolean.TRUE;
+            }
+            if ((methodName.equals("is_a_q") || methodName.equals("kind_of_q") || methodName.equals("instance_of_q")) && args.length == 1) {
+                String cn = classNameOf(args[0]);
+                if ("Proc".equals(cn) || "Object".equals(cn) || "BasicObject".equals(cn)) return Boolean.TRUE;
+                return Boolean.FALSE;
+            }
+            if (methodName.equals("call")) {
+                return invokeBlock(receiver, args);
+            }
+            if (methodName.equals("k_class") && args.length == 0) {
+                return "Proc";
+            }
+            if (methodName.equals("nil_q") && args.length == 0) {
+                return Boolean.FALSE;
+            }
+        }
+
+        // Universal Object methods: tap, then/yield_self, send
+        if (methodName.equals("tap") && args.length == 1) {
+            invokeBlock(args[0], receiver);
+            return receiver;
+        }
+        if ((methodName.equals("then") || methodName.equals("yield_self")) && args.length == 1) {
+            return invokeBlock(args[0], receiver);
+        }
+        if (methodName.equals("send") || methodName.equals("__send__")) {
+            if (args.length >= 1) {
+                String sendMethod = String.valueOf(args[0]);
+                // dispatch(methodName, allArgs) where allArgs[0] = receiver
+                Object[] allArgs = new Object[args.length];
+                allArgs[0] = receiver;
+                System.arraycopy(args, 1, allArgs, 1, args.length - 1);
+                try { return dispatch(sendMethod, allArgs); } catch (Throwable t) {
+                    throw new RuntimeException(t.getMessage(), t);
+                }
+            }
         }
 
         return SENTINEL;
@@ -2351,6 +2888,21 @@ public class RubyDispatch {
     }
 
     /**
+     * Check if an object is a callable block (has a "call" method).
+     */
+    private static boolean isCallable(Object o) {
+        if (o == null) return false;
+        if (o instanceof Number || o instanceof String || o instanceof Boolean
+            || o instanceof KArray || o instanceof KHash || o instanceof java.util.regex.Pattern) {
+            return false;
+        }
+        for (java.lang.reflect.Method m : o.getClass().getMethods()) {
+            if (m.getName().equals("call")) return true;
+        }
+        return false;
+    }
+
+    /**
      * Ruby truthiness check: everything is truthy except null (nil) and false.
      */
     public static boolean isTruthy(Object value) {
@@ -2496,5 +3048,166 @@ public class RubyDispatch {
     public static boolean unboxBoolean(Object o) {
         if (o == null) return false;
         return ((Boolean) o).booleanValue();
+    }
+
+    /**
+     * Ruby sprintf/format: converts Ruby-style format string to Java format.
+     */
+    private static String rubyFormatString(String fmt, Object[] args) {
+        StringBuilder result = new StringBuilder();
+        int argIdx = 0;
+        int i = 0;
+        while (i < fmt.length()) {
+            char c = fmt.charAt(i);
+            if (c != '%') { result.append(c); i++; continue; }
+            i++;
+            if (i >= fmt.length()) { result.append('%'); break; }
+            if (fmt.charAt(i) == '%') { result.append('%'); i++; continue; }
+            StringBuilder spec = new StringBuilder("%");
+            while (i < fmt.length() && "-+ #0".indexOf(fmt.charAt(i)) >= 0) {
+                spec.append(fmt.charAt(i++));
+            }
+            while (i < fmt.length() && Character.isDigit(fmt.charAt(i))) {
+                spec.append(fmt.charAt(i++));
+            }
+            if (i < fmt.length() && fmt.charAt(i) == '.') {
+                spec.append(fmt.charAt(i++));
+                while (i < fmt.length() && Character.isDigit(fmt.charAt(i))) {
+                    spec.append(fmt.charAt(i++));
+                }
+            }
+            if (i >= fmt.length()) break;
+            char type = fmt.charAt(i++);
+            Object arg = argIdx < args.length ? args[argIdx++] : null;
+            switch (type) {
+                case 'd': case 'i': {
+                    spec.append('d');
+                    long lv2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append(String.format(spec.toString(), lv2));
+                    break;
+                }
+                case 'f': {
+                    spec.append('f');
+                    double dv2 = (arg instanceof Number) ? ((Number) arg).doubleValue() : 0.0;
+                    result.append(String.format(spec.toString(), dv2));
+                    break;
+                }
+                case 'e': {
+                    spec.append('e');
+                    double ev2 = (arg instanceof Number) ? ((Number) arg).doubleValue() : 0.0;
+                    result.append(String.format(spec.toString(), ev2));
+                    break;
+                }
+                case 'g': {
+                    spec.append('g');
+                    double gv2 = (arg instanceof Number) ? ((Number) arg).doubleValue() : 0.0;
+                    result.append(String.format(spec.toString(), gv2));
+                    break;
+                }
+                case 's': {
+                    spec.append('s');
+                    result.append(String.format(spec.toString(), String.valueOf(arg)));
+                    break;
+                }
+                case 'x': {
+                    spec.append('x');
+                    long xv2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append(String.format(spec.toString(), xv2));
+                    break;
+                }
+                case 'X': {
+                    spec.append('X');
+                    long Xv2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append(String.format(spec.toString(), Xv2));
+                    break;
+                }
+                case 'o': {
+                    spec.append('o');
+                    long ov2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append(String.format(spec.toString(), ov2));
+                    break;
+                }
+                case 'b': {
+                    long bv2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append(Long.toBinaryString(bv2));
+                    break;
+                }
+                case 'c': {
+                    long cv2 = (arg instanceof Number) ? ((Number) arg).longValue() : 0L;
+                    result.append((char) cv2);
+                    break;
+                }
+                default:
+                    result.append('%').append(type);
+            }
+        }
+        return result.toString();
+    }
+
+    /**
+     * Ruby String#succ/next: returns the next string in sequence.
+     */
+    private static String stringSucc(String s) {
+        if (s.isEmpty()) return "";
+        char[] chars = s.toCharArray();
+        int i = chars.length - 1;
+        boolean carry = true;
+        while (i >= 0 && carry) {
+            char c = chars[i];
+            if (c >= 'a' && c <= 'z') {
+                chars[i] = (char)(c == 'z' ? 'a' : c + 1);
+                carry = (c == 'z');
+            } else if (c >= 'A' && c <= 'Z') {
+                chars[i] = (char)(c == 'Z' ? 'A' : c + 1);
+                carry = (c == 'Z');
+            } else if (c >= '0' && c <= '9') {
+                chars[i] = (char)(c == '9' ? '0' : c + 1);
+                carry = (c == '9');
+            } else {
+                chars[i] = (char)(c + 1);
+                carry = false;
+            }
+            i--;
+        }
+        if (carry) {
+            char first = chars[0];
+            char prefix;
+            if (first >= 'a' && first <= 'z') prefix = 'a';
+            else if (first >= 'A' && first <= 'Z') prefix = 'A';
+            else if (first >= '0' && first <= '9') prefix = '1';
+            else prefix = (char)(first + 1);
+            return prefix + new String(chars);
+        }
+        return new String(chars);
+    }
+
+    /**
+     * Extract named group names from a regex Pattern by scanning its pattern string.
+     */
+    private static java.util.List<String> namedGroupNames(java.util.regex.Pattern pat) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        java.util.regex.Matcher nm = java.util.regex.Pattern.compile("\\(\\?<([a-zA-Z][a-zA-Z0-9]*)>").matcher(pat.pattern());
+        while (nm.find()) names.add(nm.group(1));
+        return names;
+    }
+
+    /**
+     * Generate all r-permutations of arr into result.
+     */
+    @SuppressWarnings("unchecked")
+    private static void generatePerms(KArray<?> arr, int r, int[] indices, boolean[] used, int depth, KArray<Object> result) {
+        if (depth == r) {
+            KArray<Object> perm = new KArray<>();
+            for (int pi = 0; pi < r; pi++) perm.push(arr.get(indices[pi]));
+            result.push(perm);
+            return;
+        }
+        for (int idx = 0; idx < arr.size(); idx++) {
+            if (used[idx]) continue;
+            used[idx] = true;
+            indices[depth] = idx;
+            generatePerms(arr, r, indices, used, depth + 1, result);
+            used[idx] = false;
+        }
     }
 }

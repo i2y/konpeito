@@ -1704,6 +1704,13 @@ module Konpeito
         # Determine scope (module/class context)
         scope = @current_module || @current_class
 
+        # Track top-level constants (scope == nil) for static Init registration in native backend.
+        # __main__ is never called from Init, so top-level constants must be set explicitly.
+        if scope.nil?
+          literal_node = visit_literal_value(typed_node.children.first)
+          @program.toplevel_constants << [name, literal_node]
+        end
+
         inst = StoreConstant.new(name: name, value: value, scope: scope, type: typed_node.type)
         emit(inst)
         value
@@ -2133,38 +2140,65 @@ module Konpeito
           block = visit_block_def(block_child)
         end
 
-        # Handle &blk block argument reference (e.g., arr.map(&blk))
+        # Handle &blk block argument reference (e.g., arr.map(&blk)) or
+        # &:symbol Symbol#to_proc (e.g., arr.map(&:upcase))
         unless block
           block_arg_child = typed_node.children.find { |c| c.node_type == :block_argument }
           if block_arg_child
             blk_node = block_arg_child.node
             if blk_node.respond_to?(:expression) && blk_node.expression
-              blk_name = blk_node.expression.name.to_s
-              # Create a wrapper BlockDef: { |__block_arg_param| blk.call(__block_arg_param) }
-              # Load blk from captures inside the block body (not from outer scope)
-              param_name = "__block_arg_param"
-              param = Param.new(name: param_name, type: TypeChecker::Types::UNTYPED)
-              param_var = LocalVar.new(name: param_name, type: TypeChecker::Types::UNTYPED)
-              param_load = LoadLocal.new(var: param_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
-              blk_local_var = LocalVar.new(name: blk_name, type: TypeChecker::Types::UNTYPED)
-              blk_load = LoadLocal.new(var: blk_local_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
-              call_inst = Call.new(
-                receiver: blk_load,
-                method_name: "call",
-                args: [param_load],
-                type: TypeChecker::Types::UNTYPED,
-                result_var: new_temp_var
-              )
-              # Wrap in a BasicBlock (BlockDef.body expects Array[BasicBlock])
-              bb = BasicBlock.new(label: "block_arg_body")
-              bb.add_instruction(blk_load)
-              bb.add_instruction(param_load)
-              bb.add_instruction(call_inst)
-              block = BlockDef.new(
-                params: [param],
-                body: [bb],
-                captures: [Capture.new(name: blk_name, type: TypeChecker::Types::UNTYPED)]
-              )
+              expr = blk_node.expression
+
+              if expr.is_a?(Prism::SymbolNode)
+                # &:method_name — Symbol#to_proc: create { |x| x.method_name }
+                sym_method = expr.value.to_s
+                param_name = "__sym_proc_param"
+                param = Param.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+                param_var = LocalVar.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+                param_load = LoadLocal.new(var: param_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+                call_inst = Call.new(
+                  receiver: param_load,
+                  method_name: sym_method,
+                  args: [],
+                  type: TypeChecker::Types::UNTYPED,
+                  result_var: new_temp_var
+                )
+                bb = BasicBlock.new(label: "sym_proc_body")
+                bb.add_instruction(param_load)
+                bb.add_instruction(call_inst)
+                block = BlockDef.new(
+                  params: [param],
+                  body: [bb],
+                  captures: []
+                )
+              else
+                blk_name = expr.name.to_s
+                # Create a wrapper BlockDef: { |__block_arg_param| blk.call(__block_arg_param) }
+                # Load blk from captures inside the block body (not from outer scope)
+                param_name = "__block_arg_param"
+                param = Param.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+                param_var = LocalVar.new(name: param_name, type: TypeChecker::Types::UNTYPED)
+                param_load = LoadLocal.new(var: param_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+                blk_local_var = LocalVar.new(name: blk_name, type: TypeChecker::Types::UNTYPED)
+                blk_load = LoadLocal.new(var: blk_local_var, type: TypeChecker::Types::UNTYPED, result_var: new_temp_var)
+                call_inst = Call.new(
+                  receiver: blk_load,
+                  method_name: "call",
+                  args: [param_load],
+                  type: TypeChecker::Types::UNTYPED,
+                  result_var: new_temp_var
+                )
+                # Wrap in a BasicBlock (BlockDef.body expects Array[BasicBlock])
+                bb = BasicBlock.new(label: "block_arg_body")
+                bb.add_instruction(blk_load)
+                bb.add_instruction(param_load)
+                bb.add_instruction(call_inst)
+                block = BlockDef.new(
+                  params: [param],
+                  body: [bb],
+                  captures: [Capture.new(name: blk_name, type: TypeChecker::Types::UNTYPED)]
+                )
+              end
             end
           end
         end

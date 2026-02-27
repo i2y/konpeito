@@ -1,4 +1,0 @@
-# JVM: 28 pass, 1 fail (diff 1)
-# String#frozen? always returns true on JVM (Java strings are immutable)
-# Unfrozen strings incorrectly report as frozen
-String#frozen? returns false for unfrozen string

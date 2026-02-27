@@ -1,3 +1,0 @@
-# JVM: nil stored to Integer field becomes 0L — &&= cannot detect nil vs 0
-# Nullable type support needed to distinguish nil from integer 0
-@val &&= does not assign when nil

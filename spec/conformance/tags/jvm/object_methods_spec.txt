@@ -1,3 +1,0 @@
-# JVM: 35 pass, 1 fail (diff 1)
-# Object#freeze state tracking not implemented (JVM objects don't track freeze state at runtime)
-Object#freeze sets the object as frozen

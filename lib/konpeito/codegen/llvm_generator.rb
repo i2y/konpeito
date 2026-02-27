@@ -2057,9 +2057,10 @@ module Konpeito
       end
 
       def generate_string_lit(inst)
-        # Create global string constant
+        # Create global string constant with UTF-8 encoding (Ruby default for string literals)
         str_ptr = @builder.global_string_pointer(inst.value)
-        ruby_str = @builder.call(@rb_str_new_cstr, str_ptr)
+        len = LLVM::Int64.from_i(inst.value.bytesize)
+        ruby_str = @builder.call(@rb_utf8_str_new, str_ptr, len)
         @variables[inst.result_var] = ruby_str if inst.result_var
         ruby_str
       end
@@ -4354,7 +4355,9 @@ module Konpeito
 
       # Generate a callback function for rb_block_call
       # Signature: VALUE func(VALUE yielded_arg, VALUE data2, int argc, VALUE *argv, VALUE blockarg)
-      def generate_block_callback(block_def, method_name, captures = [], capture_types = {})
+      # escape_cells_mode: when true, data2 is a Ruby Array VALUE (GC-safe heap)
+      #   used for procs created inside block callbacks (nested lambda capture safety)
+      def generate_block_callback(block_def, method_name, captures = [], capture_types = {}, escape_cells_mode: false)
         return nil unless block_def
 
         # Create a unique name for the callback
@@ -4373,35 +4376,59 @@ module Konpeito
         saved_vars = @variables.dup
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
+        saved_in_block_callback = @in_block_callback
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
 
-        # Reset variable tracking for callback scope
+        # Reset variable tracking for callback scope.
+        # Set @in_block_callback so nested proc creation uses GC-safe escape-cells mode.
+        @in_block_callback = true
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
 
         # Setup captured variable access through data2 pointer
-        # data2 is a pointer to array of VALUE* (pointers to captured variables)
         unless captures.empty?
-          ptr_type = LLVM::Pointer(value_type)
-          array_type = LLVM::Array(ptr_type, captures.size)
-          captures_ptr = @builder.int2ptr(callback_func.params[1],
-            LLVM::Pointer(array_type), "captures_ptr")
+          if escape_cells_mode
+            # data2 is a Ruby Array VALUE (GC-safe heap snapshot).
+            # Read each capture via rb_ary_entry(data2, i) and store in a local alloca.
+            # This mode is used for procs created inside block callbacks to avoid
+            # dangling stack pointers when the outer callback returns.
+            ary_val = callback_func.params[1]  # already VALUE (Ruby Array)
+            captures.each_with_index do |capture, i|
+              val = @builder.call(@rb_ary_entry, ary_val,
+                                  LLVM::Int64.from_i(i), "esc_#{capture.name}")
+              # Store in an alloca so LoadLocal/StoreLocal can use it normally.
+              # Writes to this alloca stay local (no back-write to the GC array),
+              # which is correct for snapshots from a returned outer scope.
+              cap_alloca = @builder.alloca(value_type, "esc_alloca_#{capture.name}")
+              @builder.store(val, cap_alloca)
+              @variable_allocas[capture.name] = cap_alloca
+              @variable_types[capture.name] = capture_types[capture.name] || :value
+            end
+          else
+            # data2 is a pointer to array of VALUE* (pointers to captured variables).
+            # Used for procs created in method scope — the outer stack stays alive
+            # for the proc's lifetime, so dangling is not a concern.
+            ptr_type = LLVM::Pointer(value_type)
+            array_type = LLVM::Array(ptr_type, captures.size)
+            captures_ptr = @builder.int2ptr(callback_func.params[1],
+              LLVM::Pointer(array_type), "captures_ptr")
 
-          captures.each_with_index do |capture, i|
-            # Get pointer to the pointer (VALUE**)
-            elem_ptr_ptr = @builder.gep2(array_type, captures_ptr,
-              [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)], "cap_#{capture.name}_ptr_ptr")
-            # Load the pointer to the variable (VALUE*)
-            elem_ptr = @builder.load2(ptr_type, elem_ptr_ptr, "cap_#{capture.name}_ptr")
+            captures.each_with_index do |capture, i|
+              # Get pointer to the pointer (VALUE**)
+              elem_ptr_ptr = @builder.gep2(array_type, captures_ptr,
+                [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)], "cap_#{capture.name}_ptr_ptr")
+              # Load the pointer to the variable (VALUE*)
+              elem_ptr = @builder.load2(ptr_type, elem_ptr_ptr, "cap_#{capture.name}_ptr")
 
-            # Store in variable_allocas so LoadLocal/StoreLocal can use it
-            @variable_allocas[capture.name] = elem_ptr
-            # Preserve the original type from outer scope
-            @variable_types[capture.name] = capture_types[capture.name] || :value
+              # Store in variable_allocas so LoadLocal/StoreLocal can use it
+              @variable_allocas[capture.name] = elem_ptr
+              # Preserve the original type from outer scope
+              @variable_types[capture.name] = capture_types[capture.name] || :value
+            end
           end
         end
 
@@ -4619,6 +4646,7 @@ module Konpeito
         @variables = saved_vars
         @variable_types = saved_types
         @variable_allocas = saved_allocas
+        @in_block_callback = saved_in_block_callback
 
         callback_func
       end
@@ -4635,27 +4663,57 @@ module Konpeito
           capture_types[cap.name] = @variable_types[cap.name]
         end
 
-        # Create the callback function (same as block callback)
-        callback_func = generate_block_callback(block_def, "proc", captures, capture_types)
+        # Choose capture strategy based on whether we are inside a block callback.
+        #
+        # When @in_block_callback is true (i.e. this proc is being created inside
+        # another lambda/block callback), the outer callback's stack will be freed
+        # before this inner proc is ever called. Using pointer-to-stack-alloca would
+        # leave dangling pointers. Instead we snapshot the current VALUES into a
+        # GC-tracked Ruby Array so they survive after the outer callback returns.
+        #
+        # When @in_block_callback is false (method scope), the outer stack stays
+        # alive for the proc's lifetime, so we use the pointer-to-alloca approach
+        # which also supports cross-scope mutation (e.g. `x = 0; inc = -> { x += 1 }`).
+        use_escape_cells = @in_block_callback && !captures.empty?
 
-        # Setup captures data if there are any
+        # Create the callback function
+        callback_func = generate_block_callback(block_def, "proc", captures, capture_types,
+                                                escape_cells_mode: use_escape_cells)
+
+        # Setup captures data
         if captures.empty?
           captures_data = LLVM::Int64.from_i(0)  # NULL for no captures
+        elsif use_escape_cells
+          # Build a Ruby Array holding a snapshot of each captured VALUE.
+          # data2 in the callback receives this Array VALUE directly — the GC
+          # keeps it (and the stored VALUEs) alive regardless of stack lifetime.
+          esc_ary = @builder.call(@rb_ary_new_capa, LLVM::Int64.from_i(captures.size),
+                                  "esc_ary")
+          captures.each do |capture|
+            # Load current VALUE from the alloca (or use 0/Qnil if missing)
+            val = if @variable_allocas[capture.name]
+                    @builder.load2(value_type, @variable_allocas[capture.name],
+                                   "esc_load_#{capture.name}")
+                  else
+                    @qnil
+                  end
+            @builder.call(@rb_ary_push, esc_ary, val)
+          end
+          # Pass the Ruby Array VALUE directly as data2 (cast to i64 / VALUE)
+          captures_data = esc_ary
         else
-          # Allocate array of pointers to captured variables
+          # Allocate array of pointers to captured variables (on stack — safe for
+          # method-scope procs because the method outlives the proc calls).
           ptr_type = LLVM::Pointer(value_type)
           array_type = LLVM::Array(ptr_type, captures.size)
           captures_array = @builder.alloca(array_type, "proc_captures")
 
           captures.each_with_index do |capture, i|
-            # Get the alloca for this captured variable
             alloca = @variable_allocas[capture.name]
+            ptr = @builder.gep(captures_array, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
             if alloca
-              ptr = @builder.gep(captures_array, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
               @builder.store(alloca, ptr)
             else
-              # Variable not found, store null
-              ptr = @builder.gep(captures_array, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
               @builder.store(LLVM::Pointer(value_type).null, ptr)
             end
           end
@@ -4998,31 +5056,85 @@ module Konpeito
           end
         end
 
+        # Pre-allocate allocas for block-local variables
+        block_local_vars = collect_local_variables_in_block(block_def)
+        capture_names = captures.map(&:name)
+        block_local_vars.each do |var_name, var_type|
+          next if capture_names.include?(var_name)
+          next if @variable_allocas[var_name]
+          llvm_type, type_tag = llvm_type_for_ruby_type(var_type)
+          alloca = @builder.alloca(llvm_type, "blk_#{var_name}")
+          @variable_allocas[var_name] = alloca
+          @variable_types[var_name] = type_tag
+        end
+
         # Compile block body
-        result = @qnil
-        result_type = :value
-        last_inst = nil
-        block_def.body.each do |basic_block|
-          basic_block.instructions.each do |hir_inst|
-            result = generate_instruction(hir_inst)
-            last_inst = hir_inst
+        if block_def.body.size > 1
+          # Multi-block body (contains while/if control flow)
+          saved_blocks = @blocks.dup
+          saved_return_blocks = @return_blocks
+          saved_loop_stack = @loop_stack
+
+          @return_blocks = Set.new
+          @loop_stack = [] if @loop_stack.nil?
+
+          block_def.body.each do |hir_block|
+            llvm_block = callback_func.basic_blocks.append(hir_block.label)
+            @blocks[hir_block.label] = llvm_block
           end
-        end
 
-        # Determine result type from last instruction
-        if last_inst.is_a?(HIR::StoreLocal)
-          var_name = last_inst.var.name
-          result_type = @variable_types[var_name] || :value
-        elsif last_inst && last_inst.respond_to?(:result_var) && last_inst.result_var
-          result_type = @variable_types[last_inst.result_var] || :value
-        end
+          block_def.body.each do |hir_block|
+            @return_blocks << hir_block.label if hir_block.terminator.is_a?(HIR::Return)
+          end
 
-        # Return the result, converting to VALUE if necessary
-        result = @qnil if result.nil?
-        if result.is_a?(LLVM::Value) && result_type != :value
-          result = convert_value(result, result_type, :value)
+          # Jump from entry to first HIR block
+          @builder.br(@blocks[block_def.body.first.label])
+
+          # Generate each block (instructions + terminators)
+          block_def.body.each do |hir_block|
+            generate_block(callback_func, hir_block)
+          end
+
+          # Ensure all blocks have terminators
+          callback_func.basic_blocks.each do |llvm_block|
+            next if llvm_block.name == "entry"
+            last_instr = llvm_block.instructions.last
+            has_terminator = last_instr && (last_instr.opcode == :ret || last_instr.opcode == :br ||
+                             last_instr.opcode == :cond_br || last_instr.opcode == :switch ||
+                             last_instr.opcode == :unreachable)
+            unless has_terminator
+              @builder.position_at_end(llvm_block)
+              @builder.ret(last_instr || @qnil)
+            end
+          end
+
+          @blocks = saved_blocks
+          @return_blocks = saved_return_blocks
+          @loop_stack = saved_loop_stack
+        else
+          result = @qnil
+          result_type = :value
+          last_inst = nil
+          block_def.body.each do |basic_block|
+            basic_block.instructions.each do |hir_inst|
+              result = generate_instruction(hir_inst)
+              last_inst = hir_inst
+            end
+          end
+
+          if last_inst.is_a?(HIR::StoreLocal)
+            var_name = last_inst.var.name
+            result_type = @variable_types[var_name] || :value
+          elsif last_inst && last_inst.respond_to?(:result_var) && last_inst.result_var
+            result_type = @variable_types[last_inst.result_var] || :value
+          end
+
+          result = @qnil if result.nil?
+          if result.is_a?(LLVM::Value) && result_type != :value
+            result = convert_value(result, result_type, :value)
+          end
+          @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
         end
-        @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
 
         # Restore builder state
         @builder.position_at_end(saved_block) if saved_block
@@ -6989,17 +7101,18 @@ module Konpeito
           end
           result = @builder.phi(value_type, phi_incoming)
         when :method
-          # Use rb_respond_to to check if method exists
-          rb_respond_to = @mod.functions["rb_respond_to"] || @mod.functions.add(
-            "rb_respond_to",
-            [value_type, value_type],
+          # Use rb_obj_respond_to with include_private=1 to check if method exists
+          # (rb_respond_to only checks public methods, but defined? should find private methods too)
+          rb_obj_respond_to = @mod.functions["rb_obj_respond_to"] || @mod.functions.add(
+            "rb_obj_respond_to",
+            [value_type, value_type, LLVM::Int32],
             LLVM::Int32
           )
           # Check on main object (self)
           self_val = @variables["self"] || @builder.load2(value_type, @rb_cObject, "rb_cObject_self")
           name_ptr = @builder.global_string_pointer(inst.name)
           name_id = @builder.call(@rb_intern, name_ptr)
-          is_defined = @builder.call(rb_respond_to, self_val, name_id)
+          is_defined = @builder.call(rb_obj_respond_to, self_val, name_id, LLVM::Int32.from_i(1))
           is_true = @builder.icmp(:ne, is_defined, LLVM::Int32.from_i(0))
 
           defined_bb = func.basic_blocks.append("defined_method_yes")

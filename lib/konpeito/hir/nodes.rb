@@ -37,12 +37,14 @@ module Konpeito
     # Program is the top-level container
     class Program < Node
       attr_reader :functions, :classes, :modules
+      attr_accessor :toplevel_constants  # Array of [name, literal_node] for top-level constants
 
       def initialize(functions: [], classes: [], modules: [])
         super(type: TypeChecker::Types::NIL)
         @functions = functions
         @classes = classes
         @modules = modules
+        @toplevel_constants = []
       end
     end
 

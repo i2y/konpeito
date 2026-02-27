@@ -1,4 +1,0 @@
-# Native: thread-safety issues with concurrent Array mutation (push from multiple threads without mutex)
-# The producer-consumer tests fail due to race conditions on shared results array
-DIFF producer-consumer processes all items
-DIFF producer-consumer last item is correct

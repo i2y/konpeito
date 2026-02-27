@@ -1,4 +1,4 @@
-# JVM: KBlock objects don't support .arity, .lambda?, .is_a?(Proc) methods
-# Lambda returning lambda has capture semantics issues
-# NoSuchMethodError on .arity crashes before reaching later tests
-RUNTIME_ERROR
+# JVM: lambda arity/lambda? limitations — rb_proc_new creates Proc not Lambda
+# Note: is_a?(Proc) fixed (RubyDispatch now checks isCallable for Proc class)
+# Note: test_block_parameter fixed (generate_call_with_block skips block params)
+# Note: test_lambda_returning_lambda passes via invokedynamic capture

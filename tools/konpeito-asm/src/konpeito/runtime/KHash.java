@@ -14,6 +14,7 @@ import java.util.*;
  */
 public class KHash<K, V> implements Map<K, V> {
     private final LinkedHashMap<K, V> data;
+    private boolean frozen = false;
 
     // ========================================================================
     // Constructors
@@ -30,6 +31,17 @@ public class KHash<K, V> implements Map<K, V> {
     // ========================================================================
     // Ruby-specific methods
     // ========================================================================
+
+    /** Ruby: hash.freeze — makes this hash immutable */
+    public KHash<K, V> freeze() {
+        this.frozen = true;
+        return this;
+    }
+
+    /** Ruby: hash.frozen? */
+    public boolean isFrozen() {
+        return frozen;
+    }
 
     /** Ruby: hash.deconstruct_keys(keys) — returns self (for pattern matching) */
     @SuppressWarnings("unchecked")

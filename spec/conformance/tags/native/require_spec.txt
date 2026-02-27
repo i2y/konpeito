@@ -1,3 +1,0 @@
-# Native: Math::PI / Math.sqrt cause BUS error (crash)
-# Accessing stdlib module constants/methods in compiled code crashes
-RUNTIME_ERROR

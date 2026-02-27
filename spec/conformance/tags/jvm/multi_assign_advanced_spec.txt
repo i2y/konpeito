@@ -1,2 +1,0 @@
-# JVM: exit code 1 (compilation error, same as native)
-COMPILATION_ERROR

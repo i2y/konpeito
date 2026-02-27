@@ -1,4 +1,0 @@
-# Native: splat in multi-assign (first, *rest = arr) causes runtime error
-# The *rest capture in multi-assign is not fully supported
-# Basic multi-assign (a, b = [1, 2]) works, but splat variants fail at runtime
-RUNTIME_ERROR

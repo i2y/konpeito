@@ -403,6 +403,13 @@ module Konpeito
           end
         end
 
+        # Register top-level constants on rb_cObject (e.g., MY_CONST = 42 at top level)
+        hir.toplevel_constants.each do |const_name, value_node|
+          c_value = hir_literal_to_c_value(value_node)
+          next unless c_value
+          lines << "    rb_const_set(rb_cObject, rb_intern(\"#{const_name}\"), #{c_value});"
+        end
+
         # Define top-level methods on Object
         hir.functions.each do |func_def|
           next if func_def.owner_class

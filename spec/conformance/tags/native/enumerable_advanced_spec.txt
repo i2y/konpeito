@@ -1,3 +1,0 @@
-# Native: sort_by type inference error - type mismatch in block return
-# Also affects min_by, max_by, group_by, tally which require complex type inference
-COMPILATION_ERROR

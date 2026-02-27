@@ -4491,7 +4491,7 @@ module Konpeito
           # Extract elements for remaining params
           remaining_params = target_func.params[splat_index..]
           remaining_params.each_with_index do |param, j|
-            next if param.rest || param.keyword_rest
+            next if param.rest || param.keyword_rest || param.block
             param_t = widened_param_type(target_func, param, splat_index + j)
             # Load array, push index, call get(int)
             instructions << load_instruction(splat_temp, :value)
@@ -4503,8 +4503,9 @@ module Konpeito
           end
         else
           # Normal argument loading (no splat)
-          # Load arguments
+          # Load arguments (skip block params — they are handled as KBlock below)
           target_func.params.each_with_index do |param, i|
+            next if param.block
             if param.rest
               # Rest parameter (*args): collect remaining arguments into a KArray
               rest_args = args[i..]
@@ -4547,13 +4548,18 @@ module Konpeito
           end
         end
 
-        # If target is a yield-containing function, determine descriptor and pass null block
+        # If target is a yield-containing function, determine descriptor and pass block (or null)
         target_has_yield = @yield_functions.include?(actual_target) || @yield_functions.include?(method_name)
         if target_has_yield
           kblock_iface = yield_function_kblock_interface(target_func)
           desc = method_descriptor_with_block(target_func, kblock_iface)
-          # Pass null as block argument (no block provided)
-          instructions << { "op" => "aconst_null" }
+          # If caller provides a block, compile it and pass as KBlock; otherwise pass null
+          if inst.block
+            block_insts = compile_block_arg_for_instance_call(inst.block)
+            instructions.concat(block_insts)
+          else
+            instructions << { "op" => "aconst_null" }
+          end
         else
           desc = method_descriptor(target_func)
         end
@@ -9167,7 +9173,7 @@ module Konpeito
 
       # Build method descriptor with KBlock parameter for yield-containing functions
       def method_descriptor_with_block(func, kblock_iface)
-        params_desc = func.params.map { |p|
+        params_desc = func.params.reject { |p| p.block }.map { |p|
           t = param_type(p)
           t = :value if t == :void  # Nil/void is not valid as JVM param type
           type_to_descriptor(t)
@@ -9287,6 +9293,7 @@ module Konpeito
 
         # Load regular arguments (using the target function's param types)
         target_func.params.each_with_index do |param, i|
+          next if param.block  # block params handled as KBlock separately
           if param.keyword_rest
             # Keyword rest parameter (**kwargs): build a KHash from keyword_args
             if inst.respond_to?(:keyword_args) && inst.has_keyword_args?
@@ -9530,7 +9537,7 @@ module Konpeito
         # because they may receive Regexp (Pattern) arguments that can't be handled inline.
         %w[length size upcase downcase include? start_with? end_with? strip
            reverse empty? split chars lines bytes
-           replace freeze frozen? to_i to_f []].include?(name)
+           replace to_i to_f []].include?(name)
       end
 
       # Check if a method argument is a Regexp (Pattern) type
@@ -10223,7 +10230,10 @@ module Konpeito
             instructions << { "op" => "lcmp" }
             instructions << { "op" => "ifne", "target" => found_label }
           else
-            instructions << { "op" => "ifnonnull", "target" => found_label }
+            # Use RubyDispatch.isTruthy to handle null (nil) and Boolean.FALSE
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                              "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+            instructions << { "op" => "ifne", "target" => found_label }
           end
         end
 
@@ -10577,7 +10587,10 @@ module Konpeito
             instructions << { "op" => "lcmp" }
             instructions << { "op" => "ifeq", "target" => skip_label }
           else
-            instructions << { "op" => "ifnull", "target" => skip_label }
+            # Use RubyDispatch.isTruthy to correctly handle null (nil) and Boolean.FALSE
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                              "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+            instructions << { "op" => "ifeq", "target" => skip_label }
           end
         else
           instructions << { "op" => "goto", "target" => skip_label }
@@ -10692,7 +10705,10 @@ module Konpeito
             instructions << { "op" => "lcmp" }
             instructions << { "op" => "ifne", "target" => skip_label }
           else
-            instructions << { "op" => "ifnonnull", "target" => skip_label }
+            # Use RubyDispatch.isTruthy to handle null (nil) and Boolean.FALSE
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                              "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+            instructions << { "op" => "ifne", "target" => skip_label }
           end
         end
 
@@ -10933,7 +10949,10 @@ module Konpeito
               instructions << { "op" => "lcmp" }
               instructions << { "op" => "ifne", "target" => found_label }
             else
-              instructions << { "op" => "ifnonnull", "target" => found_label }
+              # Use RubyDispatch.isTruthy to handle null (nil) and Boolean.FALSE
+              instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                                "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+              instructions << { "op" => "ifne", "target" => found_label }
             end
           when :all
             # all?: if falsy → found (false)
@@ -10944,7 +10963,10 @@ module Konpeito
               instructions << { "op" => "lcmp" }
               instructions << { "op" => "ifeq", "target" => found_label }
             else
-              instructions << { "op" => "ifnull", "target" => found_label }
+              # Use RubyDispatch.isTruthy to handle null (nil) and Boolean.FALSE
+              instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                                "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+              instructions << { "op" => "ifeq", "target" => found_label }
             end
           when :none
             # none?: if truthy → found (false)
@@ -10955,7 +10977,10 @@ module Konpeito
               instructions << { "op" => "lcmp" }
               instructions << { "op" => "ifne", "target" => found_label }
             else
-              instructions << { "op" => "ifnonnull", "target" => found_label }
+              # Use RubyDispatch.isTruthy to handle null (nil) and Boolean.FALSE
+              instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                                "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+              instructions << { "op" => "ifne", "target" => found_label }
             end
           end
         end
@@ -11056,10 +11081,18 @@ module Konpeito
         if last_result_var
           last_type = @variable_types[last_result_var] || :value
           instructions << load_instruction(last_result_var, last_type)
-          if last_type == :i8
+          case last_type
+          when :i8
+            instructions << { "op" => "ifeq", "target" => skip_label }
+          when :i64
+            instructions << { "op" => "lconst_0" }
+            instructions << { "op" => "lcmp" }
             instructions << { "op" => "ifeq", "target" => skip_label }
           else
-            instructions << { "op" => "ifnull", "target" => skip_label }
+            # Use RubyDispatch.isTruthy to correctly handle null (nil) and Boolean.FALSE
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                              "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+            instructions << { "op" => "ifeq", "target" => skip_label }
           end
         end
 
@@ -11234,7 +11267,7 @@ module Konpeito
             generate_hash_each_inline(receiver, _block_def, result_var)
           end
         when "fetch"
-          generate_hash_fetch(receiver, args, result_var)
+          generate_hash_fetch(receiver, args, result_var, _block_def)
         when "merge"
           generate_hash_merge(receiver, args, result_var)
         when "merge!", "update"
@@ -11431,24 +11464,116 @@ module Konpeito
 
       # -- Hash methods --
 
-      def generate_hash_fetch(receiver, args, result_var)
+      def generate_hash_fetch(receiver, args, result_var, block_def = nil)
         instructions = []
-        instructions.concat(load_khash_receiver(receiver))
-        instructions.concat(load_and_box_for_collection(args[0]))
-        if args.size > 1
-          instructions.concat(load_and_box_for_collection(args[1]))
+        if block_def && args.size == 1
+          # h.fetch(key) { |k| ... } — call block when key is missing
+          @block_counter = (@block_counter || 0) + 1
+          hash_var = "__fetch_hash_#{@block_counter}"
+          key_var  = "__fetch_key_#{@block_counter}"
+          val_var  = "__fetch_val_#{@block_counter}"
+          found_label = new_label("fetch_found")
+          end_label   = new_label("fetch_end")
+          ensure_slot(hash_var, :value)
+          ensure_slot(key_var, :value)
+          ensure_slot(val_var, :value)
+
+          instructions.concat(load_khash_receiver(receiver))
+          instructions << store_instruction(hash_var, :value)
+          @variable_types[hash_var] = :value
+
+          instructions.concat(load_and_box_for_collection(args[0]))
+          instructions << store_instruction(key_var, :value)
+          @variable_types[key_var] = :value
+
+          # val = hash.get(key)
+          instructions << load_instruction(hash_var, :value)
+          instructions << { "op" => "checkcast", "type" => KHASH_CLASS }
+          instructions << load_instruction(key_var, :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map",
+                            "name" => "get", "descriptor" => "(Ljava/lang/Object;)Ljava/lang/Object;" }
+          instructions << store_instruction(val_var, :value)
+          @variable_types[val_var] = :value
+
+          # if val != null OR hash.containsKey(key) → found
+          instructions << load_instruction(val_var, :value)
+          instructions << { "op" => "ifnonnull", "target" => found_label }
+
+          # also check containsKey for explicit null values
+          instructions << load_instruction(hash_var, :value)
+          instructions << { "op" => "checkcast", "type" => KHASH_CLASS }
+          instructions << load_instruction(key_var, :value)
+          instructions << { "op" => "invokeinterface", "owner" => "java/util/Map",
+                            "name" => "containsKey", "descriptor" => "(Ljava/lang/Object;)Z" }
+          instructions << { "op" => "ifne", "target" => found_label }
+
+          # Key not found: execute block with key
+          block_param = block_def.params.first
+          elem_var = block_param ? block_param.name.to_s : "__fetch_blk_k_#{@block_counter}"
+          saved_outer = save_outer_var_for_block_param(elem_var)
+          ensure_slot(elem_var, :value)
+          instructions << load_instruction(key_var, :value)
+          instructions << store_instruction(elem_var, :value)
+          @variable_types[elem_var] = :value
+
+          last_result_var = nil
+          block_def.body.each do |bb|
+            @current_block_label = bb.label.to_s
+            bb.instructions.each do |block_inst|
+              instructions.concat(generate_instruction(block_inst))
+              last_result_var = block_inst.result_var if block_inst.respond_to?(:result_var) && block_inst.result_var
+            end
+          end
+          restore_outer_var_after_block(elem_var, saved_outer)
+
+          if last_result_var
+            last_type = @variable_types[last_result_var] || :value
+            instructions << load_instruction(last_result_var, last_type)
+            case last_type
+            when :i64
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Long",
+                                "name" => "valueOf", "descriptor" => "(J)Ljava/lang/Long;" }
+            when :double
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Double",
+                                "name" => "valueOf", "descriptor" => "(D)Ljava/lang/Double;" }
+            when :i8
+              instructions << { "op" => "invokestatic", "owner" => "java/lang/Boolean",
+                                "name" => "valueOf", "descriptor" => "(Z)Ljava/lang/Boolean;" }
+            end
+          else
+            instructions << { "op" => "aconst_null" }
+          end
+          instructions << { "op" => "goto", "target" => end_label }
+
+          # Found: return val
+          instructions << { "op" => "label", "name" => found_label }
+          instructions << load_instruction(val_var, :value)
+
+          instructions << { "op" => "label", "name" => end_label }
+          if result_var
+            ensure_slot(result_var, :value)
+            instructions << store_instruction(result_var, :value)
+            @variable_types[result_var] = :value
+          end
+          instructions
         else
-          instructions << { "op" => "aconst_null" }
+          instructions.concat(load_khash_receiver(receiver))
+          instructions.concat(load_and_box_for_collection(args[0]))
+          if args.size > 1
+            instructions.concat(load_and_box_for_collection(args[1]))
+          else
+            instructions << { "op" => "aconst_null" }
+          end
+          instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
+                            "name" => "fetch",
+                            "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" }
+          if result_var
+            ensure_slot(result_var, :value)
+            instructions << store_instruction(result_var, :value)
+            @variable_types[result_var] = :value
+          end
+          instructions
         end
-        instructions << { "op" => "invokevirtual", "owner" => KHASH_CLASS,
-                          "name" => "fetch",
-                          "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" }
-        if result_var
-          ensure_slot(result_var, :value)
-          instructions << store_instruction(result_var, :value)
-          @variable_types[result_var] = :value
-        end
-        instructions
       end
 
       def generate_hash_merge(receiver, args, result_var)
@@ -12307,14 +12432,6 @@ module Konpeito
           generate_string_bytes(receiver, result_var)
         when "replace"
           generate_string_replace(receiver, args, result_var)
-        when "freeze"
-          # No-op on JVM (strings are immutable), just return the receiver
-          generate_string_passthrough(receiver, result_var)
-        when "frozen?"
-          # On JVM, String#frozen? defaults to true since Java strings are immutable.
-          # This means "unfrozen" string tests will fail, but "freeze then frozen?" tests will pass.
-          # A proper solution would require wrapping strings in a mutable container.
-          generate_string_always_true(result_var)
         when "count"
           generate_string_count(receiver, args, result_var)
         when "tr"
@@ -13687,7 +13804,10 @@ module Konpeito
             instructions << { "op" => "lcmp" }
             instructions << { "op" => "ifeq", "target" => skip_label }
           else
-            instructions << { "op" => "ifnull", "target" => skip_label }
+            # Use RubyDispatch.isTruthy to correctly handle null (nil) and Boolean.FALSE
+            instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                              "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+            instructions << { "op" => "ifeq", "target" => skip_label }
           end
         else
           instructions << { "op" => "goto", "target" => skip_label }

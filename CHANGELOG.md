@@ -5,7 +5,7 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.4] - 2026-02-28
 
 ### Added
 - Conformance test suite expanded to 87 spec files (10 new specs: array_functional, frozen_immutable, hash_transform, integer_step, kernel_format, object_protocol, proc_curry, range_advanced, regexp_matchdata, string_succ_ord)
@@ -176,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
-[Unreleased]: https://github.com/i2y/konpeito/compare/v0.2.3...HEAD
+[0.2.4]: https://github.com/i2y/konpeito/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/i2y/konpeito/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/i2y/konpeito/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/i2y/konpeito/compare/v0.2.0...v0.2.1

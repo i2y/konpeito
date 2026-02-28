@@ -159,8 +159,8 @@ module Konpeito
       # e.g. for monomorphized functions like dot_Vec2 whose name has no matching method entry).
       def native_param_type_sym_from_hir(param)
         t = param.type
-        return :Float64 if t == TypeChecker::Types::FLOAT || t&.name == :Float
-        return :Int64   if t == TypeChecker::Types::INTEGER || t&.name == :Integer
+        return :Float64 if t == TypeChecker::Types::FLOAT || (t.is_a?(TypeChecker::Types::ClassInstance) && t.name == :Float)
+        return :Int64   if t == TypeChecker::Types::INTEGER || (t.is_a?(TypeChecker::Types::ClassInstance) && t.name == :Integer)
         # Everything else (NativeClass, unknown) → use pointer (else branch in caller)
         :OtherNativeClass
       end
@@ -4551,6 +4551,12 @@ module Konpeito
             val = @builder.load2(value_type, param_allocas[i], param.name)
             @variables[param.name] = val
             @variable_types[param.name] = :value
+            # Register the alloca so that generate_store_local uses the correct
+            # pointer when the block body assigns to a parameter variable
+            # (e.g. `completely = true` inside an |painter, completely| block).
+            # Without this, generate_store_local creates a new alloca with the
+            # same name as the already-loaded i64 value, causing an LLVM type error.
+            @variable_allocas[param.name] = param_allocas[i]
           end
         end
 
@@ -4597,8 +4603,10 @@ module Konpeito
           # Jump from entry to first HIR block
           @builder.br(@blocks[block_def.body.first.label])
 
-          # Generate each block (instructions + terminators)
-          block_def.body.each do |hir_block|
+          # Generate each block in phi-dependency order (same as setup_function)
+          # Without sorting, nested if/else phi nodes may be placed in the wrong block
+          sorted_callback_blocks = sort_blocks_by_phi_dependencies(block_def.body)
+          sorted_callback_blocks.each do |hir_block|
             generate_block(callback_func, hir_block)
           end
 
@@ -5151,8 +5159,9 @@ module Konpeito
           # Jump from entry to first HIR block
           @builder.br(@blocks[block_def.body.first.label])
 
-          # Generate each block (instructions + terminators)
-          block_def.body.each do |hir_block|
+          # Generate each block in phi-dependency order (same as setup_function)
+          sorted_callback_blocks = sort_blocks_by_phi_dependencies(block_def.body)
+          sorted_callback_blocks.each do |hir_block|
             generate_block(callback_func, hir_block)
           end
 

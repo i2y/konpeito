@@ -623,8 +623,9 @@ module Konpeito
           end
         end
 
-        # Create NativeClassType if has fields or methods
-        return if fields.empty? && methods.empty?
+        # Create NativeClassType only if has explicit field declarations OR explicit native/struct annotation.
+        # Method-only classes (e.g. framework classes with rbs_inline headers) must NOT become NativeClass.
+        return if fields.empty? && !native_ann && !is_struct
 
         native_type = Types::NativeClassType.new(
           class_name,

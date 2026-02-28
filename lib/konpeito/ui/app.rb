@@ -4,7 +4,7 @@
 # Port of ~/castella/castella/core.py App
 
 class App
-  #: (JWMFrame frame, untyped widget) -> void
+  #: (JWMFrame | NativeFrame frame, untyped widget) -> void
   def initialize(frame, widget)
     @@current = self
     @frame = frame

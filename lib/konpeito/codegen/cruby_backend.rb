@@ -939,10 +939,22 @@ module Konpeito
         end
 
         if @rbs_loader
+          stdlib_ui_dir = File.expand_path("../stdlib/ui", __dir__)
+
           @rbs_loader.all_ffi_libraries.each do |lib_name|
+            link_name = lib_name.sub(/^lib/, "")
+
+            # On macOS the UI runtime ships as a Ruby .bundle (loadable module),
+            # not as a .dylib.  Bundles cannot be used as -l link targets; their
+            # symbols are resolved at runtime via -undefined dynamic_lookup, so
+            # we simply skip the -l flag for them.
+            bundle_path = File.join(stdlib_ui_dir, "#{link_name}.bundle")
+            if File.exist?(bundle_path) && RbConfig::CONFIG["host_os"] =~ /darwin/
+              next
+            end
+
             # Convert library name to linker flag
             # "libm" -> "-lm", "libfoo" -> "-lfoo", "foo" -> "-lfoo"
-            link_name = lib_name.sub(/^lib/, "")
             flags << "-l#{link_name}"
           end
         end

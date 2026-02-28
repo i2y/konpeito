@@ -5,6 +5,20 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Conformance test suite expanded to 87 spec files (10 new specs: array_functional, frozen_immutable, hash_transform, integer_step, kernel_format, object_protocol, proc_curry, range_advanced, regexp_matchdata, string_succ_ord)
+- JVM runtime: updated KFiber, KMatchData, KRactor, KRactorPort classes for new conformance specs
+
+### Fixed
+- Native backend: `lambda?` and `arity` singleton methods now correctly attached to Proc objects via `rb_define_singleton_method`, achieving 87/87 native conformance
+- Native backend: NativeClass method chaining — monomorphized call results (e.g. `dot_Vec2`) now correctly tagged as `:double`/`:i64` in `@variable_types`, preventing `rb_num2dbl` from being called on an already-unboxed double (was causing segfault in `normalized_dot` benchmark)
+- Benchmark: `slice_bench.rb` RBS overload syntax updated from duplicate `def []:` to union `|` syntax (RBS 3.x compatibility)
+
+### Changed
+- `.gitignore`: `*.class` pattern extended to cover all subdirectories (was only matching root-level `.class` files)
+
 ## [0.2.3] - 2026-02-24
 
 ### Added
@@ -162,6 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[Unreleased]: https://github.com/i2y/konpeito/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/i2y/konpeito/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/i2y/konpeito/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/i2y/konpeito/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/i2y/konpeito/compare/v0.1.3...v0.2.0

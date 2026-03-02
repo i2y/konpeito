@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
 module Konpeito
-  # Known standard library names that can be loaded at runtime via rb_require
-  # This list is derived from Ruby's bundled RBS stdlib definitions
+  # Native extension file extensions to check when scanning gem directories
+  NATIVE_EXTENSIONS = %w[.bundle .so .dll .dylib].freeze
+
+  # Known standard library names that can be loaded at runtime via rb_require.
+  # This list acts as a fast path; dynamic gem detection via Gem.path covers the rest.
   KNOWN_STDLIB_LIBRARIES = %w[
-    json fileutils find pathname tempfile timeout uri yaml
+    json fileutils find pathname tempfile timeout uri yaml tmpdir
     digest openssl socket stringio csv date time set
     net/http net/https net/ftp net/smtp net/pop net/imap
     securerandom base64 benchmark erb logger optparse
@@ -184,9 +187,9 @@ module Konpeito
             @cache_manager.add_dependency(path, dep_path)
           end
           resolve_file(dep_path)
-        elsif req[:type] == :require && stdlib_library?(req[:name])
-          # Known stdlib library - will be loaded at runtime via rb_require
-          log "  Detected stdlib require: #{req[:name]}"
+        elsif req[:type] == :require && runtime_loadable?(req[:name])
+          # Stdlib or installed gem — will be loaded at runtime via rb_require
+          log "  Detected runtime require: #{req[:name]}"
           @stdlib_requires << req[:name]
         elsif req[:type] == :require_relative
           # Check if this points to a native extension (.bundle/.so/.dll)
@@ -207,10 +210,10 @@ module Konpeito
             )
           end
         else
-          # Unknown require - likely a gem that must be required at runtime
+          # Unknown require that cannot be resolved statically or found in gems.
           raise DependencyError.new(
             "Cannot resolve require: #{req[:name]}. " \
-            "If this is a gem, use require at runtime in Ruby code instead of compile-time.",
+            "If this is a gem, ensure it is installed (`gem install #{req[:name]}`).",
             from_file: path,
             line: req[:line],
             missing_file: req[:name]
@@ -283,7 +286,27 @@ module Konpeito
       %w[.bundle .so .dll .dylib].any? { |ext| File.exist?("#{base}#{ext}") }
     end
 
-    # Check if a name is a known stdlib library
+    # Check whether a require target can be loaded at runtime (stdlib or installed gem).
+    # This replaces the hardcoded KNOWN_STDLIB_LIBRARIES approach with dynamic detection.
+    def runtime_loadable?(name)
+      # Fast path: known stdlib names (avoids gem lookup overhead for common stdlib)
+      return true if stdlib_library?(name)
+
+      # Dynamic gem detection: scan all GEM_PATH directories for a matching lib file.
+      # Using Gem.path (not Gem.find_files) because bundler restricts Gem.find_files
+      # to only activated gems, while Gem.path covers all installed gem homes.
+      name_rb = name.end_with?(".rb") ? name : "#{name}.rb"
+      Gem.path.any? do |gem_home|
+        Dir.glob(File.join(gem_home, "gems", "*", "lib")).any? do |lib_dir|
+          File.exist?(File.join(lib_dir, name_rb)) ||
+            NATIVE_EXTENSIONS.any? { |ext| File.exist?(File.join(lib_dir, "#{name}#{ext}")) }
+        end
+      end
+    rescue LoadError, NameError
+      false
+    end
+
+    # Check if a name is a known stdlib library (fast path, kept for backwards compat)
     def stdlib_library?(name)
       # Normalize: convert dashes to underscores for matching
       normalized = name.tr("-", "_")

@@ -65,7 +65,7 @@ module Konpeito
           unless @debug
             FileUtils.rm_f(obj_file)
           end
-          FileUtils.rm_f(init_c_file)
+          # FileUtils.rm_f(init_c_file)  # DEBUG: keep for inspection
           FileUtils.rm_f(init_obj_file)
           FileUtils.rm_f(profile_c_file) if profile_c_file
           FileUtils.rm_f(profile_obj_file) if profile_obj_file
@@ -250,6 +250,15 @@ module Konpeito
           lines << ""
         end
 
+        # Load runtime native extensions (require_relative pointing to .bundle/.so)
+        unless @runtime_native_extensions.empty?
+          lines << "    /* Load runtime native extensions */"
+          @runtime_native_extensions.each do |ext|
+            lines << "    rb_require(\"#{ext[:path]}\");"
+          end
+          lines << ""
+        end
+
         # Define modules first (before classes that may include them)
         hir.modules.each do |module_def|
           module_var = "m#{module_def.name}"
@@ -266,7 +275,15 @@ module Konpeito
 
             # Use -1 arity for variadic functions
             arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
-            lines << "    rb_define_method(#{module_var}, \"#{method_name}\", #{mangled_name}, #{arity});"
+
+            if module_def.module_function_methods&.include?(method_name)
+              # module_function: available as both public module method AND private instance method
+              lines << "    rb_define_module_function(#{module_var}, \"#{method_name}\", #{mangled_name}, #{arity});"
+            elsif module_def.private_methods&.include?(method_name)
+              lines << "    rb_define_private_method(#{module_var}, \"#{method_name}\", #{mangled_name}, #{arity});"
+            else
+              lines << "    rb_define_method(#{module_var}, \"#{method_name}\", #{mangled_name}, #{arity});"
+            end
           end
 
           # Register singleton methods (def self.method)
@@ -427,6 +444,16 @@ module Konpeito
             arity = func.params.size - 1
           end
           lines << "    rb_define_private_method(rb_cObject, \"#{func_def.name}\", #{mangled_name}, #{arity});"
+        end
+
+        # Call top-level entry point if present.
+        # rb_vm_top_self() is not exported from libruby in Ruby 4.0; use rb_cObject instead.
+        # Top-level calls like module_function/private/public/include on Object are semantically
+        # equivalent to the same calls on the main object for our purposes.
+        has_main = hir.functions.any? { |f| f.name == "__main__" && !f.owner_class && !f.owner_module }
+        if has_main
+          lines << "    /* Run top-level code */"
+          lines << "    rn___main__(rb_cObject);"
         end
 
         lines << "}"

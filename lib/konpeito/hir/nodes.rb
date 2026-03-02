@@ -87,6 +87,8 @@ module Konpeito
     # Module definition
     class ModuleDef < Node
       attr_reader :name, :methods, :singleton_methods, :constants
+      attr_accessor :module_function_methods  # Array of method names registered via module_function
+      attr_accessor :private_methods          # Set of private method names
 
       def initialize(name:, methods: [], singleton_methods: [], constants: {})
         super(type: TypeChecker::Types::NIL)
@@ -94,6 +96,8 @@ module Konpeito
         @methods = methods
         @singleton_methods = singleton_methods
         @constants = constants  # Hash of name -> value
+        @module_function_methods = []
+        @private_methods = Set.new
       end
     end
 
@@ -389,20 +393,21 @@ module Konpeito
 
     # Method call
     class Call < Instruction
-      attr_reader :receiver, :method_name, :args, :block, :keyword_args, :safe_navigation
+      attr_reader :receiver, :method_name, :args, :block, :keyword_args, :keyword_splat, :safe_navigation
 
-      def initialize(receiver:, method_name:, args: [], block: nil, keyword_args: {}, type: TypeChecker::Types::UNTYPED, result_var: nil, safe_navigation: false)
+      def initialize(receiver:, method_name:, args: [], block: nil, keyword_args: {}, keyword_splat: nil, type: TypeChecker::Types::UNTYPED, result_var: nil, safe_navigation: false)
         super(type: type, result_var: result_var)
         @receiver = receiver
         @method_name = method_name
         @args = args
         @block = block
         @keyword_args = keyword_args  # Hash of { keyword_name => HIR instruction }
+        @keyword_splat = keyword_splat  # HIR instruction for **hash at call site
         @safe_navigation = safe_navigation
       end
 
       def has_keyword_args?
-        !@keyword_args.empty?
+        !@keyword_args.empty? || !@keyword_splat.nil?
       end
     end
 
@@ -1093,12 +1098,13 @@ module Konpeito
     end
 
     class BeginRescue < Instruction
-      attr_reader :try_blocks, :rescue_clauses, :else_blocks, :ensure_blocks
+      attr_reader :try_blocks, :try_hir_blocks, :rescue_clauses, :else_blocks, :ensure_blocks
       attr_accessor :non_try_instruction_ids
 
-      def initialize(try_blocks:, rescue_clauses: [], else_blocks: [], ensure_blocks: [], type: TypeChecker::Types::UNTYPED, result_var: nil)
+      def initialize(try_blocks:, try_hir_blocks: nil, rescue_clauses: [], else_blocks: [], ensure_blocks: [], type: TypeChecker::Types::UNTYPED, result_var: nil)
         super(type: type, result_var: result_var)
         @try_blocks = try_blocks
+        @try_hir_blocks = try_hir_blocks  # Array<BasicBlock> for structured try body (with control flow)
         @rescue_clauses = rescue_clauses  # Array of RescueClause
         @else_blocks = else_blocks        # Array of BasicBlock (runs if no exception)
         @ensure_blocks = ensure_blocks    # Array of BasicBlock (always runs)
@@ -1137,6 +1143,18 @@ module Konpeito
         super(type: TypeChecker::Types::UNTYPED)
         @conditions = conditions
         @body = body
+      end
+    end
+
+    # Case equality check: condition === predicate (for case/when dispatch)
+    class CaseEqualityCheck < Instruction
+      attr_reader :condition   # HIR node for the when condition value
+      attr_reader :predicate   # HIR node for the case predicate (nil for case without predicate)
+
+      def initialize(condition:, predicate:, type: TypeChecker::Types::BOOL, result_var: nil)
+        super(type: type, result_var: result_var)
+        @condition = condition
+        @predicate = predicate
       end
     end
 

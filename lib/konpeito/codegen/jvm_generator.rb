@@ -1313,6 +1313,8 @@ module Konpeito
           generate_begin_rescue(inst)
         when HIR::CaseStatement
           generate_case_statement(inst)
+        when HIR::CaseEqualityCheck
+          generate_case_equality_check(inst)
         when HIR::CaseMatchStatement
           generate_case_match_statement(inst)
         when HIR::LoadGlobalVar
@@ -2845,8 +2847,11 @@ module Konpeito
         end
 
         # Use inlined try body if provided (from block's pre-BeginRescue instructions),
-        # otherwise fall back to BeginRescue's stored try_blocks
-        try_body = inlined_try_body || inst.try_blocks || []
+        # otherwise fall back to BeginRescue's stored try_blocks.
+        # Note: when the HIR builder uses BlockBodyCollector for the try body (to keep
+        # if/else control flow blocks separate from the outer function), inlined_try_body
+        # will be [] (empty array, truthy) — so we must check empty? explicitly.
+        try_body = (inlined_try_body && !inlined_try_body.empty?) ? inlined_try_body : (inst.try_blocks || [])
 
         # If the begin/rescue has a result variable, pre-initialize it with null
         result_var = inst.result_var
@@ -3129,6 +3134,48 @@ module Konpeito
         end
 
         instructions << { "op" => "label", "name" => after_all }
+        instructions
+      end
+
+      # ========================================================================
+      # CaseEqualityCheck (HIR node used by the block-based case/when)
+      # ========================================================================
+
+      # Generate condition === predicate for case/when dispatch.
+      # The condition is the when-value (e.g. 10, "hello") and the predicate is
+      # the case expression (e.g. x). Result is stored as :i8 (boolean).
+      # Uses load_value to either load from already-generated slot or generate inline.
+      def generate_case_equality_check(inst)
+        instructions = []
+        result_var = inst.result_var
+
+        if inst.predicate.nil?
+          # No predicate (bare `case; when cond then ...`): evaluate condition as truthy
+          instructions.concat(load_value(inst.condition, :value))
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "isTruthy", "descriptor" => "(Ljava/lang/Object;)Z" }
+          if result_var
+            ensure_slot(result_var, :i8)
+            instructions << store_instruction(result_var, :i8)
+            @variable_types[result_var.to_s] = :i8
+          end
+        else
+          # condition === predicate: condition is the when value, predicate is the case expr.
+          # Load condition (when value) — box to Object
+          instructions.concat(load_value(inst.condition, :value))
+          # Load predicate (case expression) — box to Object
+          instructions.concat(load_value(inst.predicate, :value))
+          # Call RubyDispatch.caseEqual(condition, predicate) → Z
+          instructions << { "op" => "invokestatic", "owner" => "konpeito/runtime/RubyDispatch",
+                            "name" => "caseEqual",
+                            "descriptor" => "(Ljava/lang/Object;Ljava/lang/Object;)Z" }
+          if result_var
+            ensure_slot(result_var, :i8)
+            instructions << store_instruction(result_var, :i8)
+            @variable_types[result_var.to_s] = :i8
+          end
+        end
+
         instructions
       end
 

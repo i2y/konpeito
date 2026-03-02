@@ -7,6 +7,9 @@ module Konpeito
   module Codegen
     # Generates LLVM IR from HIR
     class LLVMGenerator
+      # Special capture name used to pass outer `self` into block callbacks.
+      # Allows @ivar access inside blocks to use the enclosing method's self.
+      BLOCK_SELF_CAPTURE = "__blk_self__"
       attr_reader :mod, :builder, :hir_program
 
       def initialize(module_name: "konpeito", monomorphizer: nil, rbs_loader: nil, debug: false, profile: false, source_file: nil)
@@ -30,6 +33,9 @@ module Konpeito
         @variables = {}           # For SSA values (temps, etc.)
         @variable_allocas = {}    # For local variables (alloca-based for loop safety)
         @variable_types = {}      # Track unboxed types: :i64, :double, or :value
+        @block_exit_overrides = {} # When safe navigation expands a HIR block into multiple LLVM blocks,
+                                   # maps HIR block label → actual LLVM exit block (for phi predecessors)
+        @generating_block_label = nil # Label of the HIR block currently being generated
         @hir_program = nil
         @monomorphizer = monomorphizer
         @rbs_loader = rbs_loader
@@ -42,6 +48,8 @@ module Konpeito
         @variadic_functions = {}  # Track functions with **kwargs or *args
         @keyword_param_functions = {}  # Track functions with keyword params (for direct call kwargs passing)
         @comparison_result_vars = Set.new  # Track variables holding comparison results (0/1 boolean)
+        @polymorphic_methods = Set.new  # Method names defined in multiple classes (must not use direct call)
+        @hir_functions = {}  # name -> HIR::Function; used to detect &blk params (proc-storing methods)
 
         # Register all NativeClass types from RBS upfront
         register_native_classes_from_rbs
@@ -126,7 +134,11 @@ module Konpeito
         @alias_renamed_methods = {}  # "ClassName#old_name" -> renamed_func_name
 
         functions.each_with_index do |func, i|
-          key = [func.owner_class, func.owner_module, func.name.to_s, func.class_method?]
+          # Use the mangled LLVM name as the dedup key.
+          # Two HIR functions with the same owner_class but different owner_module
+          # still produce the same LLVM symbol (e.g. rn_Style_align), so they must
+          # be deduplicated even if their [owner_class, owner_module, name] triples differ.
+          key = mangle_name(func)
           if seen.key?(key) && alias_targets["#{func.owner_class}##{func.name}"]
             # This method was aliased and is now being redefined.
             # Rename the earlier definition so the alias can point to it.
@@ -139,12 +151,20 @@ module Konpeito
           end
           seen[key] = i
         end
-        # Keep all functions (including renamed originals)
-        functions
+        # Keep only the last occurrence of each function key.
+        # Also keep alias-renamed originals (needed for alias resolution).
+        keep_indices = seen.values.to_set
+        functions.each_with_index do |func, i|
+          keep_indices << i if func.name.to_s.end_with?("$alias_orig")
+        end
+        functions.select.with_index { |_, i| keep_indices.include?(i) }
       end
 
       # Declare a function (create LLVM function without body)
       def declare_function(hir_func)
+        # Record HIR function for later inspection (e.g. detecting &blk params)
+        @hir_functions[hir_func.name.to_s] = hir_func
+
         native_class_type = detect_native_class_for_function(hir_func)
 
         if native_class_type
@@ -202,6 +222,10 @@ module Konpeito
 
         mangled = mangle_name(hir_func)
         func = @mod.functions.add(mangled, param_types, return_type)
+        # Track methods that are defined in multiple classes — these require virtual dispatch
+        if (existing = @functions[hir_func.name]) && existing.name != mangled
+          @polymorphic_methods << hir_func.name
+        end
         @functions[hir_func.name] = func
         @functions[mangled] = func
         @native_method_funcs ||= {}
@@ -257,6 +281,10 @@ module Konpeito
 
         return_type = value_type
         func = @mod.functions.add(mangled, param_types, return_type)
+        # Track methods that are defined in multiple classes — these require virtual dispatch
+        if (existing = @functions[hir_func.name]) && existing.name != mangled
+          @polymorphic_methods << hir_func.name
+        end
         @functions[hir_func.name] = func
         @functions[mangled] = func
       end
@@ -1045,6 +1073,7 @@ module Konpeito
         @variables = {}
         @variable_allocas = {}
         @variable_types = {}
+        @block_exit_overrides = {}
         @current_function = func
         @current_hir_func = hir_func
         @current_native_class = native_class_type  # Track for self field access
@@ -1119,6 +1148,7 @@ module Konpeito
         @variables = {}
         @variable_allocas = {}
         @variable_types = {}
+        @block_exit_overrides = {}
         @current_function = func
         @current_hir_func = hir_func
 
@@ -1722,7 +1752,12 @@ module Konpeito
 
       # Get the self VALUE for the current function.
       # For variadic functions (arity -1), self is at params[2] instead of params[0].
+      # Inside block/rescue callbacks, returns the captured self (set by callback generators).
+      # Inside thread callbacks, params[0] is ptr (void*) not VALUE, so returns Qnil.
       def get_self_value
+        return @block_callback_self if @block_callback_self
+        return @qnil if @in_thread_callback
+
         func = @builder.insert_block.parent
         mangled = func.name
         if @variadic_functions[mangled]
@@ -1736,9 +1771,14 @@ module Konpeito
         llvm_block = @blocks[hir_block.label]
         @builder.position_at_end(llvm_block)
 
+        # Track the current HIR block label so safe navigation can record exit overrides
+        saved_generating_block_label = @generating_block_label
+        @generating_block_label = hir_block.label
+
         # Collect instructions that are owned by BeginRescue nodes
         # These will be generated inside callbacks, not in the main function
         rescue_owned = collect_rescue_owned_instructions(hir_block.instructions)
+
 
         # Generate instructions
         hir_block.instructions.each do |inst|
@@ -1748,29 +1788,42 @@ module Konpeito
 
         # Generate terminator
         generate_terminator(hir_block.terminator) if hir_block.terminator
+
+        @generating_block_label = saved_generating_block_label
       end
 
-      # Collect all instructions that are owned by BeginRescue nodes
-      # These instructions will be generated inside try/rescue callbacks,
-      # not in the main function body
+      # Collect all instructions that are owned by BeginRescue or CaseStatement nodes.
+      # These instructions will be generated inside their proper blocks (callbacks or
+      # when_body blocks), not in the main function body's linear pass.
       def collect_rescue_owned_instructions(instructions)
         owned = Set.new
         instructions.each do |inst|
-          next unless inst.is_a?(HIR::BeginRescue)
+          if inst.is_a?(HIR::BeginRescue)
+            # All sub-expression instructions emitted during rescue/else/ensure visitation
+            # are tracked in non_try_instruction_ids (same approach as JVM generator)
+            owned.merge(inst.non_try_instruction_ids) if inst.non_try_instruction_ids
 
-          # Try block instructions
-          inst.try_blocks&.each { |i| owned << i.object_id }
+            # Try block instructions (skip Phi nodes — they must stay at the top of their
+            # natural HIR block; generate_phi will return a cached value when called inline)
+            inst.try_blocks&.each { |i| owned << i.object_id unless i.is_a?(HIR::Phi) }
 
-          # Rescue clause body instructions
-          inst.rescue_clauses&.each do |clause|
-            clause.body_blocks&.each { |i| owned << i.object_id }
+            # Rescue clause body instructions
+            inst.rescue_clauses&.each do |clause|
+              clause.body_blocks&.each { |i| owned << i.object_id }
+            end
+
+            # Else block instructions
+            inst.else_blocks&.each { |i| owned << i.object_id }
+
+            # Ensure block instructions
+            inst.ensure_blocks&.each { |i| owned << i.object_id }
+          elsif inst.is_a?(HIR::CaseStatement)
+            # When/else body instructions (and their condition expressions) are emitted
+            # into the current block by build_when_clause, but they must only be generated
+            # inside their proper when_body/else LLVM blocks by generate_case_statement.
+            # Skip them here so they are not executed unconditionally before the dispatch.
+            owned.merge(inst.sub_instruction_ids) if inst.sub_instruction_ids
           end
-
-          # Else block instructions
-          inst.else_blocks&.each { |i| owned << i.object_id }
-
-          # Ensure block instructions
-          inst.ensure_blocks&.each { |i| owned << i.object_id }
         end
         owned
       end
@@ -1813,6 +1866,8 @@ module Konpeito
           generate_store_constant(inst)
         when HIR::Call
           generate_call(inst)
+        when HIR::CaseEqualityCheck
+          generate_case_equality_check(inst)
         when HIR::SelfRef
           generate_self_ref(inst)
         when HIR::Phi
@@ -3036,9 +3091,11 @@ module Konpeito
             return result
           end
 
-          # Check if we can call a local function directly
+          # Check if we can call a local function directly.
+          # Skip if the method is defined in multiple classes (polymorphic) — such
+          # calls must use rb_funcallv so the correct subclass override is invoked.
           local_func = @functions[inst.method_name]
-          if local_func && self_receiver?(inst.receiver)
+          if local_func && self_receiver?(inst.receiver) && !@polymorphic_methods.include?(inst.method_name)
             result = generate_direct_call(inst, inst.method_name)
             @variables[inst.result_var] = result if inst.result_var
             return result
@@ -3101,7 +3158,7 @@ module Konpeito
         # Build keyword arguments hash if present
         kwargs_hash = nil
         if inst.has_keyword_args?
-          kwargs_hash = build_keyword_args_hash(inst.keyword_args)
+          kwargs_hash = build_keyword_args_hash(inst.keyword_args, keyword_splat: inst.keyword_splat)
         end
 
         # Check if any argument is a splat
@@ -3229,6 +3286,14 @@ module Konpeito
             end
           end
         end
+
+        # Record that the enclosing HIR block now exits through safe_merge_bb.
+        # Any HIR::Phi that references the enclosing HIR block as a predecessor
+        # must use safe_merge_bb instead of the original LLVM block.
+        if @generating_block_label
+          @block_exit_overrides[@generating_block_label] = safe_merge_bb
+        end
+
         phi
       end
 
@@ -3439,13 +3504,30 @@ module Konpeito
         end
       end
 
-      # Build a Ruby Hash from keyword arguments
+      # Build a Ruby Hash from keyword arguments (and optional **hash splat)
       # Returns an LLVM VALUE representing the Hash
-      def build_keyword_args_hash(keyword_args)
+      def build_keyword_args_hash(keyword_args, keyword_splat: nil)
+        # If only a keyword splat with no explicit keyword args, use the hash directly
+        if keyword_splat && keyword_args.empty?
+          return get_value_as_ruby(keyword_splat)
+        end
+
         # Create new hash
         hash = @builder.call(@rb_hash_new)
 
-        # Add each keyword argument
+        # Merge splatted hash if present (mixed case: **hash + explicit key: val)
+        if keyword_splat
+          splat_value = get_value_as_ruby(keyword_splat)
+          update_id_ptr = @builder.global_string_pointer("update")
+          update_id = @builder.call(@rb_intern, update_id_ptr)
+          argv = @builder.alloca(LLVM::Array(value_type, 1))
+          ptr = @builder.gep(argv, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(0)])
+          @builder.store(splat_value, ptr)
+          argv_ptr = @builder.bit_cast(argv, LLVM::Pointer(value_type))
+          @builder.call(@rb_funcallv, hash, update_id, LLVM::Int32.from_i(1), argv_ptr)
+        end
+
+        # Add each explicit keyword argument
         keyword_args.each do |key_name, value_inst|
           # Convert key name to Ruby Symbol
           key_str_ptr = @builder.global_string_pointer(key_name.to_s)
@@ -4324,22 +4406,72 @@ module Konpeito
           argv = @builder.bit_cast(argv, LLVM::Pointer(value_type))
         end
 
-        # Create capture struct for closure variables
+        # Create capture struct for closure variables.
+        # Also capture outer self so @ivar access inside blocks works correctly.
         captures = inst.block.captures.select { |c| @variable_allocas[c.name] }
-        capture_data = create_capture_struct(captures)
+
+        outer_self_val = get_self_value
+        self_slot = @builder.alloca(value_type, "blk_self_slot")
+        @builder.store(outer_self_val, self_slot)
+        @variable_allocas[BLOCK_SELF_CAPTURE] = self_slot
+        self_capture = HIR::Capture.new(name: BLOCK_SELF_CAPTURE, type: nil)
+        all_captures = [self_capture] + captures
 
         # Collect type info for captured variables
-        capture_types = {}
+        capture_types = { BLOCK_SELF_CAPTURE => :value }
         captures.each do |capture|
           capture_types[capture.name] = @variable_types[capture.name] || :value
         end
 
-        # Generate block callback function
-        block_func = generate_block_callback(inst.block, inst.method_name, captures, capture_types)
+        # Determine capture strategy.
+        #
+        # - Builtin block iterators (each, times, map, etc.) call the block inline
+        #   before returning, so the stack remains alive and pointer-to-alloca is safe.
+        #   These arrive via generate_block_iterator_call with a non-nil `builtin`.
+        #
+        # - Compiled user functions that use `yield` call blocks inline → pointer-to-alloca safe,
+        #   and write-back through captured variable allocas works correctly.
+        #
+        # - Compiled user functions with a `&blk` parameter (block: true in HIR::Param) STORE the
+        #   block as a Proc (e.g. Button#on_click stores the block in @click_handler). The stack
+        #   frame of the caller will be gone when the proc is eventually called. These MUST use
+        #   escape-cells to avoid dangling-pointer segfaults.
+        #
+        # - External / unknown methods (not in the builtin table and not compiled by Konpeito)
+        #   may also store the block. Use escape-cells for safety.
+        #
+        # Additionally, when we are already inside a block callback (@in_block_callback),
+        # the outer callback's stack will also be freed before any nested proc runs, so
+        # escape-cells is required there too.
+        hir_target = @hir_functions[inst.method_name.to_s]
+        target_stores_block = hir_target&.params&.any? { |p| p.block }
+        is_external_method = builtin.nil? && @functions[inst.method_name].nil?
+        use_escape_cells = target_stores_block || is_external_method || @in_block_callback
 
-        # Call rb_block_call with capture data
-        result = @builder.call(@rb_block_call,
-          receiver, method_id, argc, argv, block_func, capture_data)
+        if use_escape_cells
+          esc_ary = @builder.call(@rb_ary_new_capa, LLVM::Int64.from_i(all_captures.size), "blk_esc_ary")
+          all_captures.each do |cap|
+            val = if @variable_allocas[cap.name]
+                    @builder.load2(value_type, @variable_allocas[cap.name], "blk_esc_#{cap.name}")
+                  else
+                    @qnil
+                  end
+            @builder.call(@rb_ary_push, esc_ary, val)
+          end
+
+          block_func = generate_block_callback(inst.block, inst.method_name, all_captures, capture_types,
+                                               escape_cells_mode: true)
+          result = @builder.call(@rb_block_call,
+            receiver, method_id, argc, argv, block_func, esc_ary)
+        else
+          # Pointer-to-alloca mode: captures are stored as VALUE* pointers in a struct.
+          # The callback reads/writes through those pointers, so mutations propagate back.
+          capture_data = create_capture_struct(all_captures)
+          block_func = generate_block_callback(inst.block, inst.method_name, all_captures, capture_types,
+                                               escape_cells_mode: false)
+          result = @builder.call(@rb_block_call,
+            receiver, method_id, argc, argv, block_func, capture_data)
+        end
 
         result
       end
@@ -4395,6 +4527,7 @@ module Konpeito
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
         saved_in_block_callback = @in_block_callback
+        saved_block_callback_self = @block_callback_self
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -4448,6 +4581,14 @@ module Konpeito
               @variable_types[capture.name] = capture_types[capture.name] || :value
             end
           end
+        end
+
+        # Extract the captured outer self for @ivar access inside blocks.
+        # BLOCK_SELF_CAPTURE is always included by generate_rb_block_call.
+        @block_callback_self = nil
+        if @variable_allocas[BLOCK_SELF_CAPTURE]
+          @block_callback_self = @builder.load2(value_type,
+            @variable_allocas[BLOCK_SELF_CAPTURE], "blk_self")
         end
 
         # Bind block parameters to yielded values
@@ -4673,6 +4814,7 @@ module Konpeito
         @variable_types = saved_types
         @variable_allocas = saved_allocas
         @in_block_callback = saved_in_block_callback
+        @block_callback_self = saved_block_callback_self
 
         callback_func
       end
@@ -5090,16 +5232,23 @@ module Konpeito
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
         saved_current_function = @current_function
+        saved_in_block_callback = @in_block_callback
+        saved_block_callback_self = @block_callback_self
+        saved_in_thread_callback = @in_thread_callback
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
         @current_function = callback_func
 
-        # Reset variable tracking for callback scope
+        # Reset variable tracking for callback scope.
+        # Thread callbacks are independent execution contexts — reset block callback state.
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
+        @in_block_callback = false
+        @block_callback_self = nil
+        @in_thread_callback = true
 
         # Setup captured variable access through void* arg
         unless captures.empty?
@@ -5212,6 +5361,9 @@ module Konpeito
         @variable_types = saved_types
         @variable_allocas = saved_allocas
         @current_function = saved_current_function
+        @in_block_callback = saved_in_block_callback
+        @block_callback_self = saved_block_callback_self
+        @in_thread_callback = saved_in_thread_callback
 
         callback_func
       end
@@ -6052,6 +6204,8 @@ module Konpeito
           @builder.fmul(left, right)
         when "/"
           @builder.fdiv(left, right)
+        when "%"
+          @builder.frem(left, right)
         else
           raise "Unknown float operation: #{inst.method_name}"
         end
@@ -6752,7 +6906,7 @@ module Konpeito
         kw_info = @keyword_param_functions[func_name.to_s] || @keyword_param_functions[func_name.to_sym]
         if kw_info
           if inst.has_keyword_args?
-            kwargs_hash = build_keyword_args_hash(inst.keyword_args)
+            kwargs_hash = build_keyword_args_hash(inst.keyword_args, keyword_splat: inst.keyword_splat)
             call_args << kwargs_hash
           else
             # No keyword args provided - pass an empty hash
@@ -6792,7 +6946,7 @@ module Konpeito
         # Collect all arguments (regular + keyword hash if present)
         all_args = inst.args.map { |arg| get_value_as_ruby(arg) }
         if inst.has_keyword_args?
-          kwargs_hash = build_keyword_args_hash(inst.keyword_args)
+          kwargs_hash = build_keyword_args_hash(inst.keyword_args, keyword_splat: inst.keyword_splat)
           all_args << kwargs_hash
         end
 
@@ -6950,23 +7104,60 @@ module Konpeito
           end
           result = scope
         else
-          # Unqualified constant - search current class/module first, then Object
+          # Unqualified constant — follow Ruby's nesting lookup:
+          # 1. owner_class (e.g. RanmaFrame) — check with rb_const_defined_at
+          # 2. owner_module (e.g. Kumiki) if constant not directly in class
+          # 3. rb_cObject as final fallback
+          #
+          # Uses `select` to pick the lookup scope without creating new basic blocks
+          # (creating blocks mid-HIR-block corrupts phi node predecessor relationships).
           const_name = parts.first
-          owner_class = @current_hir_func&.owner_class || @current_hir_func&.owner_module
+          const_name_ptr = @builder.global_string_pointer(const_name)
+          const_id = @builder.call(@rb_intern, const_name_ptr)
+          rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
+
+          owner_class  = @current_hir_func&.owner_class
+          owner_module = @current_hir_func&.owner_module
+
           if owner_class
-            # Look up constant in the owning class/module
-            owner_ptr = @builder.global_string_pointer(owner_class)
-            owner_id = @builder.call(@rb_intern, owner_ptr)
-            rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
-            owner_value = @builder.call(@rb_const_get, rb_cobject_val, owner_id)
-            const_name_ptr = @builder.global_string_pointer(const_name)
-            const_id = @builder.call(@rb_intern, const_name_ptr)
-            result = @builder.call(@rb_const_get, owner_value, const_id)
+            # Resolve the owner class value (qualified by module if present)
+            if owner_module
+              owner_mod_ptr = @builder.global_string_pointer(owner_module)
+              owner_mod_id  = @builder.call(@rb_intern, owner_mod_ptr)
+              owner_mod_val = @builder.call(@rb_const_get, rb_cobject_val, owner_mod_id)
+              owner_cls_ptr = @builder.global_string_pointer(owner_class)
+              owner_cls_id  = @builder.call(@rb_intern, owner_cls_ptr)
+              owner_cls_val = @builder.call(@rb_const_get, owner_mod_val, owner_cls_id)
+            else
+              owner_cls_ptr = @builder.global_string_pointer(owner_class)
+              owner_cls_id  = @builder.call(@rb_intern, owner_cls_ptr)
+              owner_cls_val = @builder.call(@rb_const_get, rb_cobject_val, owner_cls_id)
+              owner_mod_val = rb_cobject_val
+            end
+
+            if owner_module
+              # Use rb_const_defined_at to select the scope without branching:
+              # if constant is defined directly in owner_class → look in owner_class
+              # otherwise                                       → look in owner_module
+              @rb_const_defined_at ||= @mod.functions.add("rb_const_defined_at",
+                [value_type, id_type], LLVM::Int32)
+              defined_in_cls = @builder.call(@rb_const_defined_at, owner_cls_val, const_id, "def_in_cls")
+              is_in_cls = @builder.icmp(:ne, defined_in_cls, LLVM::Int32.from_i(0))
+              # Select lookup scope: class if defined there, module otherwise
+              lookup_scope = @builder.select(is_in_cls, owner_cls_val, owner_mod_val, "const_scope")
+              result = @builder.call(@rb_const_get, lookup_scope, const_id, "const_val")
+            else
+              result = @builder.call(@rb_const_get, owner_cls_val, const_id)
+            end
+
+          elsif owner_module
+            # Only a module context (no class), look in module
+            owner_mod_ptr = @builder.global_string_pointer(owner_module)
+            owner_mod_id  = @builder.call(@rb_intern, owner_mod_ptr)
+            owner_mod_val = @builder.call(@rb_const_get, rb_cobject_val, owner_mod_id)
+            result = @builder.call(@rb_const_get, owner_mod_val, const_id)
           else
             # Top-level constant
-            const_name_ptr = @builder.global_string_pointer(const_name)
-            const_id = @builder.call(@rb_intern, const_name_ptr)
-            rb_cobject_val = @builder.load2(value_type, @rb_cObject, "rb_cObject")
             result = @builder.call(@rb_const_get, rb_cobject_val, const_id)
           end
         end
@@ -7294,7 +7485,7 @@ module Konpeito
         # Generate try callback function
         @rescue_counter ||= 0
         @rescue_counter += 1
-        try_func = generate_rescue_try_callback(inst.try_blocks, @rescue_counter)
+        try_func = generate_rescue_try_callback(inst.try_blocks, @rescue_counter, try_hir_blocks: inst.try_hir_blocks)
 
         # Collect exception classes
         exception_classes = []
@@ -7310,16 +7501,20 @@ module Konpeito
 
         # If else blocks present, use a global flag to detect if rescue ran
         # A module-level global i32 is set to 1 by the rescue callback
+        # Capture current self to pass into rescue callbacks (data1/data2).
+        # This allows @ivar access inside try/rescue bodies to use the correct self.
+        rescue_self = get_self_value
+
         if has_else
           flag_global = @mod.globals.add(LLVM::Int32, "rescue_else_flag_#{@rescue_counter}")
           flag_global.initializer = LLVM::Int32.from_i(0)
           @builder.store(LLVM::Int32.from_i(0), flag_global)
 
           rescue_func = generate_rescue_handler_with_global_flag_callback(inst.rescue_clauses, @rescue_counter, flag_global)
-          args = [try_func, @qnil, rescue_func, @qnil]
+          args = [try_func, rescue_self, rescue_func, rescue_self]
         else
           rescue_func = generate_rescue_handler_callback(inst.rescue_clauses, @rescue_counter)
-          args = [try_func, @qnil, rescue_func, @qnil]
+          args = [try_func, rescue_self, rescue_func, rescue_self]
         end
 
         args.concat(exception_classes)
@@ -7405,53 +7600,79 @@ module Konpeito
       end
 
       # Generate try callback function: VALUE func(VALUE data)
-      def generate_rescue_try_callback(try_instructions, counter)
+      def generate_rescue_try_callback(try_instructions, counter, try_hir_blocks: nil)
         callback_name = "rescue_try_#{counter}"
 
-        # VALUE func(VALUE data)
+        # VALUE func(VALUE data)  — data (params[0]) = self (passed from generate_begin_rescue)
         callback_func = @mod.functions.add(callback_name, [value_type], value_type)
 
         # Save current builder state
-        saved_block = @builder.insert_block
-        saved_vars = @variables.dup
-        saved_types = @variable_types.dup
-        saved_allocas = @variable_allocas.dup
+        saved_block    = @builder.insert_block
+        saved_vars     = @variables.dup
+        saved_types    = @variable_types.dup
+        saved_allocas  = @variable_allocas.dup
+        saved_cur_func = @current_function
+        saved_return_blocks = @return_blocks
+        saved_block_callback_self = @block_callback_self
 
-        # Create entry block for callback
-        entry = callback_func.basic_blocks.append("entry")
-        @builder.position_at_end(entry)
+        # Set self for @ivar access inside the rescue try body (params[0] = data1 = self)
+        @block_callback_self = callback_func.params[0]
 
         # Reset variable tracking for callback scope
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
 
-        result = @qnil
-
-        # Generate try instructions
-        if try_instructions && !try_instructions.empty?
-          try_instructions.each do |inst|
-            result = generate_instruction(inst)
+        if try_hir_blocks && !try_hir_blocks.empty?
+          # Structured try body: process HIR BasicBlock list (handles control flow inside try).
+          # The blocks already have proper terminators (including a Return on the last block).
+          # First, pre-create all LLVM basic blocks so forward references resolve.
+          try_hir_blocks.each do |hb|
+            llvm_bb = callback_func.basic_blocks.append(hb.label)
+            @blocks[hb.label] = llvm_bb
           end
-        end
+          # Set @current_function to callback_func so generate_store_local creates
+          # allocas inside the rescue callback, not the outer function.
+          @current_function = callback_func
+          # Populate @return_blocks for callback's HIR blocks so generate_phi can skip
+          # predecessor entries that come from blocks with Return terminators.
+          @return_blocks = Set.new
+          try_hir_blocks.each do |hb|
+            @return_blocks << hb.label if hb.terminator.is_a?(HIR::Return)
+          end
+          sorted = sort_blocks_by_phi_dependencies(try_hir_blocks)
+          sorted.each { |hb| generate_block(callback_func, hb) }
+        else
+          # Flat try body: original behaviour (no control flow in try body).
+          entry = callback_func.basic_blocks.append("entry")
+          @builder.position_at_end(entry)
 
-        # Return the result (or Qnil)
-        @builder.ret(result || @qnil)
+          result = @qnil
+          if try_instructions && !try_instructions.empty?
+            try_instructions.each { |inst| result = generate_instruction(inst) }
+          end
+
+          @builder.ret(result || @qnil)
+        end
 
         # Restore builder state
         @builder.position_at_end(saved_block) if saved_block
-        @variables = saved_vars
-        @variable_types = saved_types
+        @variables       = saved_vars
+        @variable_types  = saved_types
         @variable_allocas = saved_allocas
+        @current_function = saved_cur_func
+        @return_blocks    = saved_return_blocks
+        @block_callback_self = saved_block_callback_self
 
         callback_func
       end
 
-      # Generate rescue handler callback: VALUE func(VALUE exception, VALUE data)
+      # Generate rescue handler callback: VALUE func(VALUE data2, VALUE exception)
+      # data2 (params[0]) = self (passed from generate_begin_rescue for @ivar access)
       def generate_rescue_handler_callback(rescue_clauses, counter)
         callback_name = "rescue_handler_#{counter}"
 
-        # VALUE func(VALUE exception, VALUE data)
+        # VALUE func(VALUE data2, VALUE exception)
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
 
         # Save current builder state
@@ -7459,6 +7680,10 @@ module Konpeito
         saved_vars = @variables.dup
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
+        saved_block_callback_self = @block_callback_self
+
+        # Set self for @ivar access inside rescue body (params[0] = data2 = self)
+        @block_callback_self = callback_func.params[0]
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -7469,7 +7694,6 @@ module Konpeito
         @variable_types = {}
         @variable_allocas = {}
 
-        # Get exception parameter
         # CRuby rescue callback: (VALUE data2, VALUE exception)
         exception_val = callback_func.params[1]
 
@@ -7568,6 +7792,7 @@ module Konpeito
         @variables = saved_vars
         @variable_types = saved_types
         @variable_allocas = saved_allocas
+        @block_callback_self = saved_block_callback_self
 
         callback_func
       end
@@ -7576,12 +7801,17 @@ module Konpeito
       # The flag_global is an LLVM global variable that is set to 1 when rescue is invoked
       def generate_rescue_handler_with_global_flag_callback(rescue_clauses, counter, flag_global)
         callback_name = "rescue_handler_gflag_#{counter}"
+        # VALUE func(VALUE data2, VALUE exception) — data2 (params[0]) = self
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
 
         saved_block = @builder.insert_block
         saved_vars = @variables.dup
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
+        saved_block_callback_self = @block_callback_self
+
+        # Set self for @ivar access inside rescue body (params[0] = data2 = self)
+        @block_callback_self = callback_func.params[0]
 
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
@@ -7670,6 +7900,7 @@ module Konpeito
         @variables = saved_vars
         @variable_types = saved_types
         @variable_allocas = saved_allocas
+        @block_callback_self = saved_block_callback_self
 
         callback_func
       end
@@ -7901,6 +8132,27 @@ module Konpeito
         result
       end
 
+      # Generate a CaseEqualityCheck: condition === predicate (returns VALUE Qtrue/Qfalse)
+      # Used by the new HIR-block-based case/when dispatch
+      def generate_case_equality_check(inst)
+        cond_val = get_value_as_ruby(inst.condition)
+
+        result = if inst.predicate.nil?
+          # No predicate: treat condition itself as Ruby truthy value
+          cond_val
+        else
+          pred_val = get_value_as_ruby(inst.predicate)
+          # call_case_equality returns VALUE (Qtrue or Qfalse)
+          call_case_equality(cond_val, pred_val, receiver_hir: inst.condition)
+        end
+
+        if inst.result_var
+          @variables[inst.result_var] = result
+          @variable_types[inst.result_var] = :value
+        end
+        result
+      end
+
       # Call === (case equality) on receiver with argument
       # Call case equality with optimized inline comparison for basic types
       def call_case_equality(receiver, arg, receiver_hir: nil)
@@ -7959,8 +8211,8 @@ module Konpeito
       def inline_class_case_eq(klass, arg)
         # Use rb_obj_is_kind_of(arg, klass) which returns int (0 or non-zero)
         result_int = @builder.call(@rb_obj_is_kind_of, arg, klass)
-        # Convert int to VALUE
-        is_true = @builder.icmp(:ne, result_int, LLVM::Int32.from_i(0))
+        # rb_obj_is_kind_of returns VALUE (i64); compare with i64 0 (Qfalse)
+        is_true = @builder.icmp(:ne, result_int, LLVM::Int64.from_i(0))
         @builder.select(is_true, @qtrue, @qfalse)
       end
 
@@ -8647,11 +8899,19 @@ module Konpeito
       end
 
       def generate_phi(inst)
+        # If this phi was already generated (e.g., it lives in an earlier HIR block but
+        # also appears in a when_body or inline-rescue try_blocks), return the cached value.
+        if inst.result_var && @variables.key?(inst.result_var)
+          return @variables[inst.result_var]
+        end
+
         # Collect incoming values with their type tags for optimization
         incoming_data = []
 
         inst.incoming.each do |label, hir_value|
-          llvm_block = @blocks[label]
+          # If safe navigation inside this HIR block created additional LLVM blocks,
+          # use the actual exit block instead of the original HIR block's LLVM block.
+          llvm_block = @block_exit_overrides[label] || @blocks[label]
           next unless llvm_block
           # Skip blocks with Return terminators — they don't branch to the
           # merge block, so they cannot be predecessors in the phi node.

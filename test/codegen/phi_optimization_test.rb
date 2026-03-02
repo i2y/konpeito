@@ -83,7 +83,7 @@ class PhiOptimizationTest < Minitest::Test
     ir = compile_to_ir(source, rbs)
 
     # Should have phi with i64 type for case_merge block
-    assert_match(/case_merge:.*phi i64/m, ir, "Should generate unboxed i64 phi for case/when Integer branches")
+    assert_match(/case_merge\w*:.*phi i64/m, ir, "Should generate unboxed i64 phi for case/when Integer branches")
   end
 
   def test_case_float_unboxed
@@ -107,7 +107,7 @@ class PhiOptimizationTest < Minitest::Test
     ir = compile_to_ir(source, rbs)
 
     # Should have phi with double type
-    assert_match(/case_merge:.*phi double/m, ir, "Should generate unboxed double phi for case/when Float branches")
+    assert_match(/case_merge\w*:.*phi double/m, ir, "Should generate unboxed double phi for case/when Float branches")
   end
 
   def test_mixed_types_boxed

@@ -2912,6 +2912,38 @@ public class RubyDispatch {
     }
 
     /**
+     * Ruby case/when equality check: condition === predicate.
+     * In Ruby, `case x when 10` checks `10 === x`.
+     * Here `condition` is the when-value and `predicate` is the case expression.
+     *
+     * Rules:
+     *  - If condition is a Class/Module name (String from ConstantLookup), check instanceof.
+     *  - Otherwise use Java equals() for value comparison.
+     */
+    public static boolean caseEqual(Object condition, Object predicate) {
+        if (condition == null && predicate == null) return true;
+        if (condition == null || predicate == null) return false;
+        // Class name check: condition is a String representing a Ruby class name
+        if (condition instanceof String) {
+            String className = (String) condition;
+            switch (className) {
+                case "Integer": return predicate instanceof Long || predicate instanceof java.math.BigInteger;
+                case "Float":   return predicate instanceof Double;
+                case "String":  return predicate instanceof String;
+                case "Symbol":  return predicate instanceof String && ((String)predicate).startsWith(":");
+                case "Array":   return predicate instanceof KArray;
+                case "Hash":    return predicate instanceof KHash;
+                case "NilClass": return predicate == null;
+                case "TrueClass":  return Boolean.TRUE.equals(predicate);
+                case "FalseClass": return Boolean.FALSE.equals(predicate);
+                case "Numeric":    return predicate instanceof Long || predicate instanceof Double;
+                case "Object": case "BasicObject": return true;
+            }
+        }
+        return condition.equals(predicate);
+    }
+
+    /**
      * GCD helper for Integer#gcd.
      */
     private static long gcd(long a, long b) {

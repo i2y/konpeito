@@ -781,7 +781,11 @@ module Konpeito
 
         method_names = []
         singleton_method_names = []
+        module_function_method_names = []
+        module_private_method_names = Set.new
         module_constants = {}
+        # Track current visibility state within this module body
+        module_visibility = :public
 
         # Visit body within module context
         old_module = @current_module
@@ -802,6 +806,12 @@ module Konpeito
                   func.is_instance_method = false if func && func.name.to_s == method_name
                 else
                   method_names << method_name
+                  case module_visibility
+                  when :module_function
+                    module_function_method_names << method_name
+                  when :private
+                    module_private_method_names << method_name
+                  end
                 end
               elsif child.node_type == :singleton_class
                 # class << self in module - collect singleton methods
@@ -818,13 +828,29 @@ module Konpeito
                   end
                 end
               elsif child.node_type == :constant_write
-                # Handle constant assignment within module
+                # Handle constant assignment within module.
+                # Collect literal value for C Init optimization (simple constants only).
+                # Also emit StoreConstant into __main__ for non-literal values (Mutex.new,
+                # {}, File.join(...), etc.) so they get initialized at runtime via rb_const_set.
+                # Simple literals are already set in C Init, so we skip them here to avoid
+                # "already initialized constant" warnings.
                 const_name = child.node.name.to_s
-                module_constants[const_name] = visit_literal_value(child.children.first)
+                lit_val = visit_literal_value(child.children.first)
+                module_constants[const_name] = lit_val
+                # Only emit for non-literal values (literals handled by C Init)
+                unless lit_val.is_a?(HIR::IntegerLit) || lit_val.is_a?(HIR::FloatLit) ||
+                       lit_val.is_a?(HIR::StringLit) || lit_val.is_a?(HIR::SymbolLit) ||
+                       lit_val.is_a?(HIR::BoolLit) || lit_val.is_a?(HIR::NilLit)
+                  visit(child)
+                end
               elsif child.node_type == :class_variable_write
                 # Handle class variable initialization within module
                 # (modules can have class variables too)
                 visit(child)
+              elsif module_visibility_modifier?(child)
+                # module_function / private / public / protected as bare calls — compilation
+                # directive only, must NOT emit a runtime rb_funcallv call into __main__.
+                module_visibility = extract_module_visibility(child)
               else
                 visit(child)
               end
@@ -834,15 +860,43 @@ module Konpeito
 
         @current_module = old_module
 
-        module_def = ModuleDef.new(
-          name: name,
-          methods: method_names,
-          singleton_methods: singleton_method_names,
-          constants: module_constants
-        )
-
-        @program.modules << module_def
+        # Merge into existing ModuleDef if this module was already opened (multi-file projects)
+        existing_module_def = @program.modules.find { |m| m.name == name }
+        if existing_module_def
+          existing_module_def.methods.concat(method_names)
+          existing_module_def.singleton_methods.concat(singleton_method_names)
+          existing_module_def.module_function_methods.concat(module_function_method_names)
+          existing_module_def.private_methods.merge(module_private_method_names)
+          existing_module_def.constants.merge!(module_constants)
+        else
+          module_def = ModuleDef.new(
+            name: name,
+            methods: method_names,
+            singleton_methods: singleton_method_names,
+            constants: module_constants
+          )
+          module_def.module_function_methods.concat(module_function_method_names)
+          module_def.private_methods.merge(module_private_method_names)
+          @program.modules << module_def
+        end
         NilLit.new
+      end
+
+      # Check if a node is a bare visibility modifier inside a module body
+      # (module_function, private, public, protected with no arguments and no receiver)
+      def module_visibility_modifier?(typed_node)
+        return false unless typed_node.node_type == :call
+        return false unless typed_node.node.receiver.nil?
+        name = typed_node.node.name.to_s
+        return false unless %w[module_function private public protected].include?(name)
+        # Must be bare (no arguments) or have only symbol arguments (per-method form)
+        true
+      end
+
+      # Extract the visibility symbol from a visibility modifier call node
+      def extract_module_visibility(typed_node)
+        name = typed_node.node.name.to_s
+        name == "module_function" ? :module_function : name.to_sym
       end
 
       # Check if a def node is a singleton method (def self.method)
@@ -2098,6 +2152,7 @@ module Konpeito
         # Get arguments and keyword arguments
         args = []
         keyword_args = {}
+        keyword_splat = nil
         args_child = typed_node.children.find { |c| c.node_type == :arguments }
         if args_child
           args_child.children.each do |arg|
@@ -2117,6 +2172,15 @@ module Konpeito
                     # Fallback: create typed node for the value
                     keyword_args[key_name] = visit_node_directly(elem.value)
                   end
+                elsif elem.is_a?(Prism::AssocSplatNode) && elem.value
+                  # **hash at call site — capture the splatted hash expression
+                  typed_assoc = arg.children[ei]
+                  splat_expr = if typed_assoc && typed_assoc.children && !typed_assoc.children.empty?
+                    visit(typed_assoc.children.first)
+                  else
+                    visit_node_directly(elem.value)
+                  end
+                  keyword_splat = splat_expr
                 end
               end
             elsif arg.node.is_a?(Prism::SplatNode)
@@ -2211,6 +2275,7 @@ module Konpeito
           args: args,
           block: block,
           keyword_args: keyword_args,
+          keyword_splat: keyword_splat,
           type: typed_node.type,
           result_var: result_var,
           safe_navigation: is_safe_nav
@@ -6624,10 +6689,40 @@ module Konpeito
         ensure_child = typed_node.children.find { |c| c.node_type == :ensure }
 
         result_var = new_temp_var
+        has_rescue = rescue_child != nil
 
-        # Collect try instructions (without creating new blocks)
+        # When rescue clauses are present, collect the try body into a separate HIR block
+        # list using BlockBodyCollector so that control flow (if/else etc.) inside the try
+        # body does NOT bleed into the outer function's basic block graph.
+        # This prevents invalid phi-node predecessors in the rescue try callback.
+        try_hir_blocks = nil
         try_instructions = []
-        if statements_child
+
+        if has_rescue && statements_child
+          saved_function    = @current_function
+          saved_current_blk = @current_block
+
+          @block_counter += 1
+          try_entry = BasicBlock.new(label: "rescue_try_entry_#{@block_counter}")
+          try_hir_blocks = [try_entry]
+          @current_function = BlockBodyCollector.new(try_hir_blocks)
+          set_current_block(try_entry)
+
+          statements_child.children.each do |stmt|
+            inst = visit(stmt)
+            try_instructions << inst if inst
+          end
+
+          # Close the last open block with a Return
+          unless @current_block.terminator
+            last_val = try_instructions.last
+            @current_block.set_terminator(Return.new(value: last_val || NilLit.new))
+          end
+
+          @current_function = saved_function
+          set_current_block(saved_current_blk)
+        elsif statements_child
+          # No rescue clauses: inline (original behaviour)
           statements_child.children.each do |stmt|
             inst = visit(stmt)
             try_instructions << inst if inst
@@ -6677,6 +6772,7 @@ module Konpeito
 
         inst = BeginRescue.new(
           try_blocks: try_instructions,
+          try_hir_blocks: try_hir_blocks,
           rescue_clauses: rescue_clauses,
           else_blocks: else_instructions,
           ensure_blocks: ensure_instructions,
@@ -6735,7 +6831,10 @@ module Konpeito
       end
 
       def visit_case(typed_node)
-        # Handle case/when/else statements
+        # Handle case/when/else statements by creating proper HIR basic blocks,
+        # like visit_if does. This avoids the CaseStatement-embedding approach which
+        # caused when-body instructions to execute unconditionally in the entry block.
+        #
         # case x
         # when 1 then "one"
         # when 2, 3 then "small"
@@ -6753,62 +6852,141 @@ module Konpeito
           end
         end
 
-        # Record instruction count after predicate - everything after is when/else sub-instructions
-        sub_start_idx = @current_block.instructions.size
+        # Create merge block
+        merge_block = new_block("case_merge")
+        incoming = {}   # { hir_block_label => result_hir_node }
 
-        # Build when clauses
-        when_clauses = []
-        typed_node.children.select { |c| c.node_type == :when }.each do |when_child|
-          when_clause = build_when_clause(when_child)
-          when_clauses << when_clause
+        when_nodes = typed_node.children.select { |c| c.node_type == :when }
+        has_else = typed_node.children.any? { |c| c.node_type == :else }
+
+        when_nodes.each_with_index do |when_child, i|
+          # Extract conditions and body statements
+          conditions = []
+          body_stmts = nil
+          when_child.children.each do |child|
+            if child.node_type == :statements
+              body_stmts = child
+            else
+              # Evaluate condition in the current check block
+              cond = visit(child)
+              conditions << cond
+            end
+          end
+
+          body_block = new_block("when_body")
+          is_last_when = (i == when_nodes.size - 1)
+          next_block = new_block(is_last_when && !has_else ? "when_else" : "when_check")
+
+          # Generate condition checks with OR logic for multiple conditions
+          if predicate.nil?
+            # No predicate: treat conditions as boolean (truthy) directly
+            if conditions.empty?
+              @current_block.set_terminator(Jump.new(target: body_block.label))
+            else
+              # OR chain: if any condition is truthy, execute body
+              remaining = conditions.dup
+              last_cond = remaining.pop
+              remaining.each do |cond|
+                or_check_block = new_block("when_or_check")
+                @current_block.set_terminator(Branch.new(
+                  condition: cond,
+                  then_block: body_block.label,
+                  else_block: or_check_block.label
+                ))
+                set_current_block(or_check_block)
+              end
+              @current_block.set_terminator(Branch.new(
+                condition: last_cond,
+                then_block: body_block.label,
+                else_block: next_block.label
+              ))
+            end
+          else
+            # With predicate: use === comparison
+            if conditions.empty?
+              @current_block.set_terminator(Jump.new(target: body_block.label))
+            else
+              remaining = conditions.dup
+              last_cond = remaining.pop
+              remaining.each do |cond|
+                check_var = new_temp_var
+                check = CaseEqualityCheck.new(condition: cond, predicate: predicate, result_var: check_var)
+                emit(check)
+                or_check_block = new_block("when_or_check")
+                @current_block.set_terminator(Branch.new(
+                  condition: check,
+                  then_block: body_block.label,
+                  else_block: or_check_block.label
+                ))
+                set_current_block(or_check_block)
+              end
+              check_var = new_temp_var
+              check = CaseEqualityCheck.new(condition: last_cond, predicate: predicate, result_var: check_var)
+              emit(check)
+              @current_block.set_terminator(Branch.new(
+                condition: check,
+                then_block: body_block.label,
+                else_block: next_block.label
+              ))
+            end
+          end
+
+          # Generate body in body_block
+          set_current_block(body_block)
+          body_result = NilLit.new
+          if body_stmts
+            body_stmts.children.each do |stmt|
+              result = visit(stmt)
+              body_result = result if result
+            end
+          end
+          body_exit = @current_block
+          unless @current_block.terminator
+            @current_block.set_terminator(Jump.new(target: merge_block.label))
+          end
+          incoming[body_exit.label] = body_result
+
+          # Move to next check block
+          set_current_block(next_block)
         end
 
-        # Build else body
-        else_body = nil
+        # Else body (in the last check/else block = @current_block)
         else_child = typed_node.children.find { |c| c.node_type == :else }
+        else_result = NilLit.new
         if else_child
-          else_body = []
-          else_statements = else_child.children.find { |c| c.node_type == :statements }
-          if else_statements
-            else_statements.children.each do |stmt|
-              inst = visit(stmt)
-              else_body << inst if inst
+          else_stmts = else_child.children.find { |c| c.node_type == :statements }
+          if else_stmts
+            else_stmts.children.each do |stmt|
+              result = visit(stmt)
+              else_result = result if result
             end
           end
         end
-
-        # Collect ALL instruction IDs emitted during when/else visitation
-        sub_ids = Set.new
-        @current_block.instructions[sub_start_idx..].each do |i|
-          sub_ids << i.object_id
+        else_exit = @current_block
+        unless @current_block.terminator
+          @current_block.set_terminator(Jump.new(target: merge_block.label))
         end
+        incoming[else_exit.label] = else_result
 
-        inst = CaseStatement.new(
-          predicate: predicate,
-          when_clauses: when_clauses,
-          else_body: else_body,
-          type: typed_node.type,
-          result_var: result_var
-        )
-        inst.sub_instruction_ids = sub_ids
-        emit(inst)
-        inst
+        # Merge block with phi node
+        set_current_block(merge_block)
+        phi = Phi.new(incoming: incoming, type: typed_node.type, result_var: result_var)
+        emit(phi)
+        phi
       end
 
       def build_when_clause(when_typed_node)
-        # Extract conditions and body from when clause
+        # Extract conditions and body from when clause (kept for backward compatibility)
         conditions = []
         body = []
 
         when_typed_node.children.each do |child|
           if child.node_type == :statements
-            # This is the body
             child.children.each do |stmt|
               inst = visit(stmt)
               body << inst if inst
             end
           else
-            # This is a condition
             conditions << visit(child)
           end
         end

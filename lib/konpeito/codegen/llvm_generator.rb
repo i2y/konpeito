@@ -1537,67 +1537,93 @@ module Konpeito
       # Topologically sort blocks based on phi dependencies
       # Ensures blocks are generated after the blocks their phi nodes reference
       def sort_blocks_by_phi_dependencies(blocks)
-        # Build a map of block label -> block
+        return blocks if blocks.size <= 1
+
         block_map = blocks.each_with_object({}) { |b, h| h[b.label] = b }
 
-        # Build dependency graph: block -> blocks it depends on (via phi incoming values)
-        dependencies = {}
+        # Build CFG successor edges from terminators.
+        # A block's successors are the blocks it branches/jumps to.
+        successors = {}
         blocks.each do |block|
-          deps = Set.new
+          succs = []
+          term = block.terminator
+          case term
+          when HIR::Branch
+            succs << term.then_block if block_map[term.then_block]
+            succs << term.else_block if block_map[term.else_block]
+          when HIR::Jump
+            succs << term.target if block_map[term.target]
+          end
+          successors[block.label] = succs
+        end
+
+        # Also add phi-based dependencies: if a block has a phi that references a
+        # result_var defined in another block, that other block should come first.
+        phi_deps = Hash.new { |h, k| h[k] = Set.new }
+        blocks.each do |block|
           block.instructions.each do |inst|
             next unless inst.is_a?(HIR::Phi)
 
-            inst.incoming.each do |label, value|
-              # If the incoming value is from a result_var in another block,
-              # we depend on that block being generated first
+            inst.incoming.each do |_label, value|
               if value.respond_to?(:result_var) && value.result_var
-                # Find which block defines this result_var
                 blocks.each do |other_block|
                   next if other_block.label == block.label
 
                   other_block.instructions.each do |other_inst|
                     if other_inst.respond_to?(:result_var) && other_inst.result_var == value.result_var
-                      deps << other_block.label
+                      phi_deps[block.label] << other_block.label
                     end
                   end
                 end
               end
             end
           end
-          dependencies[block.label] = deps
         end
 
-        # Topological sort using Kahn's algorithm
-        in_degree = Hash.new(0)
-        dependencies.each do |block_label, deps|
-          deps.each do |dep_label|
-            in_degree[block_label] += 1 if block_map[dep_label]
+        # Reverse Post-Order (RPO) traversal of the CFG.
+        # This ensures a block is processed after all its predecessors (except back-edges).
+        visited = Set.new
+        post_order = []
+
+        dfs = lambda do |label|
+          return if visited.include?(label)
+
+          visited << label
+          successors[label]&.each do |succ|
+            dfs.call(succ)
           end
+          post_order << label
         end
 
-        # Start with blocks that have no dependencies
-        queue = blocks.select { |b| in_degree[b.label] == 0 }
-        sorted = []
+        dfs.call(blocks.first.label)
 
-        while queue.any?
-          # Take the first available block (preserves original order when possible)
-          current = queue.shift
-          sorted << current
+        # Any unreachable blocks (not visited) are appended at the end
+        rpo = post_order.reverse.filter_map { |label| block_map[label] }
+        remaining = blocks.select { |b| !visited.include?(b.label) }
 
-          # For each block that depends on current, decrease its in-degree
-          blocks.each do |block|
-            if dependencies[block.label]&.include?(current.label)
-              in_degree[block.label] -= 1
-              if in_degree[block.label] == 0 && !sorted.include?(block) && !queue.include?(block)
-                queue << block
-              end
+        sorted = rpo + remaining
+
+        # Final pass: respect phi dependencies by moving blocks forward if needed.
+        # If block B depends on block A (via phi), ensure A comes before B.
+        changed = true
+        while changed
+          changed = false
+          sorted.each_with_index do |block, idx|
+            phi_deps[block.label].each do |dep_label|
+              dep_idx = sorted.index { |b| b.label == dep_label }
+              next unless dep_idx && dep_idx > idx
+
+              # Move dep_block before current block
+              dep_block = sorted.delete_at(dep_idx)
+              sorted.insert(idx, dep_block)
+              changed = true
+              break
             end
+            break if changed
           end
         end
 
-        # If some blocks weren't added (cycle), add them in original order
-        remaining = blocks - sorted
-        sorted + remaining
+        sorted
       end
 
       def collect_local_variables_with_types(hir_func)
@@ -2655,9 +2681,17 @@ module Konpeito
             value = @variables[hir_value.result_var]
             type_tag = @variable_types[hir_value.result_var] || :value
             [value, type_tag]
-          else
+          elsif @variables.key?(hir_value.var.name)
             # Fall back to var.name (for pattern-bound variables or inliner-created refs)
             var_name = hir_value.var.name
+            value = @variables[var_name]
+            type_tag = @variable_types[var_name] || :value
+            [value, type_tag]
+          else
+            # Variable not yet loaded (e.g. sub-expression in rescue handler body).
+            # Generate the LoadLocal instruction to load from @variable_allocas.
+            generate_instruction(hir_value)
+            var_name = hir_value.result_var || hir_value.var.name
             value = @variables[var_name] || @qnil
             type_tag = @variable_types[var_name] || :value
             [value, type_tag]

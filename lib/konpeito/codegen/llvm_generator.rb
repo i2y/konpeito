@@ -4784,7 +4784,9 @@ module Konpeito
           result_type = :value
           last_inst = nil
           block_def.body.each do |basic_block|
+            rescue_owned = collect_rescue_owned_instructions(basic_block.instructions)
             basic_block.instructions.each do |hir_inst|
+              next if rescue_owned.include?(hir_inst.object_id)
               result = generate_instruction(hir_inst)
               last_inst = hir_inst
             end
@@ -5178,30 +5180,33 @@ module Konpeito
         # Create thread-specific callback (different signature from fiber/proc)
         callback_func = generate_thread_callback(block_def, captures, capture_types)
 
-        # Setup captures data (pass as intptr_t, cast back in callback)
+        # Setup captures data.
+        # Thread callbacks run asynchronously; the caller's stack is gone by the time
+        # the thread executes. We malloc a VALUE[] buffer on the heap, snapshot current
+        # VALUES into it, and pass the pointer to rb_thread_create.
+        # The thread callback reads the VALUES and frees the buffer.
         if captures.empty?
-          captures_data = LLVM::Int64.from_i(0)
+          captures_ptr = LLVM::Pointer(LLVM::Int8).null
         else
-          ptr_type = LLVM::Pointer(value_type)
-          array_type = LLVM::Array(ptr_type, captures.size)
-          captures_array = @builder.alloca(array_type, "thread_captures")
+          declare_malloc
+          n = captures.size
+          buf_size = LLVM::Int64.from_i(n * 8)  # 8 bytes per VALUE (i64)
+          raw_ptr = @builder.call(@malloc, buf_size, "thread_cap_buf")
+          raw_int = @builder.ptr2int(raw_ptr, LLVM::Int64, "thread_cap_int")
+          val_arr_ptr = @builder.int2ptr(raw_int, LLVM::Pointer(value_type), "thread_cap_vals")
 
           captures.each_with_index do |capture, i|
-            alloca = @variable_allocas[capture.name]
-            if alloca
-              ptr = @builder.gep(captures_array, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
-              @builder.store(alloca, ptr)
-            else
-              ptr = @builder.gep(captures_array, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
-              @builder.store(LLVM::Pointer(value_type).null, ptr)
-            end
+            val = if @variable_allocas[capture.name]
+                    @builder.load2(value_type, @variable_allocas[capture.name], "tc_#{capture.name}")
+                  else
+                    @qnil
+                  end
+            elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
+            @builder.store(val, elem_ptr)
           end
 
-          captures_data = @builder.ptr2int(captures_array, LLVM::Int64, "captures_int")
+          captures_ptr = raw_ptr
         end
-
-        # Call rb_thread_create - pass captures as intptr_t (void* compatible)
-        captures_ptr = @builder.int2ptr(captures_data, LLVM::Pointer(LLVM::Int8), "captures_ptr")
         result = @builder.call(@rb_thread_create, callback_func, captures_ptr)
 
         if inst.result_var
@@ -5250,28 +5255,25 @@ module Konpeito
         @block_callback_self = nil
         @in_thread_callback = true
 
-        # Setup captured variable access through void* arg
+        # Setup captured variable access through void* arg.
+        # The arg points to a malloc'd VALUE[] buffer (heap-allocated by generate_thread_new).
+        # Load each VALUE into a local alloca, then free the buffer.
         unless captures.empty?
-          # The void* arg contains captures array pointer (cast from intptr_t)
-          ptr_type = LLVM::Pointer(value_type)
-          array_type = LLVM::Array(ptr_type, captures.size)
-
-          # Convert void* (i8*) to intptr_t, then to the array pointer type
-          arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "arg_int")
-          captures_ptr = @builder.int2ptr(arg_int, LLVM::Pointer(array_type), "captures_ptr")
+          declare_free
+          arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "tc_arg_int")
+          val_arr_ptr = @builder.int2ptr(arg_int, LLVM::Pointer(value_type), "tc_vals")
 
           captures.each_with_index do |capture, i|
-            # Get pointer to the pointer (VALUE**)
-            elem_ptr_ptr = @builder.gep2(array_type, captures_ptr,
-              [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)], "cap_#{capture.name}_ptr_ptr")
-            # Load the pointer to the variable (VALUE*)
-            elem_ptr = @builder.load2(ptr_type, elem_ptr_ptr, "cap_#{capture.name}_ptr")
-
-            # Store in variable_allocas so LoadLocal/StoreLocal can use it
-            @variable_allocas[capture.name] = elem_ptr
-            # Preserve the original type from outer scope
+            elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
+            val = @builder.load2(value_type, elem_ptr, "tc_#{capture.name}_val")
+            alloca = @builder.alloca(value_type, "tc_#{capture.name}")
+            @builder.store(val, alloca)
+            @variable_allocas[capture.name] = alloca
             @variable_types[capture.name] = capture_types[capture.name] || :value
           end
+
+          # Free the malloc'd buffer now that all values are loaded into local allocas
+          @builder.call(@free, callback_func.params[0])
         end
 
         # Pre-allocate allocas for block-local variables
@@ -5335,7 +5337,9 @@ module Konpeito
           result_type = :value
           last_inst = nil
           block_def.body.each do |basic_block|
+            rescue_owned = collect_rescue_owned_instructions(basic_block.instructions)
             basic_block.instructions.each do |hir_inst|
+              next if rescue_owned.include?(hir_inst.object_id)
               result = generate_instruction(hir_inst)
               last_inst = hir_inst
             end
@@ -5589,7 +5593,9 @@ module Konpeito
         last_inst = nil
 
         block_def.body.each do |basic_block|
+          rescue_owned = collect_rescue_owned_instructions(basic_block.instructions)
           basic_block.instructions.each do |hir_inst|
+            next if rescue_owned.include?(hir_inst.object_id)
             result = generate_instruction(hir_inst) || result
             last_inst = hir_inst
           end
@@ -7485,7 +7491,57 @@ module Konpeito
         # Generate try callback function
         @rescue_counter ||= 0
         @rescue_counter += 1
-        try_func = generate_rescue_try_callback(inst.try_blocks, @rescue_counter, try_hir_blocks: inst.try_hir_blocks)
+
+        # Rescue callbacks run as separate C functions that only receive a single VALUE
+        # as data.  Any local variables (method params, locals) in @variable_allocas are
+        # NOT accessible inside those callbacks unless we pack them into an escape array.
+        # This applies to ALL contexts — not just thread/block callbacks — because the
+        # rescue callback is always a separate LLVM function.
+        #
+        # Native pointer types (NativeArray, NativeClass, ByteBuffer, etc.) cannot be
+        # stored in a Ruby Array, so we skip them.  Unboxed types (:i64, :double) are
+        # boxed before pushing and unboxed after unpacking.
+        native_pointer_types = %i[native_array native_class byte_buffer byte_slice
+                                  native_string slice_int64 slice_float64
+                                  static_array native_hash]
+        escapable_vars = @variable_allocas.keys.select do |vname|
+          !native_pointer_types.include?(@variable_types[vname])
+        end
+
+        needs_escape = !escapable_vars.empty?
+        escape_var_names = nil
+        rescue_data = nil
+
+        if needs_escape
+          escape_var_names = escapable_vars
+          n = 1 + escape_var_names.size  # index-0 = self
+          rescue_esc_ary = @builder.call(@rb_ary_new_capa, LLVM::Int64.from_i(n), "rescue_esc_ary")
+          # Push self (index 0)
+          actual_self = @block_callback_self || get_self_value
+          @builder.call(@rb_ary_push, rescue_esc_ary, actual_self)
+          # Push captured variables (index 1..n), boxing unboxed types
+          escape_var_names.each do |vname|
+            var_type = @variable_types[vname] || :value
+            case var_type
+            when :double
+              raw = @builder.load2(LLVM::Double, @variable_allocas[vname], "esc_load_#{vname}")
+              val = @builder.call(@rb_float_new, raw, "esc_box_#{vname}")
+            when :i64, :i8
+              raw = @builder.load2(LLVM::Int64, @variable_allocas[vname], "esc_load_#{vname}")
+              val = @builder.call(@rb_int2inum, raw, "esc_box_#{vname}")
+            else
+              val = @builder.load2(value_type, @variable_allocas[vname], "esc_load_#{vname}")
+            end
+            @builder.call(@rb_ary_push, rescue_esc_ary, val)
+          end
+          rescue_data = rescue_esc_ary
+        else
+          rescue_data = get_self_value
+        end
+
+        try_func = generate_rescue_try_callback(inst.try_blocks, @rescue_counter,
+                                                try_hir_blocks: inst.try_hir_blocks,
+                                                escape_var_names: escape_var_names)
 
         # Collect exception classes
         exception_classes = []
@@ -7499,22 +7555,18 @@ module Konpeito
 
         has_else = inst.else_blocks && !inst.else_blocks.empty?
 
-        # If else blocks present, use a global flag to detect if rescue ran
-        # A module-level global i32 is set to 1 by the rescue callback
-        # Capture current self to pass into rescue callbacks (data1/data2).
-        # This allows @ivar access inside try/rescue bodies to use the correct self.
-        rescue_self = get_self_value
-
         if has_else
           flag_global = @mod.globals.add(LLVM::Int32, "rescue_else_flag_#{@rescue_counter}")
           flag_global.initializer = LLVM::Int32.from_i(0)
           @builder.store(LLVM::Int32.from_i(0), flag_global)
 
-          rescue_func = generate_rescue_handler_with_global_flag_callback(inst.rescue_clauses, @rescue_counter, flag_global)
-          args = [try_func, rescue_self, rescue_func, rescue_self]
+          rescue_func = generate_rescue_handler_with_global_flag_callback(inst.rescue_clauses, @rescue_counter, flag_global,
+                                                                          escape_var_names: escape_var_names)
+          args = [try_func, rescue_data, rescue_func, rescue_data]
         else
-          rescue_func = generate_rescue_handler_callback(inst.rescue_clauses, @rescue_counter)
-          args = [try_func, rescue_self, rescue_func, rescue_self]
+          rescue_func = generate_rescue_handler_callback(inst.rescue_clauses, @rescue_counter,
+                                                         escape_var_names: escape_var_names)
+          args = [try_func, rescue_data, rescue_func, rescue_data]
         end
 
         args.concat(exception_classes)
@@ -7600,10 +7652,11 @@ module Konpeito
       end
 
       # Generate try callback function: VALUE func(VALUE data)
-      def generate_rescue_try_callback(try_instructions, counter, try_hir_blocks: nil)
+      # When escape_var_names is given, params[0] is a Ruby Array [self, var0, var1, ...].
+      def generate_rescue_try_callback(try_instructions, counter, try_hir_blocks: nil, escape_var_names: nil)
         callback_name = "rescue_try_#{counter}"
 
-        # VALUE func(VALUE data)  — data (params[0]) = self (passed from generate_begin_rescue)
+        # VALUE func(VALUE data)  — data (params[0]) = self or escape array
         callback_func = @mod.functions.add(callback_name, [value_type], value_type)
 
         # Save current builder state
@@ -7615,9 +7668,6 @@ module Konpeito
         saved_return_blocks = @return_blocks
         saved_block_callback_self = @block_callback_self
 
-        # Set self for @ivar access inside the rescue try body (params[0] = data1 = self)
-        @block_callback_self = callback_func.params[0]
-
         # Reset variable tracking for callback scope
         @variables = {}
         @variable_types = {}
@@ -7625,27 +7675,65 @@ module Konpeito
 
         if try_hir_blocks && !try_hir_blocks.empty?
           # Structured try body: process HIR BasicBlock list (handles control flow inside try).
-          # The blocks already have proper terminators (including a Return on the last block).
-          # First, pre-create all LLVM basic blocks so forward references resolve.
+          if escape_var_names
+            # In escape mode, create a dedicated entry block FIRST (LLVM entry = first BB).
+            # It unpacks self + local vars from the escape array, then branches to the first HIR block.
+            escape_entry_bb = callback_func.basic_blocks.append("rescue_escape_entry")
+          else
+            # Normal mode: params[0] is self.
+            @block_callback_self = callback_func.params[0]
+          end
+
+          # Pre-create all LLVM basic blocks so forward references resolve.
           try_hir_blocks.each do |hb|
             llvm_bb = callback_func.basic_blocks.append(hb.label)
             @blocks[hb.label] = llvm_bb
           end
-          # Set @current_function to callback_func so generate_store_local creates
-          # allocas inside the rescue callback, not the outer function.
+          # Set @current_function so generate_store_local creates allocas in the callback.
           @current_function = callback_func
-          # Populate @return_blocks for callback's HIR blocks so generate_phi can skip
-          # predecessor entries that come from blocks with Return terminators.
+          # Populate @return_blocks so generate_phi skips Return-predecessor entries.
           @return_blocks = Set.new
           try_hir_blocks.each do |hb|
             @return_blocks << hb.label if hb.terminator.is_a?(HIR::Return)
           end
+
+          if escape_var_names
+            # Fill the escape-entry block: unpack array → allocas, then branch to first HIR block.
+            @builder.position_at_end(escape_entry_bb)
+            escape_ary = callback_func.params[0]
+            self_val = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(0), "rescue_esc_self")
+            @block_callback_self = self_val
+            escape_var_names.each_with_index do |vname, i|
+              val   = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(i + 1), "rescue_esc_#{vname}")
+              alloca = @builder.alloca(value_type, "rescue_esc_alloca_#{vname}")
+              @builder.store(val, alloca)
+              @variable_allocas[vname] = alloca
+              @variable_types[vname]   = :value
+            end
+            @builder.br(@blocks[try_hir_blocks.first.label])
+          end
+
           sorted = sort_blocks_by_phi_dependencies(try_hir_blocks)
           sorted.each { |hb| generate_block(callback_func, hb) }
         else
           # Flat try body: original behaviour (no control flow in try body).
           entry = callback_func.basic_blocks.append("entry")
           @builder.position_at_end(entry)
+
+          if escape_var_names
+            escape_ary = callback_func.params[0]
+            self_val = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(0), "rescue_esc_self")
+            @block_callback_self = self_val
+            escape_var_names.each_with_index do |vname, i|
+              val   = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(i + 1), "rescue_esc_#{vname}")
+              alloca = @builder.alloca(value_type, "rescue_esc_alloca_#{vname}")
+              @builder.store(val, alloca)
+              @variable_allocas[vname] = alloca
+              @variable_types[vname]   = :value
+            end
+          else
+            @block_callback_self = callback_func.params[0]
+          end
 
           result = @qnil
           if try_instructions && !try_instructions.empty?
@@ -7668,8 +7756,8 @@ module Konpeito
       end
 
       # Generate rescue handler callback: VALUE func(VALUE data2, VALUE exception)
-      # data2 (params[0]) = self (passed from generate_begin_rescue for @ivar access)
-      def generate_rescue_handler_callback(rescue_clauses, counter)
+      # data2 (params[0]) = self or escape array (when escape_var_names is given)
+      def generate_rescue_handler_callback(rescue_clauses, counter, escape_var_names: nil)
         callback_name = "rescue_handler_#{counter}"
 
         # VALUE func(VALUE data2, VALUE exception)
@@ -7682,8 +7770,8 @@ module Konpeito
         saved_allocas = @variable_allocas.dup
         saved_block_callback_self = @block_callback_self
 
-        # Set self for @ivar access inside rescue body (params[0] = data2 = self)
-        @block_callback_self = callback_func.params[0]
+        # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
+        @block_callback_self = callback_func.params[0] unless escape_var_names
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -7696,6 +7784,23 @@ module Konpeito
 
         # CRuby rescue callback: (VALUE data2, VALUE exception)
         exception_val = callback_func.params[1]
+
+        # In escape mode: unpack self and local variables from the escape array (params[0]).
+        # escape_allocas_map holds the allocas so we can restore them after each body-block reset.
+        escape_allocas_map = {}
+        if escape_var_names
+          escape_ary = callback_func.params[0]
+          self_val = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(0), "rescue_esc_self")
+          @block_callback_self = self_val
+          escape_var_names.each_with_index do |vname, i|
+            val   = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(i + 1), "rescue_esc_#{vname}")
+            alloca = @builder.alloca(value_type, "rescue_esc_alloca_#{vname}")
+            @builder.store(val, alloca)
+            @variable_allocas[vname] = alloca
+            @variable_types[vname]   = :value
+            escape_allocas_map[vname] = alloca
+          end
+        end
 
         # Match exception class to find correct handler
         if rescue_clauses && !rescue_clauses.empty?
@@ -7756,6 +7861,12 @@ module Konpeito
             @variable_types = {}
             @variable_allocas = {}
 
+            # In escape mode, restore captured variable allocas (created in entry block).
+            escape_allocas_map.each do |vname, alloca|
+              @variable_allocas[vname] = alloca
+              @variable_types[vname]   = :value
+            end
+
             # Bind exception variable if specified
             if clause.exception_var
               @variables[clause.exception_var] = exception_val
@@ -7799,9 +7910,9 @@ module Konpeito
 
       # Generate rescue handler callback that sets a global flag when called
       # The flag_global is an LLVM global variable that is set to 1 when rescue is invoked
-      def generate_rescue_handler_with_global_flag_callback(rescue_clauses, counter, flag_global)
+      def generate_rescue_handler_with_global_flag_callback(rescue_clauses, counter, flag_global, escape_var_names: nil)
         callback_name = "rescue_handler_gflag_#{counter}"
-        # VALUE func(VALUE data2, VALUE exception) — data2 (params[0]) = self
+        # VALUE func(VALUE data2, VALUE exception) — data2 (params[0]) = self or escape array
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
 
         saved_block = @builder.insert_block
@@ -7810,8 +7921,8 @@ module Konpeito
         saved_allocas = @variable_allocas.dup
         saved_block_callback_self = @block_callback_self
 
-        # Set self for @ivar access inside rescue body (params[0] = data2 = self)
-        @block_callback_self = callback_func.params[0]
+        # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
+        @block_callback_self = callback_func.params[0] unless escape_var_names
 
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
@@ -7825,6 +7936,22 @@ module Konpeito
 
         # Set the global flag to 1 (rescue was invoked)
         @builder.store(LLVM::Int32.from_i(1), flag_global)
+
+        # In escape mode: unpack self and local variables from the escape array.
+        escape_allocas_map = {}
+        if escape_var_names
+          escape_ary = callback_func.params[0]
+          self_val = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(0), "rescue_esc_self")
+          @block_callback_self = self_val
+          escape_var_names.each_with_index do |vname, i|
+            val   = @builder.call(@rb_ary_entry, escape_ary, LLVM::Int64.from_i(i + 1), "rescue_esc_#{vname}")
+            alloca = @builder.alloca(value_type, "rescue_esc_alloca_#{vname}")
+            @builder.store(val, alloca)
+            @variable_allocas[vname] = alloca
+            @variable_types[vname]   = :value
+            escape_allocas_map[vname] = alloca
+          end
+        end
 
         # Same rescue matching logic as generate_rescue_handler_callback
         if rescue_clauses && !rescue_clauses.empty?
@@ -7870,6 +7997,12 @@ module Konpeito
             @variables = {}
             @variable_types = {}
             @variable_allocas = {}
+
+            # In escape mode, restore captured variable allocas after the reset.
+            escape_allocas_map.each do |vname, alloca|
+              @variable_allocas[vname] = alloca
+              @variable_types[vname]   = :value
+            end
 
             if clause.exception_var
               @variables[clause.exception_var] = exception_val

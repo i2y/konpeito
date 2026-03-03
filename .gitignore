@@ -49,6 +49,16 @@ Thumbs.db
 /META-INF/
 /TestLoad.*
 /tmp_debug_capture.rb
+*_init.c
+*_debug.json
+*_debug_hir.rb
+/*.json
+/test_*.rb
+
+# Example build artifacts
+examples/**/*.jar
+!examples/castella_ui/lib/*.jar
+examples/**/META-INF/
 
 # JVM ASM tool build artifacts
 tools/konpeito-asm/build/

@@ -439,7 +439,7 @@ This project was developed collaboratively between a human director ([Yasushi It
 
 Konpeito is in an early stage. Bugs and undocumented limitations should be expected. Actively improving — bug reports and feedback are very welcome.
 
-The JVM backend might be more mature than the LLVM/CRuby backend at this point. If you're getting started, try the JVM backend first (`--target jvm`).
+Both LLVM and JVM backends pass all 87 conformance specs. The LLVM backend has been successfully used to compile and run [kumiki](https://github.com/i2y/kumiki)'s `all_widgets_demo.rb` — a non-trivial reactive GUI application with 20+ widget types — as a CRuby extension.
 
 ## Contributing
 

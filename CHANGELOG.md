@@ -5,6 +5,26 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-03
+
+### Added
+- GitHub Actions CI workflow (unit tests + conformance tests)
+- `examples/README.md` — guide to all example files and how to run them
+- gemspec metadata: `source_code_uri`, `documentation_uri`
+- Milestone: successfully compiled and ran kumiki's `all_widgets_demo.rb` (20+ widget reactive GUI) as a CRuby extension
+
+### Changed
+- Language specification version updated from 0.1 to 0.3
+- `.gitignore` hardened to exclude build artifacts (`*_init.c`, `*_debug.json`, example JARs)
+- Removed scattered ad-hoc test scripts and build artifacts from project root
+- README: replaced JVM maturity note with kumiki all_widgets_demo compilation milestone
+
+### Fixed
+- JVM backend: phi type inference for instance variables with HM TypeVar pollution (ClassCastException fix)
+- Thread callback protocol fallback and `visit_begin` guard for control flow
+- Conformance test failures for thread capture, rescue, and JVM bare rescue
+- CFG-based RPO block ordering in rescue try callbacks
+
 ## [0.2.4] - 2026-02-28
 
 ### Added
@@ -176,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.3.0]: https://github.com/i2y/konpeito/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/i2y/konpeito/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/i2y/konpeito/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/i2y/konpeito/compare/v0.2.1...v0.2.2

@@ -1,7 +1,7 @@
 # Konpeito Language Specification
 
-**Version 0.1 (Draft)**
-**Date: 2026-02-13**
+**Version 0.3 (Draft)**
+**Date: 2026-03-03**
 
 Konpeito is an Ahead-of-Time (AOT) native compiler for a statically typable subset of Ruby 4.0. It uses the Prism parser and RBS type system with Hindley-Milner type inference, generating native code via LLVM and JVM backends.
 

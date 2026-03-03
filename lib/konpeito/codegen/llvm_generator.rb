@@ -5264,30 +5264,57 @@ module Konpeito
           capture_types[cap.name] = @variable_types[cap.name]
         end
 
-        # Create thread-specific callback (different signature from fiber/proc)
-        callback_func = generate_thread_callback(block_def, captures, capture_types)
+        # Determine if all captures have been pre-boxed to heap cells.
+        # When ThreadNew is at function top-level, collect_thread_captured_vars finds it
+        # and pre-boxes the captures. When ThreadNew is inside a rescue callback or
+        # other nested scope, pre-boxing doesn't happen — we must use the safe value-copy
+        # protocol instead (snapshot values, no bidirectional mutation).
+        all_preboxed = !captures.empty? && captures.all? { |c| @thread_boxed_vars[c.name] }
 
-        # Captured variables are already boxed to heap cells at function entry
-        # (by collect_thread_captured_vars + pre-boxing in generate_ruby_function_body).
-        # We just need to pass a buffer of cell pointers to the callback.
+        # Create thread-specific callback (different signature from fiber/proc)
+        callback_func = generate_thread_callback(block_def, captures, capture_types, cell_protocol: all_preboxed)
+
         if captures.empty?
           captures_ptr = LLVM::Pointer(LLVM::Int8).null
         else
           declare_malloc
-
-          # Create buffer of cell pointers to pass to the thread callback
           n = captures.size
-          buf = @builder.call(@malloc, LLVM::Int64.from_i(n * 8), "thread_ptrbuf")
-          buf_int = @builder.ptr2int(buf, LLVM::Int64, "thread_ptrbuf_int")
-          buf_typed = @builder.int2ptr(buf_int, LLVM::Pointer(LLVM::Pointer(value_type)), "thread_ptrbuf_typed")
 
-          captures.each_with_index do |capture, i|
-            cell_ptr = @thread_boxed_vars[capture.name] || @variable_allocas[capture.name]
-            elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tpb_elem_#{i}")
-            @builder.store(cell_ptr, elem_ptr)
+          if all_preboxed
+            # Cell-pointer protocol: pass pointers to shared heap cells.
+            # Enables bidirectional mutation visibility between threads.
+            buf = @builder.call(@malloc, LLVM::Int64.from_i(n * 8), "thread_ptrbuf")
+            buf_int = @builder.ptr2int(buf, LLVM::Int64, "thread_ptrbuf_int")
+            buf_typed = @builder.int2ptr(buf_int, LLVM::Pointer(LLVM::Pointer(value_type)), "thread_ptrbuf_typed")
+
+            captures.each_with_index do |capture, i|
+              cell_ptr = @thread_boxed_vars[capture.name]
+              elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tpb_elem_#{i}")
+              @builder.store(cell_ptr, elem_ptr)
+            end
+
+            captures_ptr = buf
+          else
+            # Value-copy protocol: snapshot current VALUES into the buffer.
+            # Safe for async threads (no pointer dependency on caller's stack).
+            # No bidirectional mutation — thread gets independent copies.
+            buf_size = LLVM::Int64.from_i(n * 8)
+            raw_ptr = @builder.call(@malloc, buf_size, "thread_cap_buf")
+            raw_int = @builder.ptr2int(raw_ptr, LLVM::Int64, "thread_cap_int")
+            val_arr_ptr = @builder.int2ptr(raw_int, LLVM::Pointer(value_type), "thread_cap_vals")
+
+            captures.each_with_index do |capture, i|
+              val = if @variable_allocas[capture.name]
+                      @builder.load2(value_type, @variable_allocas[capture.name], "tc_#{capture.name}")
+                    else
+                      @qnil
+                    end
+              elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
+              @builder.store(val, elem_ptr)
+            end
+
+            captures_ptr = raw_ptr
           end
-
-          captures_ptr = buf
         end
         result = @builder.call(@rb_thread_create, callback_func, captures_ptr)
 
@@ -5300,7 +5327,9 @@ module Konpeito
       end
 
       # Generate thread callback function with correct signature: VALUE func(void*)
-      def generate_thread_callback(block_def, captures = [], capture_types = {})
+      # cell_protocol: true = buffer contains cell POINTERS (shared heap cells, bidirectional)
+      #                false = buffer contains VALUE copies (snapshot, safe for async)
+      def generate_thread_callback(block_def, captures = [], capture_types = {}, cell_protocol: false)
         return nil unless block_def
 
         # Create a unique name for the callback
@@ -5338,33 +5367,45 @@ module Konpeito
         @block_callback_self = nil
         @in_thread_callback = true
 
-        # Setup captured variable access through shared heap cells.
-        # The arg is a void* pointing to a malloc'd buffer of cell POINTERS.
-        # Each cell is a heap-allocated VALUE that is shared with the outer function.
-        # Reads/writes through the cell pointer are visible to both sides.
         unless captures.empty?
           declare_free
-          # Cast void* arg to pointer-to-pointer type
-          arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "tc_arg_int")
-          buf_typed = @builder.int2ptr(arg_int, LLVM::Pointer(LLVM::Pointer(value_type)), "tc_buf_typed")
 
-          captures.each_with_index do |capture, i|
-            # Load the cell POINTER from the buffer
-            elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tc_bp_#{i}")
-            cell_ptr = @builder.load2(LLVM::Pointer(value_type), elem_ptr, "tc_cell_#{capture.name}")
+          if cell_protocol
+            # Cell-pointer protocol: buffer contains pointers to shared heap cells.
+            # Reads/writes through cell pointers are visible to both sides.
+            arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "tc_arg_int")
+            buf_typed = @builder.int2ptr(arg_int, LLVM::Pointer(LLVM::Pointer(value_type)), "tc_buf_typed")
 
-            # Use the shared cell pointer as the variable's alloca.
-            # This means all reads/writes go to the same heap location as the outer function.
-            @variable_allocas[capture.name] = cell_ptr
-            @variable_types[capture.name] = capture_types[capture.name] || :value
+            captures.each_with_index do |capture, i|
+              elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tc_bp_#{i}")
+              cell_ptr = @builder.load2(LLVM::Pointer(value_type), elem_ptr, "tc_cell_#{capture.name}")
+              @variable_allocas[capture.name] = cell_ptr
+              @variable_types[capture.name] = capture_types[capture.name] || :value
+              val = @builder.load2(value_type, cell_ptr, "tc_#{capture.name}_val")
+              @variables[capture.name] = val
+            end
 
-            # Load current value for @variables cache
-            val = @builder.load2(value_type, cell_ptr, "tc_#{capture.name}_val")
-            @variables[capture.name] = val
+            # Free the pointer buffer (NOT the cells — they're shared)
+            @builder.call(@free, callback_func.params[0])
+          else
+            # Value-copy protocol: buffer contains snapshot VALUE copies.
+            # Load each VALUE into a local alloca, then free the buffer.
+            arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "tc_arg_int")
+            val_arr_ptr = @builder.int2ptr(arg_int, LLVM::Pointer(value_type), "tc_vals")
+
+            captures.each_with_index do |capture, i|
+              elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
+              val = @builder.load2(value_type, elem_ptr, "tc_#{capture.name}_val")
+              alloca = @builder.alloca(value_type, "tc_#{capture.name}")
+              @builder.store(val, alloca)
+              @variable_allocas[capture.name] = alloca
+              @variable_types[capture.name] = capture_types[capture.name] || :value
+              @variables[capture.name] = val
+            end
+
+            # Free the malloc'd buffer
+            @builder.call(@free, callback_func.params[0])
           end
-
-          # Free the pointer buffer (but NOT the cells — they're shared with the outer function)
-          @builder.call(@free, callback_func.params[0])
         end
 
         # Pre-allocate allocas for block-local variables

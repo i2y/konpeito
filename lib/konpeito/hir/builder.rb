@@ -6796,11 +6796,18 @@ module Konpeito
           # No rescue clauses: inline (original behaviour)
           # Capture ALL emitted instructions (not just return values) because
           # visit() for assignment nodes emits StoreLocal but returns the value.
+          # Guard: visit() may change @current_block (if/else, while, etc.),
+          # in which case fall back to original behavior.
           statements_child.children.each do |stmt|
+            saved_block = @current_block
             before_idx = @current_block.instructions.size
-            visit(stmt)
-            @current_block.instructions[before_idx..].each do |emitted|
-              try_instructions << emitted
+            inst = visit(stmt)
+            if @current_block.equal?(saved_block) && @current_block.instructions.size >= before_idx
+              @current_block.instructions[before_idx..]&.each do |emitted|
+                try_instructions << emitted
+              end
+            else
+              try_instructions << inst if inst
             end
           end
         end
@@ -6822,10 +6829,15 @@ module Konpeito
           else_statements = else_child.children.find { |c| c.node_type == :statements }
           if else_statements
             else_statements.children.each do |stmt|
+              saved_block = @current_block
               before_idx = @current_block.instructions.size
-              visit(stmt)
-              @current_block.instructions[before_idx..].each do |emitted|
-                else_instructions << emitted
+              inst = visit(stmt)
+              if @current_block.equal?(saved_block) && @current_block.instructions.size >= before_idx
+                @current_block.instructions[before_idx..]&.each do |emitted|
+                  else_instructions << emitted
+                end
+              else
+                else_instructions << inst if inst
               end
             end
           end
@@ -6837,10 +6849,15 @@ module Konpeito
           ensure_statements = ensure_child.children.find { |c| c.node_type == :statements }
           if ensure_statements
             ensure_statements.children.each do |stmt|
+              saved_block = @current_block
               before_idx = @current_block.instructions.size
-              visit(stmt)
-              @current_block.instructions[before_idx..].each do |emitted|
-                ensure_instructions << emitted
+              inst = visit(stmt)
+              if @current_block.equal?(saved_block) && @current_block.instructions.size >= before_idx
+                @current_block.instructions[before_idx..]&.each do |emitted|
+                  ensure_instructions << emitted
+                end
+              else
+                ensure_instructions << inst if inst
               end
             end
           end
@@ -6849,7 +6866,7 @@ module Konpeito
         # Collect ALL instruction object_ids emitted during rescue/else/ensure visitation
         # This includes sub-expression instructions (e.g. StringLit for literal args)
         non_try_ids = Set.new
-        @current_block.instructions[non_try_start_idx..].each do |i|
+        (@current_block.instructions[non_try_start_idx..] || []).each do |i|
           non_try_ids << i.object_id
         end
 
@@ -6891,14 +6908,20 @@ module Konpeito
 
           # Collect body instructions - capture ALL emitted instructions
           # (visit() for assignments emits StoreLocal but returns the value)
+          # Guard: visit() may change @current_block (if/else, while, etc.)
           body_instructions = []
           statements_child = current.children.find { |c| c.node_type == :statements }
           if statements_child
             statements_child.children.each do |stmt|
+              saved_block = @current_block
               before_idx = @current_block.instructions.size
-              visit(stmt)
-              @current_block.instructions[before_idx..].each do |emitted|
-                body_instructions << emitted
+              inst = visit(stmt)
+              if @current_block.equal?(saved_block) && @current_block.instructions.size >= before_idx
+                @current_block.instructions[before_idx..]&.each do |emitted|
+                  body_instructions << emitted
+                end
+              else
+                body_instructions << inst if inst
               end
             end
           end

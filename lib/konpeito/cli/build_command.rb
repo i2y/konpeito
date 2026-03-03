@@ -16,10 +16,13 @@ module Konpeito
         parse_options!
 
         if args.empty?
-          error("No source file specified. Usage: konpeito build <source.rb>")
+          source_file = find_default_source
+          unless source_file
+            error("No source file specified. Usage: konpeito build <source.rb>")
+          end
+        else
+          source_file = args.first
         end
-
-        source_file = args.first
 
         unless File.exist?(source_file)
           error("File not found: #{source_file}")
@@ -204,6 +207,16 @@ module Konpeito
             size_str = File.exist?(output_file) ? " (#{format_size(File.size(output_file))})" : ""
             emit("Finished", "in #{duration_str} -> #{output_file}#{size_str}")
           end
+
+          # Show usage hint (skip for --run and --lib)
+          unless options[:run_after] || options[:library]
+            if options[:target] == :jvm
+              emit("Hint", "java -jar #{output_file}")
+            else
+              ext_name = File.basename(output_file, File.extname(output_file))
+              emit("Hint", "ruby -r ./#{ext_name} -e \"YourModule.method\"")
+            end
+          end
         end
       rescue Konpeito::DependencyError => e
         display_dependency_error(e)
@@ -214,6 +227,11 @@ module Konpeito
       rescue Konpeito::Error => e
         $stderr.puts "Error: #{e.message}"
         exit 1
+      end
+
+      def find_default_source
+        candidates = ["src/main.rb", "main.rb", "app.rb"]
+        candidates.find { |f| File.exist?(f) }
       end
     end
   end

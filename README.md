@@ -16,6 +16,65 @@ Konpeito uses a three-tier type resolution strategy:
 
 Adding an RBS signature promotes a dynamic fallback to static dispatch. The compiler tells you where the boundaries are — fix them if you want, or leave them dynamic. Your call.
 
+## What Gets Compiled
+
+Konpeito compiles your `.rb` source files into native code. Understanding the boundary between compiled and non-compiled code is key:
+
+**Compiled (native code):**
+- All `.rb` files you pass to `konpeito build`
+- Files resolved via `require` / `require_relative` at compile time (when source is available on the load path)
+- Within compiled code: type-resolved operations become native CPU instructions; unresolved operations fall back to `rb_funcallv` (CRuby's dynamic dispatch) with a compiler warning
+
+**Not compiled (regular Ruby):**
+- Gems and standard libraries loaded at runtime via CRuby's `rb_require` (e.g., `require "json"` loads CRuby's bundled JSON)
+- Any Ruby code running in the host CRuby process outside the compiled extension
+
+The compiled extension and CRuby coexist in the same process. Native code calls CRuby C API functions (`rb_define_class`, `rb_funcallv`, `rb_ary_push`, etc.), so compiled code can freely create Ruby objects, call Ruby methods, and interact with any loaded gem. The speed gain comes from the parts where Konpeito resolves types and emits native instructions instead of going through Ruby's method dispatch.
+
+This leads to two usage patterns:
+
+### Pattern 1: Extension Library
+
+Compile performance-critical code into a CRuby extension (`.bundle` / `.so`). Your main application stays as regular Ruby and loads the compiled code via `require`:
+
+```ruby
+# math.rb — compiled by Konpeito
+def sum_up_to(n)
+  total = 0
+  i = 1
+  while i <= n
+    total += i
+    i += 1
+  end
+  total
+end
+```
+
+```bash
+konpeito build math.rb   # → math.bundle
+```
+
+```ruby
+# app.rb — regular Ruby, NOT compiled
+require_relative "math"
+puts sum_up_to(10_000_000)   # calls into compiled native code
+```
+
+This is the pattern shown in [Hello World](#hello-world) below.
+
+### Pattern 2: Whole Application
+
+Compile an entire Ruby application — the compiler traces all `require` statements and compiles everything it can resolve into a single extension:
+
+```bash
+konpeito build -I /path/to/framework/lib app.rb   # → app.bundle
+ruby -r ./app -e ""                                # load and run
+```
+
+Runtime dependencies (gems not on the compile-time load path) are loaded normally by CRuby when the extension calls `require` at runtime.
+
+See [Tutorial](docs/tutorial.md) for step-by-step walkthroughs of both patterns, including compiling a [kumiki](https://github.com/i2y/kumiki) GUI app as an example of the whole-application approach.
+
 ## Quick Start
 
 ### Prerequisites
@@ -92,14 +151,22 @@ puts add(3, 4)        # => 7
 puts sum_up_to(100)   # => 5050
 ```
 
-A few more commands to get you going:
+### CLI Overview
 
 ```bash
-konpeito doctor                        # check your environment
-konpeito run --target jvm main.rb      # compile and run in one step
-konpeito fmt                           # format source files
-konpeito fmt --check                   # check formatting without modifying
+konpeito build src/main.rb                          # compile to CRuby extension
+konpeito build --target jvm -o app.jar src/main.rb  # compile to standalone JAR
+konpeito run src/main.rb                            # build and run in one step
+konpeito check src/main.rb                          # type check only (no codegen)
+konpeito init my_project                            # scaffold a new project
+konpeito test                                       # run project tests
+konpeito fmt                                        # format source files
+konpeito watch src/main.rb                          # auto-recompile on changes
+konpeito lsp                                        # start LSP server for IDE
+konpeito doctor                                     # check your environment
 ```
+
+For detailed options and examples, see [CLI Reference](docs/cli-reference.md).
 
 ## Features
 
@@ -120,6 +187,35 @@ konpeito fmt --check                   # check formatting without modifying
 - **Concurrency** — Fiber, Thread, Mutex, ConditionVariable, SizedQueue, and Ractor (with `Ractor::Port`, `Ractor.select`, `Ractor[:key]` local storage, `name:`, `monitor`/`unmonitor`). JVM Ractor uses Virtual Threads for scheduling but does not enforce object isolation — objects are shared by reference, unlike CRuby's strict isolation model.
 - **Built-in Tooling** — Formatter (`fmt`), LSP (hover, completion, go-to-def, references, rename), debug info (`-g`), and profiling (`--profile`).
 - **Castella UI** — A reactive GUI framework for the JVM backend (see below).
+
+## Supported Ruby Syntax
+
+Konpeito supports most Ruby 4.0 syntax:
+
+| Category | Supported |
+|----------|-----------|
+| Literals | Integer, Float, String, Symbol, Array, Hash, Regexp, Range, Heredoc, nil/true/false |
+| String interpolation | `"Hello #{name}"` |
+| Variables | Local, `@instance`, `@@class`, `$global` |
+| Control flow | `if`/`unless`, `while`/`until`, `for`, `case`/`when`, `case`/`in`, `break`, `next`, `return` |
+| Methods & OOP | Classes, modules, inheritance, `super`, `attr_accessor`, method visibility (`private`/`protected`) |
+| Blocks & closures | `yield`, `block_given?`, Proc, Lambda, `&blk` |
+| Pattern matching | Literals, arrays, hashes, guards (`if`), captures (`=>`), pins (`^`), rest (`*`) |
+| Exceptions | `begin`/`rescue`/`else`/`ensure`, custom exception classes |
+| Modern syntax | `_1`/`_2` numbered params, `it`, endless methods, `class << self`, `&.` safe navigation |
+| Operators | Full overloading (`+`, `-`, `*`, `==`, `<=>`, etc.), compound assignment (`+=`, `\|\|=`, `&&=`) |
+| Arguments | Keyword args, rest args (`*args`), keyword rest (`**kwargs`), splat (`foo(*arr)`) |
+| Concurrency | Fiber, Thread, Mutex, ConditionVariable, SizedQueue, Ractor (JVM) |
+| Misc | `alias`, `defined?`, open classes, multi-assignment, `%w`/`%i` literals |
+
+### Not Supported (by design)
+
+- `eval`, `instance_eval`, `class_eval`
+- `define_method`, `method_missing`
+- `ObjectSpace`, `Binding`
+- Dynamic `require`/`load` (variable-based require)
+
+For the complete specification, see [Language Specification](docs/language-specification.md).
 
 ## JVM Backend
 
@@ -409,6 +505,7 @@ The JVM backend benefits from HotSpot's JIT compilation on top of Konpeito's sta
 ### User Guides
 
 - **[Getting Started](docs/getting-started.md)** — Installation, Hello World, first project, Castella UI tutorial
+- **[Tutorial](docs/tutorial.md)** — Extension library and whole-application compilation patterns
 - **[CLI Reference](docs/cli-reference.md)** — All commands, options, and configuration
 - **[API Reference](docs/api-reference.md)** — Castella UI widgets, native data structures, standard library
 
@@ -439,7 +536,7 @@ This project was developed collaboratively between a human director ([Yasushi It
 
 Konpeito is in an early stage. Bugs and undocumented limitations should be expected. Actively improving — bug reports and feedback are very welcome.
 
-Both LLVM and JVM backends pass all 87 conformance specs. The LLVM backend has been successfully used to compile and run [kumiki](https://github.com/i2y/kumiki)'s `all_widgets_demo.rb` — a non-trivial reactive GUI application with 20+ widget types — as a CRuby extension.
+Both LLVM and JVM backends are tested against the project's conformance test suite covering core language features (control flow, classes, blocks, exceptions, pattern matching, concurrency, etc.). The LLVM backend has been successfully used to compile and run [kumiki](https://github.com/i2y/kumiki)'s `all_widgets_demo.rb` — a non-trivial reactive GUI application with 20+ widget types — as a CRuby extension.
 
 ## Contributing
 

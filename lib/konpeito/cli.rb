@@ -13,6 +13,7 @@ require_relative "cli/watch_command"
 require_relative "cli/run_command"
 require_relative "cli/deps_command"
 require_relative "cli/doctor_command"
+require_relative "cli/completion_command"
 
 module Konpeito
   # Main CLI router - dispatches to subcommands
@@ -27,7 +28,8 @@ module Konpeito
       "test" => Commands::TestCommand,
       "watch" => Commands::WatchCommand,
       "deps" => Commands::DepsCommand,
-      "doctor" => Commands::DoctorCommand
+      "doctor" => Commands::DoctorCommand,
+      "completion" => Commands::CompletionCommand
     }.freeze
 
     attr_reader :args
@@ -62,12 +64,53 @@ module Konpeito
       else
         # Unknown command
         $stderr.puts "Unknown command: #{command_name}"
+        suggestion = find_similar_command(command_name)
+        $stderr.puts "  Did you mean: #{suggestion}?" if suggestion
+        $stderr.puts ""
+        $stderr.puts "Available commands: #{COMMANDS.keys.join(', ')}"
         $stderr.puts "Run 'konpeito --help' for usage information."
         exit 1
       end
     end
 
     private
+
+    def find_similar_command(input)
+      best = nil
+      best_distance = Float::INFINITY
+
+      COMMANDS.each_key do |name|
+        # Prefix match (e.g. "b" -> "build")
+        return name if name.start_with?(input) && input.length >= 1
+
+        d = levenshtein(input, name)
+        if d < best_distance && d <= 2
+          best_distance = d
+          best = name
+        end
+      end
+      best
+    end
+
+    def levenshtein(a, b)
+      m = a.length
+      n = b.length
+      return n if m == 0
+      return m if n == 0
+
+      d = Array.new(m + 1) { |i| i }
+      (1..n).each do |j|
+        prev = d[0]
+        d[0] = j
+        (1..m).each do |i|
+          cost = a[i - 1] == b[j - 1] ? 0 : 1
+          temp = d[i]
+          d[i] = [d[i] + 1, d[i - 1] + 1, prev + cost].min
+          prev = temp
+        end
+      end
+      d[m]
+    end
 
     def run_command(command_name, command_args)
       command_class = COMMANDS[command_name]
@@ -105,6 +148,7 @@ module Konpeito
       puts "  konpeito test                         Run tests"
       puts "  konpeito fmt                          Format source files"
       puts "  konpeito doctor                       Check environment"
+      puts "  konpeito completion zsh               Generate shell completions"
       puts ""
       puts "Legacy mode (backwards compatible):"
       puts "  konpeito source.rb                     Same as: konpeito build source.rb"

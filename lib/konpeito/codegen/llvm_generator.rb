@@ -10694,6 +10694,14 @@ module Konpeito
       end
 
       # Declare memchr if not already declared
+      def declare_strlen
+        @strlen ||= @mod.functions["strlen"] || @mod.functions.add(
+          "strlen",
+          [LLVM::Pointer(LLVM::Int8)],
+          LLVM::Int64
+        )
+      end
+
       def declare_memchr
         @memchr ||= @mod.functions["memchr"] || @mod.functions.add(
           "memchr",
@@ -11707,9 +11715,10 @@ module Konpeito
         # Get C string pointer
         data_ptr = @builder.call(@rb_string_value_cstr, value_ptr, "data_ptr")
 
-        # Get byte length using rb_str_length (returns Fixnum)
-        len_value = @builder.call(@rb_str_length, string_value, "str_len")
-        byte_len = @builder.call(@rb_num2long, len_value, "byte_len")
+        # Get byte length using strlen on the C string
+        # (rb_str_length returns character count, not byte count)
+        declare_strlen
+        byte_len = @builder.call(@strlen, data_ptr, "byte_len")
 
         # Check ASCII-only using Ruby's ascii_only? method
         ascii_only_id = @builder.call(@rb_intern, @builder.global_string_pointer("ascii_only?"))

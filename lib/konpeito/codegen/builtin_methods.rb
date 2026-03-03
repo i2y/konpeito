@@ -44,6 +44,22 @@ module Konpeito
 
         # String hash - exported (useful for Hash key optimization)
         hash: { c_func: "rb_str_hash", arity: 0, return_type: :Integer, conv: :simple },
+
+        # String repeat - exported
+        :* => { c_func: "rb_str_times", arity: 1, return_type: :String, conv: :simple },
+
+        # String freeze - exported
+        freeze: { c_func: "rb_str_freeze", arity: 0, return_type: :String, conv: :simple },
+
+        # String replace - exported
+        replace: { c_func: "rb_str_replace", arity: 1, return_type: :String, conv: :simple },
+
+        # String succ/next - exported
+        succ: { c_func: "rb_str_succ", arity: 0, return_type: :String, conv: :simple },
+        next: { c_func: "rb_str_succ", arity: 0, return_type: :String, conv: :simple },
+
+        # String inspect - exported
+        inspect: { c_func: "rb_str_inspect", arity: 0, return_type: :String, conv: :simple },
       },
 
       Array: {

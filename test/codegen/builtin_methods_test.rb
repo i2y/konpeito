@@ -94,6 +94,42 @@ module Konpeito
         assert methods.key?(:concat)
       end
 
+      def test_lookup_string_times
+        result = Codegen.lookup(:String, :*)
+        assert_equal "rb_str_times", result[:c_func]
+        assert_equal 1, result[:arity]
+        assert_equal :simple, result[:conv]
+      end
+
+      def test_lookup_string_freeze
+        result = Codegen.lookup(:String, :freeze)
+        assert_equal "rb_str_freeze", result[:c_func]
+        assert_equal 0, result[:arity]
+      end
+
+      def test_lookup_string_replace
+        result = Codegen.lookup(:String, :replace)
+        assert_equal "rb_str_replace", result[:c_func]
+        assert_equal 1, result[:arity]
+      end
+
+      def test_lookup_string_succ
+        result = Codegen.lookup(:String, :succ)
+        assert_equal "rb_str_succ", result[:c_func]
+        assert_equal 0, result[:arity]
+      end
+
+      def test_lookup_string_next_alias
+        result = Codegen.lookup(:String, :next)
+        assert_equal "rb_str_succ", result[:c_func]
+      end
+
+      def test_lookup_string_inspect
+        result = Codegen.lookup(:String, :inspect)
+        assert_equal "rb_str_inspect", result[:c_func]
+        assert_equal 0, result[:arity]
+      end
+
       def test_methods_for_nonexistent_class
         methods = Codegen.methods_for(:NonexistentClass)
         assert_equal({}, methods)

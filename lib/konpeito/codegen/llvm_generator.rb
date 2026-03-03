@@ -2228,9 +2228,12 @@ module Konpeito
         end
 
         # Generate dynamic parts first (they may need to_s conversion)
-        # and collect their lengths
         dynamic_values = []
-        dynamic_lengths = []
+
+        # Declare rb_obj_as_string (returns String as-is, calls to_s only for non-String)
+        rb_obj_as_string = @mod.functions["rb_obj_as_string"] || @mod.functions.add(
+          "rb_obj_as_string", [value_type], value_type
+        )
 
         part_info.each do |info|
           next if info[:type] == :static
@@ -2241,19 +2244,13 @@ module Konpeito
           val = get_value_as_ruby(info[:hir])
 
           # Convert to string if needed (for non-string interpolated values)
+          # rb_obj_as_string returns String as-is, avoids rb_funcallv method lookup
           val_type = info[:hir].respond_to?(:type) ? info[:hir].type : nil
           unless val_type == TypeChecker::Types::STRING
-            to_s_ptr = @builder.global_string_pointer("to_s")
-            to_s_id = @builder.call(@rb_intern, to_s_ptr)
-            val = @builder.call(@rb_funcallv, val, to_s_id, LLVM::Int32.from_i(0), LLVM::Pointer(value_type).null)
+            val = @builder.call(rb_obj_as_string, val)
           end
 
           dynamic_values << val
-          # Get string length (returns Fixnum, need to unbox)
-          len_val = @builder.call(@rb_str_length, val)
-          # Unbox Fixnum: (value >> 1)
-          len_i64 = @builder.ashr(len_val, LLVM::Int64.from_i(1))
-          dynamic_lengths << len_i64
         end
 
         # If only one part, just return it
@@ -2268,14 +2265,9 @@ module Konpeito
           return result
         end
 
-        # Calculate total length: static_length + sum of dynamic lengths
-        total_length = LLVM::Int64.from_i(static_length)
-        dynamic_lengths.each do |len|
-          total_length = @builder.add(total_length, len)
-        end
-
-        # Pre-allocate buffer with total capacity
-        result = @builder.call(@rb_str_buf_new, total_length)
+        # Pre-allocate buffer: static length + padding for dynamic parts (avoid runtime length scan)
+        total_capacity = LLVM::Int64.from_i(static_length + 128)
+        result = @builder.call(@rb_str_buf_new, total_capacity)
 
         # Append each part using efficient methods
         dynamic_idx = 0
@@ -3150,6 +3142,11 @@ module Konpeito
           return generate_unboxed_unary(inst)
         end
 
+        # Try inline String methods (empty?)
+        if can_inline_string_method?(inst)
+          return generate_inline_string_method(inst)
+        end
+
         # Try unboxed arithmetic optimization
         if can_use_unboxed_arithmetic?(inst)
           # generate_unboxed_arithmetic sets @variables and @variable_types internally
@@ -3231,6 +3228,12 @@ module Konpeito
         # so CRuby sets up the block context for rb_yield/rb_block_given_p.
         if inst.block
           result = generate_rb_block_call_for_user_func(inst)
+          @variables[inst.result_var] = result if inst.result_var
+          return result
+        end
+
+        # Try optimized String method calls before rb_funcallv fallback
+        if (result = try_optimized_string_call(inst, receiver_type))
           @variables[inst.result_var] = result if inst.result_var
           return result
         end
@@ -6511,6 +6514,88 @@ module Konpeito
           result
         else
           raise "Unknown float unary: #{inst.method_name}"
+        end
+      end
+
+      # Try optimized String method calls (String#[] 2-arg, String#split with literal)
+      def try_optimized_string_call(inst, receiver_type)
+        resolved_type = receiver_type.is_a?(TypeChecker::TypeVar) ? resolve_type_var(receiver_type) : receiver_type
+        is_string = resolved_type == TypeChecker::Types::STRING ||
+          (resolved_type.is_a?(TypeChecker::Types::ClassInstance) && resolved_type.name == :String)
+        return nil unless is_string
+
+        case inst.method_name
+        when "[]"
+          # String#[start, length] → rb_str_substr(str, start, length)
+          return nil unless inst.args.size == 2
+
+          receiver = get_value_as_ruby(inst.receiver)
+          start_val = get_value_as_ruby(inst.args[0])
+          start_long = @builder.call(@rb_num2long, start_val)
+          len_val = get_value_as_ruby(inst.args[1])
+          len_long = @builder.call(@rb_num2long, len_val)
+
+          rb_str_substr = @mod.functions["rb_str_substr"] || @mod.functions.add(
+            "rb_str_substr", [value_type, LLVM::Int64, LLVM::Int64], value_type
+          )
+          @builder.call(rb_str_substr, receiver, start_long, len_long)
+        when "split"
+          # String#split(separator) → rb_str_split(str, separator_cstr)
+          return nil unless inst.args.size == 1
+
+          receiver = get_value_as_ruby(inst.receiver)
+
+          # rb_str_split takes (VALUE str, const char *sep)
+          rb_str_split = @mod.functions["rb_str_split"] || @mod.functions.add(
+            "rb_str_split", [value_type, LLVM::Pointer(LLVM::Int8)], value_type
+          )
+
+          if inst.args[0].is_a?(HIR::StringLit)
+            # Literal separator: use compile-time C string directly
+            sep_ptr = @builder.global_string_pointer(inst.args[0].value)
+          else
+            # Dynamic separator: convert to C string
+            sep_value = get_value_as_ruby(inst.args[0])
+            sep_value_ptr = @builder.alloca(LLVM::Int64, "split_sep_ptr")
+            @builder.store(sep_value, sep_value_ptr)
+            sep_ptr = @builder.call(@rb_string_value_cstr, sep_value_ptr, "split_sep_cstr")
+          end
+          @builder.call(rb_str_split, receiver, sep_ptr)
+        end
+      end
+
+      # Inline String method constants
+      INLINE_STRING_METHODS = %w[empty?].freeze
+
+      # Check if a method call can use inline String optimization
+      def can_inline_string_method?(inst)
+        return false unless inst.args.empty?
+        return false unless INLINE_STRING_METHODS.include?(inst.method_name)
+
+        receiver_type = get_type(inst.receiver)
+        receiver_type = resolve_type_var(receiver_type) if receiver_type.is_a?(TypeChecker::TypeVar)
+        receiver_type == TypeChecker::Types::STRING ||
+          (receiver_type.is_a?(TypeChecker::Types::ClassInstance) && receiver_type.name == :String)
+      end
+
+      # Generate inline String method
+      def generate_inline_string_method(inst)
+        receiver = get_value_as_ruby(inst.receiver)
+
+        case inst.method_name
+        when "empty?"
+          # rb_str_strlen returns long (byte count), avoids rb_funcallv method lookup
+          rb_str_strlen = @mod.functions["rb_str_strlen"] || @mod.functions.add(
+            "rb_str_strlen", [value_type], LLVM::Int64
+          )
+          str_len = @builder.call(rb_str_strlen, receiver, "str_len")
+          is_empty = @builder.icmp(:eq, str_len, LLVM::Int64.from_i(0), "is_empty")
+          result = @builder.select(is_empty, @qtrue, @qfalse)
+          if inst.result_var
+            @variables[inst.result_var] = result
+            @variable_types[inst.result_var] = :value
+          end
+          result
         end
       end
 
@@ -11720,18 +11805,19 @@ module Konpeito
         declare_strlen
         byte_len = @builder.call(@strlen, data_ptr, "byte_len")
 
-        # Check ASCII-only using Ruby's ascii_only? method
-        ascii_only_id = @builder.call(@rb_intern, @builder.global_string_pointer("ascii_only?"))
-        ascii_result = @builder.call(@rb_funcallv, string_value, ascii_only_id,
-          LLVM::Int32.from_i(0), LLVM::Pointer(LLVM::Int64).null_pointer, "ascii_result")
+        # Check ASCII-only using rb_enc_str_asciionly_p (avoids rb_funcallv method lookup)
+        rb_enc_str_asciionly_p = @mod.functions["rb_enc_str_asciionly_p"] || @mod.functions.add(
+          "rb_enc_str_asciionly_p", [value_type], LLVM::Int32
+        )
+        ascii_int = @builder.call(rb_enc_str_asciionly_p, string_value, "ascii_int")
+        # rb_enc_str_asciionly_p returns non-zero for ASCII-only
+        ascii_result = @builder.icmp(:ne, ascii_int, LLVM::Int32.from_i(0), "is_ascii_raw")
 
-        # Convert Ruby boolean to flags (Qtrue = 20, Qfalse = 0)
         # flags bit 0 = ASCII_ONLY
-        is_ascii_true = @builder.icmp(:eq, ascii_result, @qtrue, "is_ascii_true")
-        flags_val = @builder.select(is_ascii_true, LLVM::Int64.from_i(1), LLVM::Int64.from_i(0), "flags_val")
+        flags_val = @builder.select(ascii_result, LLVM::Int64.from_i(1), LLVM::Int64.from_i(0), "flags_val")
 
         # For ASCII strings, char_len = byte_len; otherwise -1 (not computed)
-        char_len = @builder.select(is_ascii_true, byte_len, LLVM::Int64.from_i(-1), "char_len")
+        char_len = @builder.select(ascii_result, byte_len, LLVM::Int64.from_i(-1), "char_len")
 
         # Allocate struct on stack
         ns_ptr = @builder.alloca(struct_type, "native_string")

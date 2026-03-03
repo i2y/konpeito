@@ -11,6 +11,9 @@ group :development, :test do
   gem "minitest-reporters"
   gem "rbs-inline"
   gem "ruby-llvm", "~> 20.1"
+  gem "rubocop", require: false
+  gem "rubocop-minitest", require: false
+  gem "rubocop-rake", require: false
 end
 gem "benchmark-ips"
 gem "benchmark"

@@ -1058,6 +1058,43 @@ alias new_name old_name
 alias_method :new_name, :old_name
 ```
 
+#### 12.6 Top-Level Methods and the Object Class
+
+Top-level methods (defined outside any class) are implicitly private instance methods of `Object`, following standard Ruby semantics. Internally, these are registered via `rb_define_private_method(rb_cObject, ...)`.
+
+**RBS type annotations** for top-level methods use `module TopLevel`:
+
+```rbs
+module TopLevel
+  def add: (Integer a, Integer b) -> Integer
+end
+```
+
+**Do not use `class Object`** in Konpeito source code. When a CRuby extension is loaded, `rb_define_class("Object", ...)` is called, which triggers a `superclass mismatch for class Object` error because CRuby's Object already exists with a different superclass chain.
+
+```ruby
+# WRONG — causes superclass mismatch error at load time
+class Object
+  def my_method
+    42
+  end
+end
+```
+
+```rbs
+# CORRECT — use module TopLevel for top-level method type annotations
+module TopLevel
+  def my_method: () -> Integer
+end
+```
+
+```ruby
+# CORRECT — define at top level (implicitly Object's method)
+def my_method
+  42
+end
+```
+
 ### 13. Classes
 
 #### 13.1 Class Definition
@@ -1112,6 +1149,10 @@ end
 ```
 
 Ruby core classes are accessed via `rb_const_get`; user classes merge method definitions.
+
+#### 13.5 Restrictions on Core Classes
+
+`class Object` cannot be used in Konpeito. Defining `class Object` in compiled code causes a `superclass mismatch` error when the CRuby extension is loaded, because CRuby's `Object` class already exists. Use `module TopLevel` in RBS for top-level method type annotations instead (see Section 12.6).
 
 ### 14. Modules
 

@@ -58,11 +58,11 @@ lint:
 lint-fix:
     bundle exec rubocop -A
 
-# Run Konpeito formatter
+# Format source files (via RuboCop)
 fmt *args:
     bundle exec ruby -Ilib bin/konpeito fmt {{args}}
 
-# Run Konpeito formatter in check mode
+# Check formatting (via RuboCop)
 fmt-check:
     bundle exec ruby -Ilib bin/konpeito fmt --check
 

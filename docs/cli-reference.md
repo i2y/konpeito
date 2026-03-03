@@ -256,7 +256,7 @@ konpeito test --target jvm                 # run JVM tests
 
 ## `konpeito fmt`
 
-Format Ruby source files using the built-in Prism-based formatter.
+Format Ruby source files using RuboCop.
 
 ```
 konpeito fmt [options] [files...]
@@ -267,7 +267,7 @@ konpeito fmt [options] [files...]
 | Option | Argument | Description | Default |
 |---|---|---|---|
 | `--check` | — | Check formatting without modifying files | off |
-| `--diff` | — | Show what would change (unified diff) | off |
+| `--diff` | — | Alias for `--check` | off |
 | `-q, --quiet` | — | Suppress non-error output | off |
 | `--exclude` | PATTERN | Exclude files matching pattern (repeatable) | none |
 | `-v, --verbose` | — | Verbose output | off |
@@ -279,15 +279,16 @@ konpeito fmt [options] [files...]
 konpeito fmt                               # format all Ruby files
 konpeito fmt src/main.rb                   # format specific file
 konpeito fmt --check                       # check only (CI-friendly)
-konpeito fmt --diff                        # show diff without modifying
+konpeito fmt --diff                        # same as --check
 konpeito fmt --exclude "vendor/**"         # exclude patterns
 ```
 
 ### Notes
 
-- Automatically excludes `vendor/`, `.bundle/`, `.konpeito_cache/`, and `tools/` directories.
-- `--diff` implies `--check` (no files are modified).
-- Exits with code 1 if any files need formatting when using `--check`.
+- Delegates to RuboCop. Configure formatting rules in `.rubocop.yml`.
+- Default mode runs `rubocop -A` (auto-correct).
+- `--check` / `--diff` runs `rubocop` without auto-correct (report violations only).
+- Exits with code 1 if any violations are found when using `--check`.
 
 ---
 

@@ -4,23 +4,32 @@ require_relative "../test_helper"
 require "konpeito/cli/config"
 require "konpeito/cli/base_command"
 require "konpeito/cli/fmt_command"
-require "tmpdir"
 
 class FmtCommandTest < Minitest::Test
   def test_command_name
     assert_equal "fmt", Konpeito::Commands::FmtCommand.command_name
   end
 
-  def test_description
-    assert_includes Konpeito::Commands::FmtCommand.description.downcase, "format"
+  def test_description_mentions_rubocop
+    desc = Konpeito::Commands::FmtCommand.description
+    assert_includes desc.downcase, "format"
+    assert_includes desc, "RuboCop"
   end
 
-  def test_uses_builtin_formatter
+  def test_build_rubocop_args_default
     cmd = Konpeito::Commands::FmtCommand.new([])
     cmd.send(:parse_options!)
 
-    # FmtCommand uses built-in Prism-based formatter (no --tool option)
-    assert_nil cmd.options[:tool]
+    args = cmd.build_rubocop_args
+    assert_includes args, "-A"
+  end
+
+  def test_build_rubocop_args_check_mode
+    cmd = Konpeito::Commands::FmtCommand.new(["--check"])
+    cmd.send(:parse_options!)
+
+    args = cmd.build_rubocop_args
+    refute_includes args, "-A"
   end
 
   def test_accepts_check_option
@@ -34,8 +43,8 @@ class FmtCommandTest < Minitest::Test
     cmd = Konpeito::Commands::FmtCommand.new(["--diff"])
     cmd.send(:parse_options!)
 
-    assert cmd.options[:diff]
-    assert cmd.options[:check]  # diff implies check
+    # --diff is an alias for --check
+    assert cmd.options[:check]
   end
 
   def test_accepts_quiet_option
@@ -43,6 +52,9 @@ class FmtCommandTest < Minitest::Test
     cmd.send(:parse_options!)
 
     assert cmd.options[:quiet]
+    args = cmd.build_rubocop_args
+    assert_includes args, "--format"
+    assert_includes args, "quiet"
   end
 
   def test_accepts_exclude_option
@@ -50,6 +62,9 @@ class FmtCommandTest < Minitest::Test
     cmd.send(:parse_options!)
 
     assert_includes cmd.options[:exclude], "test/**/*.rb"
+    args = cmd.build_rubocop_args
+    assert_includes args, "--exclude"
+    assert_includes args, "test/**/*.rb"
   end
 
   def test_accepts_files_as_arguments
@@ -57,25 +72,17 @@ class FmtCommandTest < Minitest::Test
     cmd.send(:parse_options!)
 
     assert_equal ["file1.rb", "file2.rb"], cmd.args
+    args = cmd.build_rubocop_args
+    assert_includes args, "file1.rb"
+    assert_includes args, "file2.rb"
   end
 
-  def test_find_ruby_files_excludes_vendor
-    Dir.mktmpdir do |dir|
-      Dir.chdir(dir) do
-        # Create files
-        File.write("main.rb", "")
-        FileUtils.mkdir_p("vendor/bundle")
-        File.write("vendor/bundle/gem.rb", "")
-        FileUtils.mkdir_p(".bundle")
-        File.write(".bundle/config.rb", "")
+  def test_no_color_option
+    cmd = Konpeito::Commands::FmtCommand.new(["--no-color"])
+    cmd.send(:parse_options!)
 
-        cmd = Konpeito::Commands::FmtCommand.new([])
-        files = cmd.send(:find_ruby_files)
-
-        assert_includes files, "main.rb"
-        refute_includes files, "vendor/bundle/gem.rb"
-        refute_includes files, ".bundle/config.rb"
-      end
-    end
+    refute cmd.options[:color]
+    args = cmd.build_rubocop_args
+    assert_includes args, "--no-color"
   end
 end

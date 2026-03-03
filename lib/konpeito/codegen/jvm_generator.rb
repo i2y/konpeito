@@ -15325,6 +15325,15 @@ module Konpeito
         incoming_types = phi.incoming.values.map do |val|
           var = extract_var_name(val)
           type = var ? @variable_types[var] : nil
+          # For LoadInstanceVar, check the CLASS-LEVEL field type instead of HM annotation.
+          # HM inference can produce incorrect types for ivars due to TypeVar pollution
+          # (e.g., @font_family_val typed as Float instead of String).
+          # The class field declaration is the source of truth.
+          if type.nil? && val.is_a?(HIR::LoadInstanceVar) && @current_class_name
+            field_name = val.name.to_s.sub(/^@/, "")
+            ivar_info = resolve_ivar_info(field_name)
+            type = ivar_info[:type] if ivar_info
+          end
           type || infer_type_from_hir(val) || literal_type_tag(val) || :value
         end
 

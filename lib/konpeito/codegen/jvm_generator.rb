@@ -955,14 +955,24 @@ module Konpeito
             }
           elsif has_rescue
             outer_br.rescue_clauses.each_with_index do |clause, i|
-              clause.exception_classes.each do |exc_class|
-                jvm_exc = ruby_exception_to_jvm(exc_class)
+              if clause.exception_classes.empty?
+                # Bare rescue → catch StandardError (Java Exception)
                 @pending_exception_table << {
                   "start" => try_start,
                   "end" => try_end,
                   "handler" => handler_labels[i],
-                  "type" => jvm_exc
+                  "type" => "java/lang/Exception"
                 }
+              else
+                clause.exception_classes.each do |exc_class|
+                  jvm_exc = ruby_exception_to_jvm(exc_class)
+                  @pending_exception_table << {
+                    "start" => try_start,
+                    "end" => try_end,
+                    "handler" => handler_labels[i],
+                    "type" => jvm_exc
+                  }
+                end
               end
             end
           end
@@ -2846,12 +2856,22 @@ module Konpeito
           end
         end
 
-        # Use inlined try body if provided (from block's pre-BeginRescue instructions),
-        # otherwise fall back to BeginRescue's stored try_blocks.
-        # Note: when the HIR builder uses BlockBodyCollector for the try body (to keep
-        # if/else control flow blocks separate from the outer function), inlined_try_body
-        # will be [] (empty array, truthy) — so we must check empty? explicitly.
-        try_body = (inlined_try_body && !inlined_try_body.empty?) ? inlined_try_body : (inst.try_blocks || [])
+        # Determine try body. If BeginRescue stores its own try_blocks, use those.
+        # Pre-BeginRescue instructions (inlined_try_body) are only the try body when
+        # the BeginRescue has no stored try_blocks (legacy HIR builder behavior).
+        has_own_try = (inst.try_blocks && !inst.try_blocks.empty?) || (inst.try_hir_blocks && !inst.try_hir_blocks.empty?)
+        pre_try_instructions = []
+        if has_own_try
+          # BeginRescue has its own try body. Pre-BeginRescue instructions that are NOT
+          # already in try_blocks go BEFORE the try scope (e.g. variable initializations
+          # before a begin/rescue block).
+          try_body = inst.try_blocks || []
+          try_block_ids = Set.new(try_body.map(&:object_id))
+          pre_try_instructions = (inlined_try_body || []).reject { |i| try_block_ids.include?(i.object_id) }
+        else
+          # Legacy: pre-BeginRescue instructions ARE the try body
+          try_body = (inlined_try_body && !inlined_try_body.empty?) ? inlined_try_body : []
+        end
 
         # If the begin/rescue has a result variable, pre-initialize it with null
         result_var = inst.result_var
@@ -2878,6 +2898,11 @@ module Konpeito
 
         # Label for exception ensure path (catch-all)
         finally_handler_label = new_label("finally_handler") if has_ensure
+
+        # 0. Emit pre-try instructions (code before begin/rescue that is NOT in the try scope)
+        pre_try_instructions.each do |pre_inst|
+          instructions.concat(generate_instruction(pre_inst))
+        end
 
         # 1. Try block (generate BEFORE registering outer exception handlers,
         # so that inner/nested BeginRescue handlers appear first in the table.
@@ -2912,14 +2937,24 @@ module Konpeito
           }
         elsif has_rescue
           inst.rescue_clauses.each_with_index do |clause, i|
-            clause.exception_classes.each do |exc_class|
-              jvm_exc = ruby_exception_to_jvm(exc_class)
+            if clause.exception_classes.empty?
+              # Bare rescue (no exception class) → catch StandardError (Java Exception)
               @pending_exception_table << {
                 "start" => try_start,
                 "end" => try_end,
                 "handler" => handler_labels[i],
-                "type" => jvm_exc
+                "type" => "java/lang/Exception"
               }
+            else
+              clause.exception_classes.each do |exc_class|
+                jvm_exc = ruby_exception_to_jvm(exc_class)
+                @pending_exception_table << {
+                  "start" => try_start,
+                  "end" => try_end,
+                  "handler" => handler_labels[i],
+                  "type" => jvm_exc
+                }
+              end
             end
           end
         end

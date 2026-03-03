@@ -1185,6 +1185,34 @@ module Konpeito
           @variable_types[var_name] = type_tag
         end
 
+        # Pre-scan for thread-captured variables.
+        # Replace their stack allocas with heap cells at function entry so that
+        # all code (loop conditions, loop bodies, after-loop) uses the same
+        # shared heap location consistently. This avoids the mid-loop alloca
+        # replacement issue where loop conditions read from stale stack allocas.
+        thread_captured_vars = collect_thread_captured_vars(hir_func)
+        @thread_boxed_vars = {}  # Reset per-function (each function has its own heap cells)
+        unless thread_captured_vars.empty?
+          declare_malloc
+          thread_captured_vars.each do |cap_name|
+            next if @thread_boxed_vars[cap_name]
+            next unless @variable_allocas[cap_name]
+
+            # Allocate a heap cell (8 bytes = sizeof(VALUE)) and replace the alloca
+            cell = @builder.call(@malloc, LLVM::Int64.from_i(8), "tbox_#{cap_name}")
+            cell_int = @builder.ptr2int(cell, LLVM::Int64, "tbox_#{cap_name}_int")
+            cell_typed = @builder.int2ptr(cell_int, LLVM::Pointer(value_type), "tbox_#{cap_name}_ptr")
+
+            # Initialize with Qnil (variables haven't been assigned yet at entry)
+            @builder.store(@qnil, cell_typed)
+
+            # Replace stack alloca with heap cell — all subsequent reads/writes
+            # in the function go through this shared heap location
+            @variable_allocas[cap_name] = cell_typed
+            @thread_boxed_vars[cap_name] = cell_typed
+          end
+        end
+
         # Separate regular, keyword, keyword_rest, and block parameters
         regular_params = hir_func.params.reject { |p| p.keyword || p.keyword_rest || p.rest || p.block }
         keyword_params = hir_func.params.select(&:keyword)
@@ -1681,6 +1709,22 @@ module Konpeito
         end
 
         vars
+      end
+
+      # Collect all variable names that are captured by any Thread.new block
+      # in the function. Used for pre-boxing at function entry.
+      def collect_thread_captured_vars(hir_func)
+        captured = Set.new
+        hir_func.body.each do |block|
+          block.instructions.each do |inst|
+            if inst.is_a?(HIR::ThreadNew) && inst.block_def
+              inst.block_def.captures.each do |cap|
+                captured << cap.name
+              end
+            end
+          end
+        end
+        captured
       end
 
       # Collect local variables used in a block definition
@@ -2651,6 +2695,15 @@ module Konpeito
 
         @variables[var_name] = value_to_store
         @variable_types[var_name] = target_type
+
+        # Write-back to escape array when inside a rescue/try callback.
+        # This ensures variable mutations inside callbacks are visible to the
+        # outer function after rb_rescue2 returns.
+        if @rescue_escape_array && @rescue_escape_indices&.key?(var_name)
+          idx = @rescue_escape_indices[var_name]
+          boxed = convert_value(value_to_store, target_type, :value)
+          @builder.call(@rb_ary_store, @rescue_escape_array, LLVM::Int64.from_i(idx), boxed)
+        end
 
         # Propagate comparison result flag through variable assignments
         src_var = inst.value.respond_to?(:result_var) ? inst.value.result_var : nil
@@ -5214,32 +5267,27 @@ module Konpeito
         # Create thread-specific callback (different signature from fiber/proc)
         callback_func = generate_thread_callback(block_def, captures, capture_types)
 
-        # Setup captures data.
-        # Thread callbacks run asynchronously; the caller's stack is gone by the time
-        # the thread executes. We malloc a VALUE[] buffer on the heap, snapshot current
-        # VALUES into it, and pass the pointer to rb_thread_create.
-        # The thread callback reads the VALUES and frees the buffer.
+        # Captured variables are already boxed to heap cells at function entry
+        # (by collect_thread_captured_vars + pre-boxing in generate_ruby_function_body).
+        # We just need to pass a buffer of cell pointers to the callback.
         if captures.empty?
           captures_ptr = LLVM::Pointer(LLVM::Int8).null
         else
           declare_malloc
+
+          # Create buffer of cell pointers to pass to the thread callback
           n = captures.size
-          buf_size = LLVM::Int64.from_i(n * 8)  # 8 bytes per VALUE (i64)
-          raw_ptr = @builder.call(@malloc, buf_size, "thread_cap_buf")
-          raw_int = @builder.ptr2int(raw_ptr, LLVM::Int64, "thread_cap_int")
-          val_arr_ptr = @builder.int2ptr(raw_int, LLVM::Pointer(value_type), "thread_cap_vals")
+          buf = @builder.call(@malloc, LLVM::Int64.from_i(n * 8), "thread_ptrbuf")
+          buf_int = @builder.ptr2int(buf, LLVM::Int64, "thread_ptrbuf_int")
+          buf_typed = @builder.int2ptr(buf_int, LLVM::Pointer(LLVM::Pointer(value_type)), "thread_ptrbuf_typed")
 
           captures.each_with_index do |capture, i|
-            val = if @variable_allocas[capture.name]
-                    @builder.load2(value_type, @variable_allocas[capture.name], "tc_#{capture.name}")
-                  else
-                    @qnil
-                  end
-            elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
-            @builder.store(val, elem_ptr)
+            cell_ptr = @thread_boxed_vars[capture.name] || @variable_allocas[capture.name]
+            elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tpb_elem_#{i}")
+            @builder.store(cell_ptr, elem_ptr)
           end
 
-          captures_ptr = raw_ptr
+          captures_ptr = buf
         end
         result = @builder.call(@rb_thread_create, callback_func, captures_ptr)
 
@@ -5274,6 +5322,7 @@ module Konpeito
         saved_in_block_callback = @in_block_callback
         saved_block_callback_self = @block_callback_self
         saved_in_thread_callback = @in_thread_callback
+        saved_thread_boxed_vars = @thread_boxed_vars
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -5289,24 +5338,32 @@ module Konpeito
         @block_callback_self = nil
         @in_thread_callback = true
 
-        # Setup captured variable access through void* arg.
-        # The arg points to a malloc'd VALUE[] buffer (heap-allocated by generate_thread_new).
-        # Load each VALUE into a local alloca, then free the buffer.
+        # Setup captured variable access through shared heap cells.
+        # The arg is a void* pointing to a malloc'd buffer of cell POINTERS.
+        # Each cell is a heap-allocated VALUE that is shared with the outer function.
+        # Reads/writes through the cell pointer are visible to both sides.
         unless captures.empty?
           declare_free
+          # Cast void* arg to pointer-to-pointer type
           arg_int = @builder.ptr2int(callback_func.params[0], LLVM::Int64, "tc_arg_int")
-          val_arr_ptr = @builder.int2ptr(arg_int, LLVM::Pointer(value_type), "tc_vals")
+          buf_typed = @builder.int2ptr(arg_int, LLVM::Pointer(LLVM::Pointer(value_type)), "tc_buf_typed")
 
           captures.each_with_index do |capture, i|
-            elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
-            val = @builder.load2(value_type, elem_ptr, "tc_#{capture.name}_val")
-            alloca = @builder.alloca(value_type, "tc_#{capture.name}")
-            @builder.store(val, alloca)
-            @variable_allocas[capture.name] = alloca
+            # Load the cell POINTER from the buffer
+            elem_ptr = @builder.gep2(LLVM::Pointer(value_type), buf_typed, [LLVM::Int64.from_i(i)], "tc_bp_#{i}")
+            cell_ptr = @builder.load2(LLVM::Pointer(value_type), elem_ptr, "tc_cell_#{capture.name}")
+
+            # Use the shared cell pointer as the variable's alloca.
+            # This means all reads/writes go to the same heap location as the outer function.
+            @variable_allocas[capture.name] = cell_ptr
             @variable_types[capture.name] = capture_types[capture.name] || :value
+
+            # Load current value for @variables cache
+            val = @builder.load2(value_type, cell_ptr, "tc_#{capture.name}_val")
+            @variables[capture.name] = val
           end
 
-          # Free the malloc'd buffer now that all values are loaded into local allocas
+          # Free the pointer buffer (but NOT the cells — they're shared with the outer function)
           @builder.call(@free, callback_func.params[0])
         end
 
@@ -5402,6 +5459,7 @@ module Konpeito
         @in_block_callback = saved_in_block_callback
         @block_callback_self = saved_block_callback_self
         @in_thread_callback = saved_in_thread_callback
+        @thread_boxed_vars = saved_thread_boxed_vars
 
         callback_func
       end
@@ -7610,6 +7668,19 @@ module Konpeito
         rescue2_func = declare_rb_rescue2_variadic(exception_classes.size)
         result = @builder.call(rescue2_func, *args)
 
+        # Write-back: after rb_rescue2 returns, the escape array contains updated values
+        # from try/rescue callbacks (written via rb_ary_store in generate_store_local).
+        # Copy them back to the outer function's allocas.
+        if needs_escape && escape_var_names
+          escape_var_names.each_with_index do |vname, idx|
+            next unless @variable_allocas[vname]
+            val = @builder.call(@rb_ary_entry, rescue_data, LLVM::Int64.from_i(idx + 1), "wb_#{vname}")
+            @builder.store(val, @variable_allocas[vname])
+            @variables[vname] = val
+            @variable_types[vname] = :value
+          end
+        end
+
         # Execute else blocks if no exception was raised
         if has_else
           flag_val = @builder.load2(LLVM::Int32, flag_global, "flag_val")
@@ -7701,6 +7772,8 @@ module Konpeito
         saved_cur_func = @current_function
         saved_return_blocks = @return_blocks
         saved_block_callback_self = @block_callback_self
+        saved_rescue_escape_array = @rescue_escape_array
+        saved_rescue_escape_indices = @rescue_escape_indices
 
         # Reset variable tracking for callback scope
         @variables = {}
@@ -7744,6 +7817,10 @@ module Konpeito
               @variable_allocas[vname] = alloca
               @variable_types[vname]   = :value
             end
+            # Set escape write-back info so StoreLocal writes to escape array
+            @rescue_escape_array = escape_ary
+            @rescue_escape_indices = {}
+            escape_var_names.each_with_index { |vname, i| @rescue_escape_indices[vname] = i + 1 }
             @builder.br(@blocks[try_hir_blocks.first.label])
           end
 
@@ -7765,6 +7842,10 @@ module Konpeito
               @variable_allocas[vname] = alloca
               @variable_types[vname]   = :value
             end
+            # Set escape write-back info so StoreLocal writes to escape array
+            @rescue_escape_array = escape_ary
+            @rescue_escape_indices = {}
+            escape_var_names.each_with_index { |vname, i| @rescue_escape_indices[vname] = i + 1 }
           else
             @block_callback_self = callback_func.params[0]
           end
@@ -7785,6 +7866,8 @@ module Konpeito
         @current_function = saved_cur_func
         @return_blocks    = saved_return_blocks
         @block_callback_self = saved_block_callback_self
+        @rescue_escape_array = saved_rescue_escape_array
+        @rescue_escape_indices = saved_rescue_escape_indices
 
         callback_func
       end
@@ -7803,6 +7886,8 @@ module Konpeito
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
         saved_block_callback_self = @block_callback_self
+        saved_rescue_escape_array = @rescue_escape_array
+        saved_rescue_escape_indices = @rescue_escape_indices
 
         # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
         @block_callback_self = callback_func.params[0] unless escape_var_names
@@ -7834,6 +7919,10 @@ module Konpeito
             @variable_types[vname]   = :value
             escape_allocas_map[vname] = alloca
           end
+          # Set escape write-back info so StoreLocal writes to escape array
+          @rescue_escape_array = escape_ary
+          @rescue_escape_indices = {}
+          escape_var_names.each_with_index { |vname, i| @rescue_escape_indices[vname] = i + 1 }
         end
 
         # Match exception class to find correct handler
@@ -7938,6 +8027,8 @@ module Konpeito
         @variable_types = saved_types
         @variable_allocas = saved_allocas
         @block_callback_self = saved_block_callback_self
+        @rescue_escape_array = saved_rescue_escape_array
+        @rescue_escape_indices = saved_rescue_escape_indices
 
         callback_func
       end
@@ -7954,6 +8045,8 @@ module Konpeito
         saved_types = @variable_types.dup
         saved_allocas = @variable_allocas.dup
         saved_block_callback_self = @block_callback_self
+        saved_rescue_escape_array = @rescue_escape_array
+        saved_rescue_escape_indices = @rescue_escape_indices
 
         # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
         @block_callback_self = callback_func.params[0] unless escape_var_names
@@ -7985,6 +8078,10 @@ module Konpeito
             @variable_types[vname]   = :value
             escape_allocas_map[vname] = alloca
           end
+          # Set escape write-back info so StoreLocal writes to escape array
+          @rescue_escape_array = escape_ary
+          @rescue_escape_indices = {}
+          escape_var_names.each_with_index { |vname, i| @rescue_escape_indices[vname] = i + 1 }
         end
 
         # Same rescue matching logic as generate_rescue_handler_callback
@@ -8068,6 +8165,8 @@ module Konpeito
         @variable_types = saved_types
         @variable_allocas = saved_allocas
         @block_callback_self = saved_block_callback_self
+        @rescue_escape_array = saved_rescue_escape_array
+        @rescue_escape_indices = saved_rescue_escape_indices
 
         callback_func
       end

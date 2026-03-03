@@ -6055,10 +6055,81 @@ module Konpeito
 
       # Detect variables from outer scope that are used in the block
       def detect_captured_variables(outer_vars)
-        # For now, capture all outer variables that exist
-        # A more sophisticated approach would analyze actual usage
-        outer_vars.keys.map do |name|
+        # Only capture outer variables that are actually referenced (read or written)
+        # in the block body or any nested block bodies within it.
+        referenced = Set.new
+        block_body = @current_function.body
+        scan_block_body_for_captures(block_body, outer_vars, referenced)
+        referenced.map do |name|
           Capture.new(name: name, type: outer_vars[name].type)
+        end
+      end
+
+      # Recursively scan basic blocks for variable references to outer scope,
+      # including nested block definitions (e.g., mutex.synchronize { ... })
+      def scan_block_body_for_captures(blocks, outer_vars, referenced)
+        blocks.each do |bb|
+          bb.instructions.each do |inst|
+            scan_instruction_for_captures(inst, outer_vars, referenced)
+          end
+          # Also check terminator for variable references
+          if bb.terminator
+            scan_instruction_for_captures(bb.terminator, outer_vars, referenced)
+          end
+        end
+      end
+
+      # Recursively scan a single HIR instruction (and its sub-expressions) for captures
+      def scan_instruction_for_captures(node, outer_vars, referenced)
+        return unless node.is_a?(Instruction)
+        case node
+        when LoadLocal
+          referenced << node.var.name if outer_vars.key?(node.var.name)
+        when StoreLocal
+          referenced << node.var.name if outer_vars.key?(node.var.name)
+          scan_instruction_for_captures(node.value, outer_vars, referenced) if node.value.is_a?(Instruction)
+        when Call
+          scan_instruction_for_captures(node.receiver, outer_vars, referenced) if node.receiver
+          node.args.each { |a| scan_instruction_for_captures(a, outer_vars, referenced) }
+          if node.block && node.block.respond_to?(:body) && node.block.body
+            scan_block_body_for_captures(node.block.body, outer_vars, referenced)
+          end
+        when ThreadNew, ProcNew, FiberNew, RactorNew
+          if node.respond_to?(:block_def) && node.block_def
+            scan_block_body_for_captures(node.block_def.body, outer_vars, referenced)
+          end
+        else
+          # Generic fallback: scan sub-expressions and nested block bodies
+          # for instruction types like MutexSynchronize, BeginRescue, etc.
+          if node.respond_to?(:block_def) && node.block_def
+            scan_block_body_for_captures(node.block_def.body, outer_vars, referenced)
+          end
+          # Scan known sub-expression attributes that may reference outer variables
+          [:mutex, :cv, :queue, :value, :receiver, :ractor, :port, :max_size, :key].each do |attr|
+            if node.respond_to?(attr)
+              sub = node.send(attr)
+              scan_instruction_for_captures(sub, outer_vars, referenced) if sub.is_a?(Instruction)
+            end
+          end
+          # Scan args array if present
+          if node.respond_to?(:args) && node.args.is_a?(Array)
+            node.args.each { |a| scan_instruction_for_captures(a, outer_vars, referenced) }
+          end
+          # Scan nested HIR blocks (BeginRescue try/rescue/else/ensure blocks)
+          if node.respond_to?(:try_hir_blocks) && node.try_hir_blocks
+            scan_block_body_for_captures(node.try_hir_blocks, outer_vars, referenced)
+          end
+          if node.respond_to?(:rescue_clauses) && node.rescue_clauses
+            node.rescue_clauses.each do |clause|
+              scan_block_body_for_captures(clause.body, outer_vars, referenced) if clause.respond_to?(:body) && clause.body
+            end
+          end
+          if node.respond_to?(:else_blocks) && node.else_blocks
+            scan_block_body_for_captures(node.else_blocks, outer_vars, referenced)
+          end
+          if node.respond_to?(:ensure_blocks) && node.ensure_blocks
+            scan_block_body_for_captures(node.ensure_blocks, outer_vars, referenced)
+          end
         end
       end
 
@@ -6723,9 +6794,14 @@ module Konpeito
           set_current_block(saved_current_blk)
         elsif statements_child
           # No rescue clauses: inline (original behaviour)
+          # Capture ALL emitted instructions (not just return values) because
+          # visit() for assignment nodes emits StoreLocal but returns the value.
           statements_child.children.each do |stmt|
-            inst = visit(stmt)
-            try_instructions << inst if inst
+            before_idx = @current_block.instructions.size
+            visit(stmt)
+            @current_block.instructions[before_idx..].each do |emitted|
+              try_instructions << emitted
+            end
           end
         end
 
@@ -6739,26 +6815,33 @@ module Konpeito
           rescue_clauses = build_rescue_clauses(rescue_child)
         end
 
-        # Collect else instructions
+        # Collect else instructions - capture ALL emitted instructions
+        # (visit() for assignments emits StoreLocal but returns the value)
         else_instructions = []
         if else_child
           else_statements = else_child.children.find { |c| c.node_type == :statements }
           if else_statements
             else_statements.children.each do |stmt|
-              inst = visit(stmt)
-              else_instructions << inst if inst
+              before_idx = @current_block.instructions.size
+              visit(stmt)
+              @current_block.instructions[before_idx..].each do |emitted|
+                else_instructions << emitted
+              end
             end
           end
         end
 
-        # Collect ensure instructions
+        # Collect ensure instructions - capture ALL emitted instructions
         ensure_instructions = []
         if ensure_child
           ensure_statements = ensure_child.children.find { |c| c.node_type == :statements }
           if ensure_statements
             ensure_statements.children.each do |stmt|
-              inst = visit(stmt)
-              ensure_instructions << inst if inst
+              before_idx = @current_block.instructions.size
+              visit(stmt)
+              @current_block.instructions[before_idx..].each do |emitted|
+                ensure_instructions << emitted
+              end
             end
           end
         end
@@ -6806,13 +6889,17 @@ module Konpeito
             exception_var = current.node.reference.name.to_s
           end
 
-          # Collect body instructions
+          # Collect body instructions - capture ALL emitted instructions
+          # (visit() for assignments emits StoreLocal but returns the value)
           body_instructions = []
           statements_child = current.children.find { |c| c.node_type == :statements }
           if statements_child
             statements_child.children.each do |stmt|
-              inst = visit(stmt)
-              body_instructions << inst if inst
+              before_idx = @current_block.instructions.size
+              visit(stmt)
+              @current_block.instructions[before_idx..].each do |emitted|
+                body_instructions << emitted
+              end
             end
           end
 
@@ -7648,7 +7735,7 @@ module Konpeito
 
       def new_temp_var
         @var_counter += 1
-        "t#{@var_counter}"
+        "__t#{@var_counter}"
       end
     end
   end

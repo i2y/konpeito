@@ -1,0 +1,4 @@
+module Physics
+  def self.distance: (Float x1, Float y1, Float x2, Float y2) -> Float
+  def self.sum_distances: (Array[Float] xs, Array[Float] ys, Integer n) -> Float
+end

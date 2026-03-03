@@ -22,11 +22,12 @@ Konpeito compiles your `.rb` source files into native code. Understanding the bo
 
 **Compiled (native code):**
 - All `.rb` files you pass to `konpeito build`
-- Files resolved via `require` / `require_relative` at compile time (when source is available on the load path)
+- Files resolved via `require` / `require_relative` at compile time (when source is available on the load path via `-I`)
 - Within compiled code: type-resolved operations become native CPU instructions; unresolved operations fall back to `rb_funcallv` (CRuby's dynamic dispatch) with a compiler warning
 
-**Not compiled (regular Ruby):**
-- Gems and standard libraries loaded at runtime via CRuby's `rb_require` (e.g., `require "json"` loads CRuby's bundled JSON)
+**Not compiled (loaded at runtime by CRuby):**
+- Installed gems referenced by `require` — the compiler detects these and emits `rb_require` calls so CRuby loads them at runtime
+- Standard libraries (`json`, `net/http`, `fileutils`, etc.) — same treatment
 - Any Ruby code running in the host CRuby process outside the compiled extension
 
 The compiled extension and CRuby coexist in the same process. Native code calls CRuby C API functions (`rb_define_class`, `rb_funcallv`, `rb_ary_push`, etc.), so compiled code can freely create Ruby objects, call Ruby methods, and interact with any loaded gem. The speed gain comes from the parts where Konpeito resolves types and emits native instructions instead of going through Ruby's method dispatch.
@@ -39,14 +40,16 @@ Compile performance-critical code into a CRuby extension (`.bundle` / `.so`). Yo
 
 ```ruby
 # math.rb — compiled by Konpeito
-def sum_up_to(n)
-  total = 0
-  i = 1
-  while i <= n
-    total += i
-    i += 1
+module MyMath
+  def self.sum_up_to(n)
+    total = 0
+    i = 1
+    while i <= n
+      total += i
+      i += 1
+    end
+    total
   end
-  total
 end
 ```
 
@@ -57,23 +60,36 @@ konpeito build math.rb   # → math.bundle
 ```ruby
 # app.rb — regular Ruby, NOT compiled
 require_relative "math"
-puts sum_up_to(10_000_000)   # calls into compiled native code
+puts MyMath.sum_up_to(10_000_000)   # calls into compiled native code
+```
+
+Your code can `require` installed gems freely. The compiler compiles your code and emits runtime `require` calls for the gems, so everything works together at runtime:
+
+```ruby
+# my_app.rb — compiled by Konpeito
+require "kumiki"     # gem — loaded at runtime by CRuby
+include Kumiki
+
+class MyComponent < Component
+  # ... your code is compiled natively
+  # ... calls to kumiki methods go through rb_funcallv (dynamic dispatch)
+end
 ```
 
 This is the pattern shown in [Hello World](#hello-world) below.
 
 ### Pattern 2: Whole Application
 
-Compile an entire Ruby application — the compiler traces all `require` statements and compiles everything it can resolve into a single extension:
+Compile an entire Ruby application including framework code — the compiler traces all `require` statements on the load path specified by `-I` and compiles everything into a single extension:
 
 ```bash
-konpeito build -I /path/to/framework/lib app.rb   # → app.bundle
-ruby -r ./app -e ""                                # load and run
+konpeito build -I /path/to/kumiki/lib counter.rb   # → counter.bundle (971 KB)
+ruby -r ./counter -e ""                             # load and run
 ```
 
-Runtime dependencies (gems not on the compile-time load path) are loaded normally by CRuby when the extension calls `require` at runtime.
+The difference from Pattern 1: framework code (kumiki) is also compiled, enabling direct dispatch, monomorphization, and inlining across the entire codebase. Without `-I`, only your code is compiled (~50 KB) and the framework is loaded at runtime — this still works, but method calls into the framework go through dynamic dispatch.
 
-See [Tutorial](docs/tutorial.md) for step-by-step walkthroughs of both patterns, including compiling a [kumiki](https://github.com/i2y/kumiki) GUI app as an example of the whole-application approach.
+See [Tutorial](docs/tutorial.md) for step-by-step walkthroughs of both patterns with working examples.
 
 ## Quick Start
 
@@ -124,18 +140,20 @@ Write a small Ruby file:
 
 ```ruby
 # math.rb
-def add(a, b)
-  a + b
-end
-
-def sum_up_to(n)
-  total = 0
-  i = 1
-  while i <= n
-    total = total + i
-    i = i + 1
+module MyMath
+  def self.add(a, b)
+    a + b
   end
-  total
+
+  def self.sum_up_to(n)
+    total = 0
+    i = 1
+    while i <= n
+      total = total + i
+      i = i + 1
+    end
+    total
+  end
 end
 ```
 
@@ -147,8 +165,8 @@ konpeito build math.rb          # produces math.bundle (macOS), math.so (Linux),
 
 ```ruby
 require_relative "math"
-puts add(3, 4)        # => 7
-puts sum_up_to(100)   # => 5050
+puts MyMath.add(3, 4)        # => 7
+puts MyMath.sum_up_to(100)   # => 5050
 ```
 
 ### CLI Overview

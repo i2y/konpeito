@@ -532,6 +532,11 @@ module Konpeito
         # We'll use rb_funcallv for variadic args: VALUE rb_funcallv(VALUE recv, ID mid, int argc, VALUE *argv)
         @rb_funcallv = @mod.functions.add("rb_funcallv", [value_type, id_type, LLVM::Int32, LLVM::Pointer(value_type)], value_type)
 
+        # rb_funcallv_kw - call a method with keyword argument flag
+        # VALUE rb_funcallv_kw(VALUE recv, ID mid, int argc, const VALUE *argv, int kw_splat)
+        # kw_splat: RB_PASS_KEYWORDS (1) means last element of argv is a keyword Hash
+        @rb_funcallv_kw = @mod.functions.add("rb_funcallv_kw", [value_type, id_type, LLVM::Int32, LLVM::Pointer(value_type), LLVM::Int32], value_type)
+
         # rb_int2inum - convert C int to Ruby Integer
         @rb_int2inum = @mod.functions.add("rb_int2inum", [int_type], value_type) do |fn|
           fn.linkage = :external
@@ -725,6 +730,14 @@ module Konpeito
         @rb_block_call = @mod.functions.add("rb_block_call",
           [value_type, id_type, LLVM::Int32, LLVM::Pointer(value_type),
            LLVM::Pointer(block_callback_type), value_type],
+          value_type)
+
+        # rb_block_call_kw - call method with block callback and keyword argument flag
+        # VALUE rb_block_call_kw(VALUE obj, ID mid, int argc, const VALUE *argv,
+        #                        rb_block_call_func_t proc, VALUE data2, int kw_splat)
+        @rb_block_call_kw = @mod.functions.add("rb_block_call_kw",
+          [value_type, id_type, LLVM::Int32, LLVM::Pointer(value_type),
+           LLVM::Pointer(block_callback_type), value_type, LLVM::Int32],
           value_type)
 
         # Proc functions
@@ -3283,7 +3296,14 @@ module Konpeito
             argv = @builder.bit_cast(argv, LLVM::Pointer(value_type))
           end
 
-          result = @builder.call(@rb_funcallv, receiver, method_id, argc, argv)
+          # Use rb_funcallv_kw when keyword arguments are present so Ruby
+          # correctly separates them from positional arguments (Ruby 3.0+)
+          if kwargs_hash
+            rb_pass_keywords = LLVM::Int32.from_i(1) # RB_PASS_KEYWORDS
+            result = @builder.call(@rb_funcallv_kw, receiver, method_id, argc, argv, rb_pass_keywords)
+          else
+            result = @builder.call(@rb_funcallv, receiver, method_id, argc, argv)
+          end
         end
 
         @variables[inst.result_var] = result if inst.result_var
@@ -4481,15 +4501,24 @@ module Konpeito
         method_ptr = @builder.global_string_pointer(inst.method_name)
         method_id = @builder.call(@rb_intern, method_ptr)
 
-        # Prepare arguments array (for methods like upto/downto that take args)
-        argc = LLVM::Int32.from_i(inst.args.size)
+        # Build keyword arguments hash if present
+        kwargs_hash = nil
+        if inst.has_keyword_args?
+          kwargs_hash = build_keyword_args_hash(inst.keyword_args, keyword_splat: inst.keyword_splat)
+        end
 
-        if inst.args.empty?
+        # Prepare arguments array (regular args + optional kwargs hash)
+        total_args = inst.args.dup
+        total_args << kwargs_hash if kwargs_hash
+
+        argc = LLVM::Int32.from_i(total_args.size)
+
+        if total_args.empty?
           argv = LLVM::Pointer(value_type).null
         else
-          argv = @builder.alloca(LLVM::Array(value_type, inst.args.size))
-          inst.args.each_with_index do |arg, i|
-            arg_value = get_value_as_ruby(arg)
+          argv = @builder.alloca(LLVM::Array(value_type, total_args.size))
+          total_args.each_with_index do |arg, i|
+            arg_value = arg.is_a?(LLVM::Value) ? arg : get_value_as_ruby(arg)
             ptr = @builder.gep(argv, [LLVM::Int32.from_i(0), LLVM::Int32.from_i(i)])
             @builder.store(arg_value, ptr)
           end
@@ -4551,16 +4580,28 @@ module Konpeito
 
           block_func = generate_block_callback(inst.block, inst.method_name, all_captures, capture_types,
                                                escape_cells_mode: true)
-          result = @builder.call(@rb_block_call,
-            receiver, method_id, argc, argv, block_func, esc_ary)
+          if kwargs_hash
+            rb_pass_keywords = LLVM::Int32.from_i(1)
+            result = @builder.call(@rb_block_call_kw,
+              receiver, method_id, argc, argv, block_func, esc_ary, rb_pass_keywords)
+          else
+            result = @builder.call(@rb_block_call,
+              receiver, method_id, argc, argv, block_func, esc_ary)
+          end
         else
           # Pointer-to-alloca mode: captures are stored as VALUE* pointers in a struct.
           # The callback reads/writes through those pointers, so mutations propagate back.
           capture_data = create_capture_struct(all_captures)
           block_func = generate_block_callback(inst.block, inst.method_name, all_captures, capture_types,
                                                escape_cells_mode: false)
-          result = @builder.call(@rb_block_call,
-            receiver, method_id, argc, argv, block_func, capture_data)
+          if kwargs_hash
+            rb_pass_keywords = LLVM::Int32.from_i(1)
+            result = @builder.call(@rb_block_call_kw,
+              receiver, method_id, argc, argv, block_func, capture_data, rb_pass_keywords)
+          else
+            result = @builder.call(@rb_block_call,
+              receiver, method_id, argc, argv, block_func, capture_data)
+          end
         end
 
         result

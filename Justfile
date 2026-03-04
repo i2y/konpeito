@@ -90,6 +90,12 @@ bench name:
 bench-list:
     @ls benchmark/*_bench.rb | sed 's|benchmark/||; s|_bench.rb||'
 
+# --- Install ---
+
+# Build and install gem locally
+install:
+    gem build konpeito.gemspec && gem install konpeito-*.gem && rm -f konpeito-*.gem
+
 # --- Tools ---
 
 # Start LSP server

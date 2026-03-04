@@ -140,9 +140,10 @@ class StdlibRequireTest < Minitest::Test
     # Access the generated C code
     init_code = backend.send(:generate_init_c_code)
 
-    assert_includes init_code, 'rb_require("json")'
-    assert_includes init_code, 'rb_require("fileutils")'
-    assert_includes init_code, "/* Load stdlib dependencies */"
+    assert_includes init_code, 'rb_str_new_cstr("json")'
+    assert_includes init_code, 'rb_str_new_cstr("fileutils")'
+    assert_includes init_code, 'rb_funcallv(rb_cObject, require_id, 1, args)'
+    assert_includes init_code, "/* Load dependencies */"
   end
 
   def test_no_rb_require_when_no_stdlib

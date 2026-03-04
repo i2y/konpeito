@@ -102,7 +102,7 @@ module Konpeito
                       ;;
                   run)
                       if [[ "${cur}" == -* ]]; then
-                          COMPREPLY=( $(compgen -W "--target --classpath --rbs -I --require-path -v --verbose --no-color -h --help" -- "${cur}") )
+                          COMPREPLY=( $(compgen -W "--target --classpath --rbs -I --require-path --inline -v --verbose --no-color -h --help" -- "${cur}") )
                       else
                           COMPREPLY=( $(compgen -f -X '!*.rb' -- "${cur}") )
                       fi
@@ -191,6 +191,7 @@ module Konpeito
                           '--rbs[RBS type definition file]:file:_files -g "*.rbs"' \
                           '-I[Add require search path]:path:_directories' \
                           '--require-path[Add require search path]:path:_directories' \
+                          '--inline[Use inline RBS annotations]' \
                           '-v[Verbose output]' \
                           '--verbose[Verbose output]' \
                           '--no-color[Disable colored output]' \

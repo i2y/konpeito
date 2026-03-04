@@ -48,6 +48,7 @@ module Konpeito
           classpath: nil,
           rbs_paths: config.rbs_paths.dup,
           require_paths: config.require_paths.dup,
+          inline_rbs: false,
           lib: false
         }
       end
@@ -69,6 +70,10 @@ module Konpeito
           options[:require_paths] << path
         end
 
+        opts.on("--inline", "Use inline RBS annotations (# @rbs, #:) from Ruby source") do
+          options[:inline_rbs] = true
+        end
+
         super
       end
 
@@ -78,6 +83,7 @@ module Konpeito
 
           Examples:
             konpeito run src/main.rb                   Build and run (native)
+            konpeito run --inline src/main.rb          Build and run with inline RBS
             konpeito run --target jvm src/main.rb      Build and run (JVM)
         BANNER
       end
@@ -104,11 +110,16 @@ module Konpeito
       def run_native(source_file)
         require "tmpdir"
 
-        output_file = File.join(Dir.tmpdir, "konpeito_run_#{File.basename(source_file, '.rb')}#{Platform.shared_lib_extension}")
+        # Use a subdirectory to avoid conflicts, but keep the basename matching
+        # the Init_ function name (Ruby requires Init_<basename> to match the filename)
+        @run_tmpdir = File.join(Dir.tmpdir, "konpeito_run_#{Process.pid}")
+        FileUtils.mkdir_p(@run_tmpdir)
+        output_file = File.join(@run_tmpdir, "#{File.basename(source_file, '.rb')}#{Platform.shared_lib_extension}")
 
         build_args = ["-o", output_file]
         build_args << "-v" if options[:verbose]
         build_args << "--no-color" unless options[:color]
+        build_args << "--inline" if options[:inline_rbs]
         options[:rbs_paths].each { |p| build_args << "--rbs" << p }
         options[:require_paths].each { |p| build_args << "-I" << p }
         build_args << source_file
@@ -116,9 +127,11 @@ module Konpeito
         Commands::BuildCommand.new(build_args, config: config).run
 
         emit("Running", output_file)
-        system("ruby", "-r", output_file, "-e", "")
+        # Run without Bundler environment so the compiled extension can load
+        # any installed gem (not just those in the current Gemfile)
+        run_without_bundler("ruby", "-r", output_file, "-e", "")
       ensure
-        FileUtils.rm_f(output_file) if output_file && File.exist?(output_file)
+        FileUtils.rm_rf(@run_tmpdir) if @run_tmpdir && Dir.exist?(@run_tmpdir)
       end
 
       def build_classpath
@@ -135,10 +148,23 @@ module Konpeito
         parts.reject(&:empty?).join(Platform.classpath_separator)
       end
 
+      # Run a command without Bundler's environment restrictions.
+      # When konpeito is invoked via `bundle exec`, child processes inherit
+      # BUNDLE_GEMFILE/RUBYOPT which restrict gem access. The compiled extension
+      # may require gems not in the current Gemfile.
+      def run_without_bundler(*cmd)
+        if defined?(Bundler) && Bundler.respond_to?(:with_unbundled_env)
+          Bundler.with_unbundled_env { system(*cmd) }
+        else
+          system(*cmd)
+        end
+      end
+
       def build_jvm_args(source_file, classpath)
         build_args = ["--target", "jvm"]
         build_args << "-v" if options[:verbose]
         build_args << "--no-color" unless options[:color]
+        build_args << "--inline" if options[:inline_rbs]
         build_args += ["--classpath", classpath] unless classpath.empty?
         options[:rbs_paths].each { |p| build_args << "--rbs" << p }
         options[:require_paths].each { |p| build_args << "-I" << p }

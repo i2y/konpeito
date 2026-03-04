@@ -241,12 +241,24 @@ module Konpeito
           lines << ""
         end
 
-        # Load stdlib dependencies first
+        # Load stdlib/gem dependencies first
+        # Use rb_funcallv(rb_cObject, ...) instead of rb_require() or rb_funcallv(rb_mKernel, ...)
+        # rb_require() bypasses RubyGems gem activation entirely.
+        # rb_funcallv(rb_mKernel, ...) calls the Kernel singleton method which also
+        # fails to activate gems. rb_funcallv(rb_cObject, ...) calls require as an
+        # instance method on Object (which includes Kernel), going through RubyGems'
+        # full gem activation path.
         unless @stdlib_requires.empty?
-          lines << "    /* Load stdlib dependencies */"
+          lines << "    /* Load dependencies */"
+          lines << "    {"
+          lines << "        ID require_id = rb_intern(\"require\");"
           @stdlib_requires.each do |lib_name|
-            lines << "    rb_require(\"#{lib_name}\");"
+            lines << "        {"
+            lines << "            VALUE args[] = { rb_str_new_cstr(\"#{lib_name}\") };"
+            lines << "            rb_funcallv(rb_cObject, require_id, 1, args);"
+            lines << "        }"
           end
+          lines << "    }"
           lines << ""
         end
 
@@ -307,6 +319,25 @@ module Konpeito
 
             lines << "    rb_const_set(#{module_var}, rb_intern(\"#{const_name}\"), #{c_value});"
           end
+        end
+
+        # Execute top-level include/extend/prepend before class definitions
+        # so that constants from included modules are available for superclass resolution
+        # (e.g., `include Kumiki; class CounterComponent < Component`)
+        unless hir.toplevel_includes.empty?
+          lines << "    /* Top-level include/extend/prepend */"
+          hir.toplevel_includes.each do |kind, module_name|
+            module_expr = "rb_const_get(rb_cObject, rb_intern(\"#{module_name}\"))"
+            case kind
+            when :include
+              lines << "    rb_include_module(rb_cObject, #{module_expr});"
+            when :extend
+              lines << "    rb_extend_object(rb_cObject, #{module_expr});"
+            when :prepend
+              lines << "    rb_prepend_module(rb_cObject, #{module_expr});"
+            end
+          end
+          lines << ""
         end
 
         # Define NativeClasses with TypedData allocator

@@ -134,6 +134,10 @@ module Konpeito
       end
 
       def visit_program(typed_node)
+        # Scan top-level statements for include/extend/prepend before visiting
+        # These need to be executed in the Init function before class definitions
+        scan_toplevel_includes(typed_node.children.first)
+
         # Create a main function for top-level code
         main_func = Function.new(
           name: "__main__",
@@ -539,6 +543,26 @@ module Konpeito
         # Only add if not already in the list (reopened classes reuse existing)
         @program.classes << class_def unless existing_class_def
         NilLit.new
+      end
+
+      # Scan top-level statements for include/extend/prepend calls
+      # These must be executed in Init before class definitions so that
+      # constants from included modules are available for superclass resolution.
+      def scan_toplevel_includes(statements_node)
+        return unless statements_node&.children
+
+        statements_node.children.each do |child|
+          if include_statement?(child)
+            module_name = extract_include_module_name(child)
+            @program.toplevel_includes << [:include, module_name] if module_name
+          elsif extend_statement?(child)
+            module_name = extract_include_module_name(child)
+            @program.toplevel_includes << [:extend, module_name] if module_name
+          elsif prepend_statement?(child)
+            module_name = extract_include_module_name(child)
+            @program.toplevel_includes << [:prepend, module_name] if module_name
+          end
+        end
       end
 
       # Check if a node is an include statement

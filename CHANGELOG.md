@@ -5,25 +5,41 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-03-03
+## [0.3.0] - 2026-03-05
 
 ### Added
 - GitHub Actions CI workflow (unit tests + conformance tests)
 - `examples/README.md` — guide to all example files and how to run them
 - gemspec metadata: `source_code_uri`, `documentation_uri`
 - Milestone: successfully compiled and ran kumiki's `all_widgets_demo.rb` (20+ widget reactive GUI) as a CRuby extension
+- Tutorial (`docs/tutorial.md`) with working examples for both CRuby and JVM backends
+- Japanese translation of tutorial (`docs/tutorial-ja.md`)
+- Shell completion scripts (`konpeito completion bash/zsh/fish`)
+- `konpeito fmt` command — delegates to RuboCop (replaces removed Prism formatter)
+- Just task runner configuration (`Justfile`)
+- CLI UX improvements: did-you-mean suggestions, build hints, default source detection
 
 ### Changed
 - Language specification version updated from 0.1 to 0.3
 - `.gitignore` hardened to exclude build artifacts (`*_init.c`, `*_debug.json`, example JARs)
 - Removed scattered ad-hoc test scripts and build artifacts from project root
 - README: replaced JVM maturity note with kumiki all_widgets_demo compilation milestone
+- `konpeito deps` — now analyzes source file dependencies (JAR download moved to `--fetch` flag)
+- README: benchmark section rewritten with ranges and honest notes on slower cases (pattern matching, NativeString)
+
+### Removed
+- LSP server (`konpeito lsp`) — Ruby's existing LSPs (ruby-lsp, Steep) cover this adequately
 
 ### Fixed
 - JVM backend: phi type inference for instance variables with HM TypeVar pollution (ClassCastException fix)
 - Thread callback protocol fallback and `visit_begin` guard for control flow
 - Conformance test failures for thread capture, rescue, and JVM bare rescue
 - CFG-based RPO block ordering in rescue try callbacks
+- CRuby interop: gem require, kwargs+block, toplevel include ordering
+- NativeString UTF-8 byte length (use `strlen` instead of `rb_str_length`)
+- String operations optimization (`rb_obj_as_string`, `empty?` inline, `substr`/`split` direct call)
+- GC-safe block capture for `&blk` methods (escape-cells strategy)
+- Rescue callback escape-cells for method parameters and locals
 
 ## [0.2.4] - 2026-02-28
 

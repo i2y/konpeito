@@ -11,10 +11,10 @@ module Konpeito
         @writer = LanguageServer::Protocol::Transport::Io::Writer.new(output)
       end
 
-      # Read next request/notification from client
-      # @return [Hash, nil] The request object or nil if EOF
-      def read
-        @reader.read
+      # Read requests/notifications from client, yielding each one
+      # @yield [Hash] Each request object
+      def read(&block)
+        @reader.read(&block)
       end
 
       # Write response to client

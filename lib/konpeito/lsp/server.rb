@@ -19,9 +19,8 @@ module Konpeito
       # Start the LSP server main loop
       def start
         @running = true
-        while @running
-          request = @transport.read
-          break unless request
+        @transport.read do |request|
+          break unless @running
 
           response = handle_request(request)
           @transport.write(response) if response

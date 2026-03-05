@@ -483,39 +483,25 @@ app.run
 
 ## Performance
 
-Konpeito shines in compute-heavy, typed loops where unboxed arithmetic and backend optimizations kick in. All benchmarks compare against Ruby 4.0.1 with YJIT enabled on Apple M4 Max.
+Konpeito targets compute-heavy, typed loops where unboxed arithmetic and backend optimizations can make a meaningful difference. Actual speedups depend heavily on the workload, input data, and hardware — the numbers below are from one specific environment and should be taken as rough indicators, not guarantees.
 
 ### LLVM Backend (CRuby Extension)
 
-| Benchmark | vs Ruby (YJIT) |
-|---|---|
-| N-Body simulation (5M steps) | **81x** faster |
-| Numeric method inlining (abs, even?, odd?) | **25-29x** faster |
-| Range enumerable (each, reduce, select) | **40-53x** faster |
-| Integer#times (nested, typed) | **891-972x** faster |
-| Typed reduce over Array[Integer] | **7x** faster |
-| Loop sum (n=100) | **18x** faster |
-| Typed counter loop (LICM + LLVM O2) | **5,345x** faster |
-| StaticArray/NativeArray sum (4 elements) | **65x** faster |
-| StaticArray/NativeArray sum (16 elements) | **232x** faster |
+Typical speedup ranges observed on our test machine (vs Ruby YJIT):
 
-These numbers compare native-internal performance (the loop itself runs inside compiled code). Single cross-boundary calls see smaller gains due to CRuby interop overhead.
+- **Numeric loops** (arithmetic, counters, reductions): often **5–80x** faster, depending on how much of the loop body can be fully unboxed
+- **Native data structures** (NativeArray, StaticArray): **~10–60x** faster for tight element-access loops
+- **Iterator inlining** (each, map, reduce, times): **~7–50x** faster with typed arrays or ranges
+
+These figures reflect native-internal performance — the loop itself runs entirely inside compiled code. Cross-boundary calls (Ruby ↔ native) see smaller gains due to interop overhead.
+
+**Where Konpeito is slower:** Pattern matching (`case/in`) is currently **~2–3x slower** than YJIT — Ruby's VM is highly optimized for this. String operations (NativeString) are also slower than CRuby's mature string implementation due to conversion overhead. Workloads that are I/O-bound, rely heavily on dynamic features, or hit areas where YJIT already excels may see no benefit or even regressions.
 
 ### JVM Backend (Standalone JAR)
 
-Benchmarks run on Java 21 (HotSpot) with JIT warmup. "Realistic" mode uses variable arguments to prevent constant folding.
+For numeric workloads, the JVM backend typically shows **~30–60x** speedups over Ruby YJIT, benefiting from HotSpot's JIT on top of Konpeito's static type resolution. I/O-bound or polymorphic code will see less improvement.
 
-| Benchmark (10M iterations) | Ruby (YJIT) | Konpeito JVM | Speedup |
-|---|---|---|---|
-| Multiply Add (realistic) | 196 ms | 5.0 ms | **39x** faster |
-| Compute Chain (realistic) | 300 ms | 5.1 ms | **59x** faster |
-| Arithmetic Intensive (realistic) | 272 ms | 5.0 ms | **55x** faster |
-| Loop Sum (realistic) | 107 ms | 2.6 ms | **41x** faster |
-| Fibonacci fib(30) x 10 (recursive) | 300 ms | 9.8 ms | **31x** faster |
-
-The JVM backend benefits from HotSpot's JIT compilation on top of Konpeito's static type resolution, yielding **30-60x** speedups for numeric workloads.
-
-> **Environment:** Apple M4 Max, Ruby 4.0.1 + YJIT, Java 21.0.10 (HotSpot), macOS 15.
+> **Test environment:** Apple M4 Max, Ruby 4.0.1 + YJIT, Java 21.0.10 (HotSpot), macOS 15. Results will vary on different hardware and configurations.
 
 ## Documentation
 

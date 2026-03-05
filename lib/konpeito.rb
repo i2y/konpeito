@@ -40,7 +40,6 @@ module Konpeito
     autoload :BaseCommand, "konpeito/cli/base_command"
     autoload :BuildCommand, "konpeito/cli/build_command"
     autoload :CheckCommand, "konpeito/cli/check_command"
-    autoload :LspCommand, "konpeito/cli/lsp_command"
     autoload :InitCommand, "konpeito/cli/init_command"
     autoload :FmtCommand, "konpeito/cli/fmt_command"
     autoload :TestCommand, "konpeito/cli/test_command"
@@ -84,12 +83,6 @@ module Konpeito
     autoload :Monomorphizer, "konpeito/codegen/monomorphizer"
     autoload :Inliner, "konpeito/codegen/inliner"
     autoload :LoopOptimizer, "konpeito/codegen/loop_optimizer"
-  end
-
-  module LSP
-    autoload :Server, "konpeito/lsp/server"
-    autoload :Transport, "konpeito/lsp/transport"
-    autoload :DocumentManager, "konpeito/lsp/document_manager"
   end
 
   module RBSInline

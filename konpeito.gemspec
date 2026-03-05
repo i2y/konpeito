@@ -37,9 +37,8 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "prism"
   spec.add_dependency "rbs"
-  spec.add_dependency "language_server-protocol", "~> 3.17"
 
   # ruby-llvm is optional — only needed for native/CRuby extension compilation (--target native).
-  # JVM backend (--target jvm), type checking, LSP, and formatting work without it.
+  # JVM backend (--target jvm), type checking, and formatting work without it.
   # Install manually: gem install ruby-llvm
 end

@@ -5,7 +5,6 @@ require_relative "cli/config"
 require_relative "cli/base_command"
 require_relative "cli/build_command"
 require_relative "cli/check_command"
-require_relative "cli/lsp_command"
 require_relative "cli/init_command"
 require_relative "cli/fmt_command"
 require_relative "cli/test_command"
@@ -22,7 +21,6 @@ module Konpeito
       "build" => Commands::BuildCommand,
       "run" => Commands::RunCommand,
       "check" => Commands::CheckCommand,
-      "lsp" => Commands::LspCommand,
       "init" => Commands::InitCommand,
       "fmt" => Commands::FmtCommand,
       "test" => Commands::TestCommand,
@@ -215,7 +213,6 @@ module Konpeito
         require_paths: [],
         color: $stderr.tty?,
         debug: false,
-        lsp: false,
         profile: false,
         incremental: false,
         clean_cache: false
@@ -224,12 +221,6 @@ module Konpeito
 
     def run
       parse_options!
-
-      # Start LSP server if requested
-      if options[:lsp]
-        Commands::LspCommand.new([], config: Commands::Config.new).run
-        return
-      end
 
       if args.empty?
         puts "Usage: konpeito [options] <source.rb>"
@@ -314,10 +305,6 @@ module Konpeito
 
         opts.on("--no-color", "Disable colored output") do
           options[:color] = false
-        end
-
-        opts.on("--lsp", "Start Language Server Protocol server") do
-          options[:lsp] = true
         end
 
         opts.on("--incremental", "Enable incremental compilation (cache unchanged files)") do

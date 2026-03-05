@@ -64,7 +64,6 @@ class CLIRouterTest < Minitest::Test
 
     assert_includes commands.keys, "build"
     assert_includes commands.keys, "check"
-    assert_includes commands.keys, "lsp"
     assert_includes commands.keys, "init"
     assert_includes commands.keys, "fmt"
     assert_includes commands.keys, "test"

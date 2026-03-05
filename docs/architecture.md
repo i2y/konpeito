@@ -1087,7 +1087,7 @@ Language Features and Ecosystem Completion [Done]
 
   ✓ CRuby integration enhancements (GC, stdlib require, Proc/Lambda)
   ✓ C extension interop (@cfunc, @ffi, SIMD)
-  ✓ Developer experience improvements (debug info, LSP, profiling)
+  ✓ Developer experience improvements (debug info, profiling)
   ✓ Pattern matching (case/in)
   ✓ Native stdlib (ByteBuffer, StaticArray, Slice, NativeHash)
   ✓ Concurrency (Fiber, Thread, Mutex, ConditionVariable, SizedQueue)
@@ -1171,7 +1171,7 @@ Developer Experience Improvements [Done]
 
   ✓ Debug information generation (DWARF)
   ✓ Error message improvements (Rust/Elm style)
-  ✓ IDE integration (LSP server)
+  ✓ IDE integration (LSP server) — removed: Ruby's existing LSPs cover this
   ✓ Profiling support
   ✓ Incremental compilation
 
@@ -1938,7 +1938,7 @@ Ruby Source
 │ C Extension Interop            │ @cfunc direct calls, C struct interop,   │
 │                                │ SIMD, FFI                                │
 ├────────────────────────────────┼──────────────────────────────────────────┤
-│ Developer Experience           │ Debug info, error improvements, LSP,     │
+│ Developer Experience           │ Debug info, error improvements,          │
 │                                │ profiling                                │
 ├────────────────────────────────┼──────────────────────────────────────────┤
 │ Standalone Execution           │ Boehm GC, single binary                  │

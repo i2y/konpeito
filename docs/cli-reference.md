@@ -24,8 +24,7 @@ konpeito <command> [options] [arguments]
 | `test` | Run tests |
 | `fmt` | Format Ruby source files |
 | `watch` | Watch for file changes and recompile |
-| `lsp` | Start Language Server Protocol server |
-| `deps` | Download JAR dependencies from Maven Central |
+| `deps` | Analyze source file dependencies |
 | `doctor` | Check development environment |
 
 ### Legacy mode
@@ -35,7 +34,6 @@ For backward compatibility, Konpeito also accepts the old invocation style:
 ```bash
 konpeito source.rb           # same as: konpeito build source.rb
 konpeito -c source.rb        # same as: konpeito check source.rb
-konpeito --lsp               # same as: konpeito lsp
 ```
 
 ---
@@ -326,80 +324,39 @@ konpeito watch -w lib src/main.rb          # watch additional paths
 
 ---
 
-## `konpeito lsp`
-
-Start a Language Server Protocol server for IDE integration.
-
-```
-konpeito lsp [options]
-```
-
-### Options
-
-| Option | Argument | Description | Default |
-|---|---|---|---|
-| `-v, --verbose` | — | Verbose output | off |
-| `--no-color` | — | Disable colored output | auto-detect TTY |
-
-### Supported capabilities
-
-| Feature | Description |
-|---|---|
-| Diagnostics | Real-time type errors and warnings |
-| Hover | Show inferred types on hover |
-| Completion | Method and variable completion based on types |
-| Go to Definition | Jump to method and variable definitions |
-| Find References | Find all usages of a symbol |
-| Rename | Rename variables and methods across files |
-
-### IDE setup
-
-The LSP server communicates over stdin/stdout. Configure your editor to run `konpeito lsp` as the language server for Ruby files. The exact setup depends on your editor.
-
----
-
 ## `konpeito deps`
 
-Download JAR dependencies from Maven Central.
+Analyze source file dependencies. Shows which files are required by a given source file, categorized by type (compiled source, runtime gem, standard library).
+
+With `--fetch`, downloads JAR dependencies from Maven Central for JVM builds.
 
 ```
-konpeito deps [options]
+konpeito deps [options] [source.rb]
 ```
 
 ### Options
 
 | Option | Argument | Description | Default |
 |---|---|---|---|
-| `-d, --dir` | DIR | Output directory | `lib` |
+| `--fetch` | — | Download JAR dependencies from Maven Central | off |
+| `-d, --dir` | DIR | Output directory for JAR downloads | `lib` |
+| `-I, --require-path` | PATH | Add require search path (repeatable) | from config |
 | `-v, --verbose` | — | Verbose output | off |
 | `--no-color` | — | Disable colored output | auto-detect TTY |
-
-### Configuration
-
-Add dependencies to `konpeito.toml`:
-
-```toml
-[deps]
-jars = [
-  "com.google.code.gson:gson:2.10.1",
-  "org.apache.commons:commons-lang3:3.14.0"
-]
-```
-
-The format is `group:artifact:version` (Maven coordinates).
 
 ### Examples
 
 ```bash
-konpeito deps                              # download to lib/
-konpeito deps -d vendor/jars               # download to custom directory
+konpeito deps src/main.rb                  # analyze source dependencies
+konpeito deps -I lib src/main.rb           # with additional load path
+konpeito deps --fetch                      # download JAR dependencies
+konpeito deps --fetch -d vendor/jars       # download to custom directory
 ```
 
 ### Notes
 
-- Skips already-downloaded JARs.
-- Downloads from Maven Central (`repo1.maven.org`).
-- Follows HTTP redirects automatically.
+- Without `--fetch`, analyzes `require` / `require_relative` statements and shows dependency categories.
+- With `--fetch`, downloads JARs listed in `konpeito.toml` from Maven Central. Skips already-downloaded JARs.
 
 ---
 

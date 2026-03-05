@@ -580,7 +580,6 @@ konpeito build -v source.rb          # show inferred types and dynamic fallback 
 konpeito build -g source.rb          # emit DWARF debug info for lldb/gdb (LLVM backend)
 konpeito check source.rb             # type-check only (no code generation)
 konpeito build --profile source.rb   # build with profiling instrumentation
-konpeito lsp                         # start LSP server (IDE integration)
 konpeito fmt                         # format code (RuboCop)
 konpeito deps source.rb              # analyze and display dependencies
 ```

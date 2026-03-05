@@ -180,7 +180,6 @@ konpeito init my_project                            # scaffold a new project
 konpeito test                                       # run project tests
 konpeito fmt                                        # format source files
 konpeito watch src/main.rb                          # auto-recompile on changes
-konpeito lsp                                        # start LSP server for IDE
 konpeito doctor                                     # check your environment
 ```
 
@@ -203,7 +202,7 @@ For detailed options and examples, see [CLI Reference](docs/cli-reference.md).
 - **Pattern Matching** — Full `case/in` support with array, hash, guard, and capture patterns.
 - **Modern Ruby Syntax** — `_1`/`_2` numbered params, `it`, endless methods, `class << self`, safe navigation (`&.`), and more.
 - **Concurrency** — Fiber, Thread, Mutex, ConditionVariable, SizedQueue, and Ractor (with `Ractor::Port`, `Ractor.select`, `Ractor[:key]` local storage, `name:`, `monitor`/`unmonitor`). JVM Ractor uses Virtual Threads for scheduling but does not enforce object isolation — objects are shared by reference, unlike CRuby's strict isolation model.
-- **Built-in Tooling** — Formatter (`fmt`), LSP (hover, completion, go-to-def, references, rename), debug info (`-g`), and profiling (`--profile`).
+- **Built-in Tooling** — Formatter (`fmt`), debug info (`-g`), and profiling (`--profile`).
 - **Castella UI** — A reactive GUI framework for the JVM backend (see below).
 
 ## Supported Ruby Syntax

@@ -51,7 +51,7 @@ module Konpeito
 
       private
 
-      SUBCOMMANDS = %w[build run check init test fmt watch lsp deps doctor completion].freeze
+      SUBCOMMANDS = %w[build run check init test fmt watch deps doctor completion].freeze
 
       BUILD_OPTIONS = %w[
         -o --output -f --format -g --debug -p --profile -v --verbose
@@ -69,7 +69,7 @@ module Konpeito
               COMPREPLY=()
               cur="${COMP_WORDS[COMP_CWORD]}"
               prev="${COMP_WORDS[COMP_CWORD-1]}"
-              commands="build run check init test fmt watch lsp deps doctor completion"
+              commands="build run check init test fmt watch deps doctor completion"
 
               # Complete subcommand
               if [[ ${COMP_CWORD} -eq 1 ]]; then
@@ -117,7 +117,7 @@ module Konpeito
                   init)
                       COMPREPLY=( $(compgen -W "-h --help" -- "${cur}") )
                       ;;
-                  test|fmt|watch|lsp|deps|doctor)
+                  test|fmt|watch|deps|doctor)
                       COMPREPLY=( $(compgen -W "-v --verbose --no-color -h --help" -- "${cur}") )
                       ;;
               esac
@@ -141,7 +141,6 @@ module Konpeito
                   'test:Run tests'
                   'fmt:Format source files'
                   'watch:Watch files and recompile on changes'
-                  'lsp:Start Language Server Protocol server'
                   'deps:Analyze dependencies'
                   'doctor:Check environment setup'
                   'completion:Generate shell completion scripts'
@@ -245,7 +244,6 @@ module Konpeito
           complete -c konpeito -n '__fish_use_subcommand' -a 'test' -d 'Run tests'
           complete -c konpeito -n '__fish_use_subcommand' -a 'fmt' -d 'Format source files'
           complete -c konpeito -n '__fish_use_subcommand' -a 'watch' -d 'Watch and recompile'
-          complete -c konpeito -n '__fish_use_subcommand' -a 'lsp' -d 'Start LSP server'
           complete -c konpeito -n '__fish_use_subcommand' -a 'deps' -d 'Analyze dependencies'
           complete -c konpeito -n '__fish_use_subcommand' -a 'doctor' -d 'Check environment'
           complete -c konpeito -n '__fish_use_subcommand' -a 'completion' -d 'Generate shell completions'

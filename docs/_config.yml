@@ -1,0 +1,50 @@
+title: Konpeito
+description: >-
+  A gradually typed Ruby AOT compiler with Hindley-Milner type inference,
+  dual LLVM/JVM backends, and seamless Java interop.
+
+baseurl: "/konpeito"
+url: "https://i2y.github.io"
+
+theme: just-the-docs
+
+# Search
+search_enabled: true
+search.heading_level: 3
+
+# Heading anchors
+heading_anchors: true
+
+# External links
+aux_links:
+  "GitHub":
+    - "https://github.com/i2y/konpeito"
+
+aux_links_new_tab: true
+
+# GitHub edit link
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/i2y/konpeito"
+gh_edit_branch: "main"
+gh_edit_source: "docs"
+gh_edit_view_mode: "edit"
+
+# Footer
+footer_content: >-
+  Konpeito &mdash; Crystallizing Ruby into native code.
+
+# Plugins
+plugins:
+  - jekyll-seo-tag
+  - jekyll-relative-links
+
+# Relative links
+relative_links:
+  enabled: true
+  collections: true
+
+# Exclude
+exclude:
+  - Gemfile
+  - Gemfile.lock

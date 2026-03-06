@@ -1,3 +1,10 @@
+---
+layout: default
+title: API Reference
+parent: Reference
+nav_order: 2
+---
+
 # API Reference
 
 ## A. Castella UI

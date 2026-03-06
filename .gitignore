@@ -74,3 +74,8 @@ lib/konpeito/stdlib/*/*.o
 lib/konpeito/stdlib/*/*.bundle
 lib/konpeito/stdlib/*/*.so
 lib/konpeito/stdlib/*/*.bundle.dSYM/
+
+# Jekyll
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata

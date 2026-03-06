@@ -1,4 +1,11 @@
-# Tutorial
+---
+layout: default
+title: チュートリアル
+parent: "日本語 (Japanese)"
+nav_order: 1
+---
+
+# チュートリアル
 
 このチュートリアルでは、Konpeito のインストールから実際のコードを動かすところまでを一通り体験します。
 
@@ -417,7 +424,7 @@ java -jar physics.jar
 
 ### GUI アプリ（Castella UI）
 
-JVM バックエンドでは [Castella UI](castella-ui.md)（Skia ベースのリアクティブ GUI フレームワーク）が使えます。
+JVM バックエンドでは Castella UI（Skia ベースのリアクティブ GUI フレームワーク）が使えます。
 
 ```bash
 git clone https://github.com/i2y/konpeito.git
@@ -587,4 +594,3 @@ konpeito deps source.rb              # 依存関係の解析・表示
 - **[CLI Reference](cli-reference.md)** — 全コマンドとオプション
 - **[API Reference](api-reference.md)** — ネイティブデータ構造、標準ライブラリ、Castella UI ウィジェット
 - **[Language Specification](language-specification.md)** — 対応構文と型システムの詳細
-- **[Architecture](architecture.md)** — コンパイラ内部構造と設計思想

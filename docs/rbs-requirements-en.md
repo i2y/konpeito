@@ -1,3 +1,10 @@
+---
+layout: default
+title: RBS Requirements
+parent: Guides
+nav_order: 2
+---
+
 # RBS File Requirements Guide
 
 Konpeito can compile and run many programs without RBS files thanks to HM type inference (Algorithm W). This document explains when RBS is required and when it is not.
@@ -278,5 +285,3 @@ RBS recommended (enable optimization with explicit types)
 
 ## Related Documents
 
-- [Architecture Guide](architecture-ja.md) - Details of the compilation pipeline
-- [Native Standard Library Proposal](native-stdlib-proposal.md) - Design of NativeArray, StaticArray, Slice, etc.

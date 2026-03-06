@@ -1,3 +1,10 @@
+---
+layout: default
+title: Tutorial
+parent: Guides
+nav_order: 1
+---
+
 # Tutorial
 
 This tutorial walks you through installing Konpeito and running your first compiled Ruby code.
@@ -421,7 +428,7 @@ The JAR is self-contained — no Ruby installation needed on the target machine.
 
 ### GUI Application (Castella UI)
 
-The JVM backend supports [Castella UI](castella-ui.md), a reactive GUI framework based on Skia rendering.
+The JVM backend supports Castella UI, a reactive GUI framework based on Skia rendering.
 
 ```bash
 git clone https://github.com/i2y/konpeito.git
@@ -591,4 +598,3 @@ konpeito deps source.rb              # analyze and display dependencies
 - **[CLI Reference](cli-reference.md)** — All commands and options
 - **[API Reference](api-reference.md)** — Native data structures, standard library, and Castella UI widgets
 - **[Language Specification](language-specification.md)** — Supported syntax and type system rules
-- **[Architecture](architecture.md)** — Compiler internals and design philosophy

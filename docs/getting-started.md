@@ -1,3 +1,9 @@
+---
+layout: default
+title: Getting Started
+nav_order: 2
+---
+
 # Getting Started with Konpeito
 
 ## What is Konpeito?
@@ -16,7 +22,7 @@ Konpeito also ships with **Castella UI**, a reactive GUI framework that runs on 
 | Java | 21+ | JVM backend |
 | LLVM | 20 | CRuby native backend only |
 
-For JVM-only usage, you need only Ruby and Java. LLVM 20 and the `ruby-llvm` gem are required only if you plan to compile CRuby native extensions (`--target native`). See the [README](../README.md) for platform-specific installation instructions.
+For JVM-only usage, you need only Ruby and Java. LLVM 20 and the `ruby-llvm` gem are required only if you plan to compile CRuby native extensions (`--target native`). See the [README](https://github.com/i2y/konpeito/blob/main/README.md) for platform-specific installation instructions.
 
 ### Install Konpeito
 
@@ -402,7 +408,7 @@ LLVM 20 and the `ruby-llvm` gem are required:
 gem install ruby-llvm
 ```
 
-See the main [README](../README.md) for LLVM installation instructions.
+See the main [README](https://github.com/i2y/konpeito/blob/main/README.md) for LLVM installation instructions.
 
 ### Build and use
 
@@ -431,5 +437,4 @@ The CRuby backend is ideal for embedding optimized computation into existing Rub
 - **[CLI Reference](cli-reference.md)** — All commands and options
 - **[API Reference](api-reference.md)** — Castella UI widgets, native data structures, and standard library
 - **[Language Specification](language-specification.md)** — Supported syntax and type system rules
-- **[Architecture](architecture.md)** — Compiler internals and design philosophy
 - **[Castella UI demos](https://github.com/i2y/konpeito/tree/main/examples/castella_ui)** — Working GUI demo programs

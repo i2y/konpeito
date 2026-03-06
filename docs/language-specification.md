@@ -10,7 +10,7 @@ nav_order: 3
 **Version 0.3 (Draft)**
 **Date: 2026-03-03**
 
-Konpeito is an Ahead-of-Time (AOT) native compiler for a statically typable subset of Ruby 4.0. It uses the Prism parser and RBS type system with Hindley-Milner type inference, generating native code via LLVM and JVM backends.
+Konpeito is an Ahead-of-Time (AOT) native compiler for Ruby 4.0. It uses the Prism parser and RBS type system with Hindley-Milner type inference, generating native code via LLVM and JVM backends. Certain dynamic features (eval, method_missing, etc.) are excluded, but all other Ruby syntax is accepted — type-resolved code paths are optimized to native instructions, while unresolved paths fall back to dynamic dispatch.
 
 > 金平糖（konpeitō）— Sugar crystals. Crystallizing Ruby code into native code.
 
@@ -20,7 +20,7 @@ Konpeito is an Ahead-of-Time (AOT) native compiler for a statically typable subs
 
 ### 1. Scope and Purpose
 
-Konpeito compiles a **static subset** of Ruby 4.0 to native code. It uses HM type inference to determine types where possible, generating optimized native code for type-resolved paths and falling back to dynamic dispatch for unresolved paths.
+Konpeito compiles Ruby 4.0 code to native code. It uses HM type inference to determine types where possible, generating optimized native code for type-resolved paths and falling back to dynamic dispatch for unresolved paths. Certain dynamic features are excluded by design (see Section 6), but the compiler does not require a special "subset" of Ruby — it accepts standard Ruby syntax.
 
 **Goals:**
 - Enable Ruby developers to write performance-critical code in familiar syntax
@@ -1318,7 +1318,7 @@ Matching uses `===` operator. Optimizations (LLVM backend only):
 - **String when-values:** Direct `rb_str_equal` call
 - **Class/Module when-values:** Direct `rb_obj_is_kind_of` call
 
-JVM backend uses `Object.equals()` for comparison.
+JVM backend uses `caseEqual` method call for comparison.
 
 ### 18. Pattern Matching (case/in)
 
@@ -1424,17 +1424,17 @@ The following methods are inlined as native loops when type information is avail
 
 ### 21. Concurrency
 
-#### 21.1 Fiber (LLVM Only)
-
-Fiber is implemented only in the LLVM backend, using CRuby's native fiber API (`rb_fiber_*`).
+#### 21.1 Fiber (Both Backends)
 
 ```ruby
-# Fiber (cooperative concurrency) — LLVM backend only
 fiber = Fiber.new { |x| Fiber.yield(x * 2) }
 result = fiber.resume(21)    # 42
 ```
 
-**Not available on JVM.** Use Thread with Virtual Threads instead.
+| Backend | Implementation |
+|---------|---------------|
+| LLVM | CRuby's native fiber API (`rb_fiber_*`) |
+| JVM | `KFiber` runtime class with Virtual Threads and channels |
 
 #### 21.2 Thread, Mutex, ConditionVariable, SizedQueue (Both Backends)
 
@@ -1575,7 +1575,7 @@ HIR uses a modified SSA (Static Single Assignment) form:
 | **Inline iterators (Array)** | ✅ | ✅ | Both backends |
 | **Inline iterators (Range)** | ✅ | ✅ | Both backends inline as counter loop |
 | **Numeric method inlining** | ✅ | ✅ | `abs`, `even?`, `odd?` etc. → CPU instructions |
-| **`===` inlining** | ✅ | ❌ | LLVM only; JVM uses `Object.equals()` |
+| **`===` inlining** | ✅ | ❌ | LLVM only; JVM uses method call |
 | **Monomorphization** | ✅ | ✅ | Both backends |
 
 #### 24.2 LLVM-Specific Optimizations
@@ -1708,9 +1708,9 @@ RBS-free Java interop is available with AST pre-scanning and automatic type extr
 
 `Thread.new` maps to Java 21 Virtual Threads for lightweight concurrency.
 
-#### 26.6 Fiber (Not Available)
+#### 26.6 Fiber
 
-Fiber is not implemented in the JVM backend. CRuby's Fiber API (`rb_fiber_*`) has no direct JVM equivalent. Use Thread with Virtual Threads instead.
+Fiber is implemented via the `KFiber` runtime class, using Java 21 Virtual Threads and channels for cooperative concurrency (`Fiber.new`, `resume`, `Fiber.yield`, `alive?`, `Fiber.current`).
 
 ### 27. Backend Differences
 
@@ -1719,7 +1719,7 @@ Fiber is not implemented in the JVM backend. CRuby's Fiber API (`rb_fiber_*`) ha
 | Integer overflow | Wraps (i64) | Wraps (long) |
 | String interning | No (CRuby manages) | JVM string pool |
 | GC | CRuby GC (mark & sweep) | JVM GC (G1/ZGC) |
-| Fiber | CRuby API (`rb_fiber_*`) | **Not implemented** |
+| Fiber | CRuby API (`rb_fiber_*`) | `KFiber` (Virtual Threads + channels) |
 | Thread/Mutex | CRuby API (GVL-limited) | Virtual Threads (true parallelism) |
 | Unresolved type fallback | `rb_funcallv` | `invokedynamic` (RubyDispatch) |
 | User classes | CRuby extension (`rb_define_class`) | Java class (`konpeito/generated/`) |
@@ -1730,7 +1730,7 @@ Fiber is not implemented in the JVM backend. CRuby's Fiber API (`rb_fiber_*`) ha
 | Debug info | DWARF | N/A |
 | `Integer#times` inlining | Native i64 loop | Counter loop (long) |
 | NativeArray | Stack/heap array | JVM primitive array (`long[]`, `double[]`) |
-| @cfunc stdlib | Available (libcurl, OpenSSL, zlib) | **Not implemented** |
+| @cfunc stdlib | C libraries (libcurl, OpenSSL, zlib) | Java-native equivalents (HttpClient, MessageDigest, GZIPOutputStream) |
 
 ---
 

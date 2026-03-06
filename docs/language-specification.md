@@ -1,3 +1,10 @@
+---
+layout: default
+title: Language Specification
+parent: Reference
+nav_order: 3
+---
+
 # Konpeito Language Specification
 
 **Version 0.3 (Draft)**
@@ -1863,24 +1870,21 @@ end
 5. **Phi node type mixing:** If/else branches returning different unboxed types require careful handling
 
 **JVM Backend:**
-6. **Fiber (JVM):** Not implemented on JVM backend. Use Virtual Threads instead
-7. **@cfunc stdlib (JVM):** JSON/HTTP/Crypto/Compression C library integration is LLVM backend only
-8. **SIMD (JVM):** SIMD vectorization is LLVM backend only
-9. **`===` inlining (JVM):** case/when `===` optimization not implemented (uses `Object.equals()`)
-10. **Unboxed arithmetic (JVM):** Generic method signatures use `Object→Object`, incurring boxing/unboxing overhead. Fully unboxed only with RBS type annotations or monomorphized copies
+6. **SIMD (JVM):** SIMD vectorization is LLVM backend only
+7. **`===` inlining (JVM):** case/when `===` optimization not implemented (uses method call)
+8. **Unboxed arithmetic scope (JVM):** Fully unboxed arithmetic is available when types are known via RBS annotations or HM inference. Generic method signatures without type information use `Object` parameters, incurring boxing/unboxing overhead
 
 **LLVM Backend:**
-11. **GVL limitation (LLVM):** CRuby's GVL prevents true thread parallelism
-12. **Mutex.synchronize exception safety:** Uses `rb_ensure` for proper cleanup (LLVM only)
+9. **GVL limitation (LLVM):** CRuby's GVL prevents true thread parallelism
 
 **Native Types:**
-13. **NativeString performance:** Currently slower than Ruby String due to conversion overhead
-14. **SIMD field count:** Must be 2, 3, 4, 8, or 16 (all Float)
-15. **Value type constraints:** @struct cannot have VALUE fields or exceed 128 bytes
+10. **NativeString performance:** Currently slower than Ruby String due to conversion overhead
+11. **SIMD field count:** Must be 2, 3, 4, 8, or 16 (all Float)
+12. **Value type constraints:** @struct cannot have VALUE fields or exceed 128 bytes
 
 **Ractor:**
-16. **Ractor (LLVM):** Not implemented on LLVM backend
-17. **Ractor isolation (JVM):** No isolation enforcement — objects are shared by reference, not copied or frozen. `make_shareable`/`shareable?` are compatibility stubs
+13. **Ractor (LLVM):** Not implemented on LLVM backend
+14. **Ractor isolation (JVM):** No isolation enforcement — objects are shared by reference, not copied or frozen. `make_shareable`/`shareable?` are compatibility stubs
 
 ### Appendix D: Glossary
 

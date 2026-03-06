@@ -365,7 +365,7 @@ konpeito build -I /path/to/kumiki/lib counter.rb
 konpeito build counter.rb
 ```
 
-`-I` なしでは `counter.rb` だけがコンパイルされ（約50 KB）、kumiki は実行時に CRuby がロードします。GUIアプリのボトルネックはUI描画やイベント処理なので、ビジネスロジック部分のコンパイル範囲の差は体感に影響しにくいです。
+`-I` なしでは `counter.rb` だけがコンパイルされ（約50 KB）、kumiki は実行時に CRuby がロードします。
 
 **実行:**
 

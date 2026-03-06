@@ -367,7 +367,7 @@ konpeito build -I /path/to/kumiki/lib counter.rb
 konpeito build counter.rb
 ```
 
-Without `-I`, the compiler compiles only `counter.rb` (~50 KB). kumiki is loaded at runtime by CRuby via `rb_require`. Your code is still compiled natively, but calls into kumiki go through `rb_funcallv` (dynamic dispatch). For a GUI app this makes no practical difference — the bottleneck is UI rendering and event handling, not the business logic dispatch path.
+Without `-I`, the compiler compiles only `counter.rb` (~50 KB). kumiki is loaded at runtime by CRuby via `rb_require`. Your code is still compiled natively, but calls into kumiki go through `rb_funcallv` (dynamic dispatch).
 
 **Run:**
 

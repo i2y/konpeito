@@ -147,7 +147,7 @@ When your code says `require "some_gem"`, the compiler checks whether the gem's 
 - **On the load path (`-I`)** — The gem's source files are compiled together with your code into a single extension. Method calls between your code and the gem use direct dispatch, monomorphization, and inlining.
 - **Not on the load path** — The compiler emits a `rb_require("some_gem")` call so CRuby loads the gem at runtime. Your compiled code can still call the gem's methods, but those calls go through `rb_funcallv` (dynamic dispatch). This still works correctly — it's just not optimized.
 
-In practice, many applications only need to compile their own code. Gems like UI frameworks, HTTP clients, or database drivers are often I/O-bound, so compiling them provides little benefit. Use `-I` when you want to maximize optimization across the entire codebase.
+In practice, many applications only need to compile their own code. Gems like UI frameworks or database drivers are bottlenecked by rendering or external services, so compiling them provides little benefit. Use `-I` when you want to maximize optimization across the entire codebase.
 
 ---
 
@@ -367,7 +367,7 @@ konpeito build -I /path/to/kumiki/lib counter.rb
 konpeito build counter.rb
 ```
 
-Without `-I`, the compiler compiles only `counter.rb` (~50 KB). kumiki is loaded at runtime by CRuby via `rb_require`. Your code is still compiled natively, but calls into kumiki go through `rb_funcallv` (dynamic dispatch). For a GUI app this makes no practical difference — the rendering pipeline is I/O-bound.
+Without `-I`, the compiler compiles only `counter.rb` (~50 KB). kumiki is loaded at runtime by CRuby via `rb_require`. Your code is still compiled natively, but calls into kumiki go through `rb_funcallv` (dynamic dispatch). For a GUI app this makes no practical difference — the bottleneck is UI rendering and event handling, not the business logic dispatch path.
 
 **Run:**
 

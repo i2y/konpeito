@@ -24,7 +24,7 @@ Konpeito compiles Ruby 4.0 code to native code. It uses HM type inference to det
 
 **Goals:**
 - Enable Ruby developers to write performance-critical code in familiar syntax
-- Provide 5-5000x speedup over interpreted Ruby through native compilation (for type-resolved code paths)
+- Generate optimized native code for type-resolved code paths
 - Maintain compatibility with CRuby's ecosystem via the C extension interface
 
 **Non-goals:**
@@ -37,7 +37,7 @@ Konpeito uses a **gradual approach** to type resolution. When HM inference and R
 
 | Type Resolution | LLVM Backend | JVM Backend | Performance |
 |----------------|-------------|-------------|-------------|
-| **Fully resolved** | Native CPU instructions | `invokevirtual` | Optimal (5-5000x) |
+| **Fully resolved** | Native CPU instructions | `invokevirtual` | Optimal |
 | **Partially resolved** | `rb_funcallv` (CRuby API) | `invokedynamic` (RubyDispatch) | CRuby-equivalent |
 | **Unresolved** | `rb_funcallv` fallback | `invokedynamic` fallback | CRuby-equivalent |
 

@@ -128,21 +128,35 @@ konpeito run [options] [source.rb]
 | `--classpath` | PATH | JVM classpath (colon-separated) | from config |
 | `--rbs` | FILE | RBS type definition file (repeatable) | from config |
 | `-I, --require-path` | PATH | Add require search path (repeatable) | from config |
+| `--inline` | — | Use inline RBS annotations | off |
+| `--no-cache` | — | Force recompilation (skip run cache) | off |
+| `--clean-run-cache` | — | Clear the run cache before building | off |
 | `-v, --verbose` | — | Verbose output | off |
 | `--no-color` | — | Disable colored output | auto-detect TTY |
 
 ### Examples
 
 ```bash
-konpeito run src/main.rb
+konpeito run src/main.rb                    # cached: skips recompilation if unchanged
+konpeito run --no-cache src/main.rb         # force recompilation
+konpeito run --clean-run-cache src/main.rb  # clear cache, then build and run
 konpeito run --target jvm src/main.rb
 ```
+
+### Compilation Caching
+
+`konpeito run` caches compiled artifacts in `.konpeito_cache/run/`. On subsequent runs, if all source files, RBS files, and compiler options are unchanged, the cached artifact is reused without recompilation.
+
+- The cache key is a SHA256 hash of all input file contents, compiler options, and `Konpeito::VERSION`.
+- Up to 20 cached entries are retained; older entries are automatically evicted.
+- Use `--no-cache` to force a fresh build (uses a temporary directory, cleaned up after execution).
+- Use `--clean-run-cache` to wipe the entire run cache before building.
 
 ### Notes
 
 - If no source file is given, Konpeito looks for `src/main.rb`, `main.rb`, or `app.rb` in that order.
-- For native targets, the compiled extension is loaded into a temporary Ruby process and cleaned up after execution.
-- For JVM targets, this delegates to `build --run`.
+- For native targets, the compiled extension is loaded into a Ruby process. Cached builds are stored persistently; `--no-cache` builds use a temporary directory cleaned up after execution.
+- For JVM targets, this delegates to `build --run` (no caching).
 
 ---
 

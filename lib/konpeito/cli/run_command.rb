@@ -49,7 +49,9 @@ module Konpeito
           rbs_paths: config.rbs_paths.dup,
           require_paths: config.require_paths.dup,
           inline_rbs: false,
-          lib: false
+          lib: false,
+          no_cache: false,
+          clean_run_cache: false
         }
       end
 
@@ -74,6 +76,14 @@ module Konpeito
           options[:inline_rbs] = true
         end
 
+        opts.on("--no-cache", "Force recompilation (skip run cache)") do
+          options[:no_cache] = true
+        end
+
+        opts.on("--clean-run-cache", "Clear the run cache before building") do
+          options[:clean_run_cache] = true
+        end
+
         super
       end
 
@@ -82,7 +92,9 @@ module Konpeito
           Usage: konpeito run [options] [source.rb]
 
           Examples:
-            konpeito run src/main.rb                   Build and run (native)
+            konpeito run src/main.rb                   Build and run (native, cached)
+            konpeito run --no-cache src/main.rb        Force recompilation
+            konpeito run --clean-run-cache src/main.rb Clear cache, then build and run
             konpeito run --inline src/main.rb          Build and run with inline RBS
             konpeito run --target jvm src/main.rb      Build and run (JVM)
         BANNER
@@ -108,14 +120,101 @@ module Konpeito
       end
 
       def run_native(source_file)
+        require "konpeito/cache"
+
+        basename = "#{File.basename(source_file, '.rb')}#{Platform.shared_lib_extension}"
+        run_cache = Cache::RunCache.new
+
+        if options[:clean_run_cache]
+          run_cache.clean!
+          emit("Cleaned", "run cache")
+        end
+
+        if options[:no_cache]
+          build_and_run_tmpdir(source_file, basename)
+          return
+        end
+
+        # Compute cache key once (runs DependencyResolver)
+        cache_key = compute_run_cache_key(source_file, run_cache)
+
+        # Try cache hit
+        if cache_key
+          artifact = run_cache.lookup(cache_key, basename)
+          if artifact
+            emit("Cached", source_file)
+            emit("Running", artifact)
+            run_without_bundler("ruby", "-r", artifact, "-e", "")
+            return
+          end
+        end
+
+        # Cache miss: build into cache dir
+        if cache_key
+          build_and_run_cached(source_file, run_cache, cache_key, basename)
+        else
+          build_and_run_tmpdir(source_file, basename)
+        end
+      end
+
+      def compute_run_cache_key(source_file, run_cache)
+        resolver = DependencyResolver.new(
+          base_paths: options[:require_paths],
+          verbose: false
+        )
+        resolver.resolve(source_file)
+
+        all_sources = resolver.resolved_files.keys
+        auto_rbs = resolver.rbs_paths
+        all_rbs = (options[:rbs_paths].map { |p| File.expand_path(p) } + auto_rbs).uniq
+        all_rbs = all_rbs.select { |f| File.exist?(f) }
+
+        options_hash = {
+          "inline_rbs" => options[:inline_rbs].to_s,
+          "target" => "native"
+        }
+
+        run_cache.compute_cache_key(
+          source_files: all_sources,
+          rbs_files: all_rbs,
+          options_hash: options_hash
+        )
+      rescue StandardError => e
+        puts_verbose("Cache key computation failed: #{e.message}")
+        nil
+      end
+
+      def build_and_run_cached(source_file, run_cache, cache_key, basename)
+        dir = run_cache.artifact_dir(cache_key)
+        FileUtils.mkdir_p(dir)
+        output_file = File.join(dir, basename)
+
+        build_args = build_native_args(source_file, output_file)
+        Commands::BuildCommand.new(build_args, config: config).run
+
+        run_cache.store(cache_key, basename)
+
+        emit("Running", output_file)
+        run_without_bundler("ruby", "-r", output_file, "-e", "")
+      end
+
+      def build_and_run_tmpdir(source_file, basename)
         require "tmpdir"
 
-        # Use a subdirectory to avoid conflicts, but keep the basename matching
-        # the Init_ function name (Ruby requires Init_<basename> to match the filename)
         @run_tmpdir = File.join(Dir.tmpdir, "konpeito_run_#{Process.pid}")
         FileUtils.mkdir_p(@run_tmpdir)
-        output_file = File.join(@run_tmpdir, "#{File.basename(source_file, '.rb')}#{Platform.shared_lib_extension}")
+        output_file = File.join(@run_tmpdir, basename)
 
+        build_args = build_native_args(source_file, output_file)
+        Commands::BuildCommand.new(build_args, config: config).run
+
+        emit("Running", output_file)
+        run_without_bundler("ruby", "-r", output_file, "-e", "")
+      ensure
+        FileUtils.rm_rf(@run_tmpdir) if @run_tmpdir && Dir.exist?(@run_tmpdir)
+      end
+
+      def build_native_args(source_file, output_file)
         build_args = ["-o", output_file]
         build_args << "-v" if options[:verbose]
         build_args << "--no-color" unless options[:color]
@@ -123,15 +222,7 @@ module Konpeito
         options[:rbs_paths].each { |p| build_args << "--rbs" << p }
         options[:require_paths].each { |p| build_args << "-I" << p }
         build_args << source_file
-
-        Commands::BuildCommand.new(build_args, config: config).run
-
-        emit("Running", output_file)
-        # Run without Bundler environment so the compiled extension can load
-        # any installed gem (not just those in the current Gemfile)
-        run_without_bundler("ruby", "-r", output_file, "-e", "")
-      ensure
-        FileUtils.rm_rf(@run_tmpdir) if @run_tmpdir && Dir.exist?(@run_tmpdir)
+        build_args
       end
 
       def build_classpath

@@ -304,6 +304,8 @@ Physics.run
 konpeito run physics_native.rb
 ```
 
+> **Tip:** `konpeito run` caches compiled artifacts in `.konpeito_cache/run/`. On subsequent runs, if no source or RBS files have changed, compilation is skipped entirely. Use `--no-cache` to force recompilation, or `--clean-run-cache` to wipe the cache.
+
 > **Note:** When both `physics_native.rb` and `physics_native.bundle` exist in the same directory, `require "./physics_native"` loads the `.rb` source file first. `konpeito run` avoids this problem by handling the load path automatically. If you need to build and run separately, output to a different directory:
 > ```bash
 > konpeito build -o build/physics_native.bundle physics_native.rb
@@ -587,6 +589,8 @@ konpeito build -v source.rb          # show inferred types and dynamic fallback 
 konpeito build -g source.rb          # emit DWARF debug info for lldb/gdb (LLVM backend)
 konpeito check source.rb             # type-check only (no code generation)
 konpeito build --profile source.rb   # build with profiling instrumentation
+konpeito run --no-cache source.rb    # force recompilation (skip run cache)
+konpeito run --clean-run-cache source.rb  # clear run cache, then build and run
 konpeito fmt                         # format code (RuboCop)
 konpeito deps source.rb              # analyze and display dependencies
 ```

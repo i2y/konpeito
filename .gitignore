@@ -3,6 +3,9 @@
 /vendor/bundle/
 Gemfile.lock
 
+# Konpeito cache
+.konpeito_cache/
+
 # Ruby
 *.gem
 *.rbc

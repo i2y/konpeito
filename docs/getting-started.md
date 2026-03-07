@@ -51,15 +51,26 @@ Compile and run it:
 konpeito run hello.rb
 ```
 
-Expected output:
+Expected output (first run):
 
 ```
-     Compiling hello.rb
+     Compiling hello.rb (native)
+      Finished in 0.5s -> .konpeito_cache/run/.../hello.bundle (48 KB)
+       Running .konpeito_cache/run/.../hello.bundle
 Hello from Konpeito!
-      Finished in 0.5s -> hello.bundle (48 KB)
 ```
 
-This compiles your Ruby code into a CRuby C extension (`.bundle` on macOS, `.so` on Linux) and runs it. The extension plugs directly into CRuby, so it can interoperate with any existing Ruby code and gems.
+Run the same command again without changes — compilation is skipped:
+
+```
+        Cached hello.rb
+       Running .konpeito_cache/run/.../hello.bundle
+Hello from Konpeito!
+```
+
+This compiles your Ruby code into a CRuby C extension (`.bundle` on macOS, `.so` on Linux), caches it in `.konpeito_cache/run/`, and runs it. The extension plugs directly into CRuby, so it can interoperate with any existing Ruby code and gems. On subsequent runs, if no source or RBS files have changed, the cached artifact is reused without recompilation.
+
+Use `--no-cache` to force a rebuild, or `--clean-run-cache` to wipe the cache.
 
 To compile without running:
 

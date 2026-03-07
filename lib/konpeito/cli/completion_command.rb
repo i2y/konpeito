@@ -102,7 +102,7 @@ module Konpeito
                       ;;
                   run)
                       if [[ "${cur}" == -* ]]; then
-                          COMPREPLY=( $(compgen -W "--target --classpath --rbs -I --require-path --inline -v --verbose --no-color -h --help" -- "${cur}") )
+                          COMPREPLY=( $(compgen -W "--target --classpath --rbs -I --require-path --inline --no-cache --clean-run-cache -v --verbose --no-color -h --help" -- "${cur}") )
                       else
                           COMPREPLY=( $(compgen -f -X '!*.rb' -- "${cur}") )
                       fi
@@ -191,6 +191,8 @@ module Konpeito
                           '-I[Add require search path]:path:_directories' \
                           '--require-path[Add require search path]:path:_directories' \
                           '--inline[Use inline RBS annotations]' \
+                          '--no-cache[Force recompilation]' \
+                          '--clean-run-cache[Clear run cache before building]' \
                           '-v[Verbose output]' \
                           '--verbose[Verbose output]' \
                           '--no-color[Disable colored output]' \
@@ -278,6 +280,9 @@ module Konpeito
           complete -c konpeito -n '__fish_seen_subcommand_from run' -l classpath -r -d 'JVM classpath'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -l rbs -r -d 'RBS type definition file'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -s I -l require-path -r -d 'Add require search path'
+          complete -c konpeito -n '__fish_seen_subcommand_from run' -l inline -d 'Use inline RBS annotations'
+          complete -c konpeito -n '__fish_seen_subcommand_from run' -l no-cache -d 'Force recompilation'
+          complete -c konpeito -n '__fish_seen_subcommand_from run' -l clean-run-cache -d 'Clear run cache'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -s v -l verbose -d 'Verbose output'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -l no-color -d 'Disable colored output'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -F -d 'Ruby source file'

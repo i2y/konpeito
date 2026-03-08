@@ -1,0 +1,109 @@
+# Breakout — RBS type definitions for raylib + block grid wrappers
+
+%a{ffi: "raylib"}
+module Raylib
+  # Window
+  %a{cfunc: "konpeito_init_window"}
+  def self.init_window: (Integer w, Integer h, String title) -> void
+
+  %a{cfunc: "konpeito_close_window"}
+  def self.close_window: () -> void
+
+  %a{cfunc: "konpeito_window_should_close"}
+  def self.window_should_close: () -> Integer
+
+  %a{cfunc: "konpeito_set_target_fps"}
+  def self.set_target_fps: (Integer fps) -> void
+
+  %a{cfunc: "konpeito_get_frame_time"}
+  def self.get_frame_time: () -> Float
+
+  # Drawing
+  %a{cfunc: "konpeito_begin_drawing"}
+  def self.begin_drawing: () -> void
+
+  %a{cfunc: "konpeito_end_drawing"}
+  def self.end_drawing: () -> void
+
+  %a{cfunc: "konpeito_clear_background"}
+  def self.clear_background: (Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_rectangle"}
+  def self.draw_rectangle: (Integer x, Integer y, Integer w, Integer h, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_circle"}
+  def self.draw_circle: (Integer cx, Integer cy, Float radius, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_text"}
+  def self.draw_text: (String text, Integer x, Integer y, Integer size, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_line"}
+  def self.draw_line: (Integer x1, Integer y1, Integer x2, Integer y2, Integer color) -> void
+
+  # Input
+  %a{cfunc: "konpeito_is_key_down"}
+  def self.key_down?: (Integer key) -> Integer
+
+  %a{cfunc: "konpeito_is_key_pressed"}
+  def self.key_pressed?: (Integer key) -> Integer
+
+  # Colors
+  %a{cfunc: "konpeito_color_white"}
+  def self.color_white: () -> Integer
+
+  %a{cfunc: "konpeito_color_black"}
+  def self.color_black: () -> Integer
+
+  %a{cfunc: "konpeito_color_red"}
+  def self.color_red: () -> Integer
+
+  %a{cfunc: "konpeito_color_orange"}
+  def self.color_orange: () -> Integer
+
+  %a{cfunc: "konpeito_color_yellow"}
+  def self.color_yellow: () -> Integer
+
+  %a{cfunc: "konpeito_color_green"}
+  def self.color_green: () -> Integer
+
+  %a{cfunc: "konpeito_color_blue"}
+  def self.color_blue: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkgray"}
+  def self.color_darkgray: () -> Integer
+
+  %a{cfunc: "konpeito_color_lightgray"}
+  def self.color_lightgray: () -> Integer
+
+  %a{cfunc: "konpeito_color_raywhite"}
+  def self.color_raywhite: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkblue"}
+  def self.color_darkblue: () -> Integer
+
+  %a{cfunc: "konpeito_color_skyblue"}
+  def self.color_skyblue: () -> Integer
+
+  %a{cfunc: "konpeito_color_purple"}
+  def self.color_purple: () -> Integer
+
+  %a{cfunc: "konpeito_color_pink"}
+  def self.color_pink: () -> Integer
+
+  # Block grid
+  %a{cfunc: "konpeito_blocks_init"}
+  def self.blocks_init: () -> void
+
+  %a{cfunc: "konpeito_block_get"}
+  def self.block_get: (Integer row, Integer col) -> Integer
+
+  %a{cfunc: "konpeito_block_set"}
+  def self.block_set: (Integer row, Integer col, Integer val) -> void
+
+  %a{cfunc: "konpeito_blocks_remaining"}
+  def self.blocks_remaining: () -> Integer
+end
+
+module TopLevel
+  def main: () -> void
+end

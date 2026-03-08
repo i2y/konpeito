@@ -43,8 +43,12 @@ jobs:
           ruby-version: head
           bundler-cache: true
 
-      - name: Run unit tests
+      - name: Run unit tests (non-codegen)
         run: bundle exec rake test
+
+      - name: Run codegen tests
+        run: bundle exec rake test:codegen
+        continue-on-error: true
 
   conformance:
     name: Conformance Tests

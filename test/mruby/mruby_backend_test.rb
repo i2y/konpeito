@@ -192,6 +192,65 @@ class MRubyBackendTest < Minitest::Test
     refute_includes ir, "konpeito_qnil"
   end
 
+  # Test that generate_license_file creates a license file with mruby MIT license
+  def test_generate_license_file_basic
+    gen = create_mruby_generator
+    output_file = File.join(@test_dir, "test_app")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_app"
+    )
+
+    backend.send(:generate_license_file)
+
+    license_path = "#{output_file}.LICENSES.txt"
+    assert File.exist?(license_path), "Expected license file to be created"
+
+    content = File.read(license_path)
+    assert_includes content, "Konpeito"
+    assert_includes content, "mruby"
+    assert_includes content, "MIT"
+    assert_includes content, "Copyright (c) mruby developers"
+    assert_includes content, "Permission is hereby granted"
+  end
+
+  # Test that generate_license_file includes yyjson when JSON stdlib is used
+  def test_generate_license_file_with_json
+    gen = create_mruby_generator
+    output_file = File.join(@test_dir, "test_json_app")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_json_app",
+      extra_c_files: ["/path/to/json_native.c"]
+    )
+
+    backend.send(:generate_license_file)
+
+    license_path = "#{output_file}.LICENSES.txt"
+    content = File.read(license_path)
+    assert_includes content, "yyjson"
+    assert_includes content, "YaoYuan"
+  end
+
+  # Test that generate_license_file does NOT include yyjson when no JSON stdlib
+  def test_generate_license_file_without_json
+    gen = create_mruby_generator
+    output_file = File.join(@test_dir, "test_no_json_app")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_no_json_app"
+    )
+
+    backend.send(:generate_license_file)
+
+    license_path = "#{output_file}.LICENSES.txt"
+    content = File.read(license_path)
+    refute_includes content, "yyjson"
+  end
+
   private
 
   def create_mruby_generator

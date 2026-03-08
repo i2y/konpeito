@@ -68,7 +68,10 @@ tools/konpeito-asm/build/
 tools/konpeito-asm/konpeito-asm.jar
 
 # External dependencies (mruby experiment)
-/vendor/
+/vendor/*
+!/vendor/yyjson/
+/vendor/yyjson/*
+!/vendor/yyjson/LICENSE
 
 # Native extension build artifacts
 lib/konpeito/stdlib/*/Makefile

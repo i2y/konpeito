@@ -62,6 +62,9 @@ module Konpeito
 
           # Link into standalone executable
           link_to_executable(obj_files, output_file)
+
+          # Generate license file alongside the executable
+          generate_license_file
         ensure
           # Clean up intermediate files
           all_temps = [ir_file, obj_file, init_c_file, init_obj_file, helpers_obj_file] + extra_obj_files
@@ -806,6 +809,141 @@ module Konpeito
       def sanitize_c_name(name)
         return OPERATOR_NAME_MAP[name] if OPERATOR_NAME_MAP.key?(name)
         name.gsub(/[^a-zA-Z0-9_]/, "_")
+      end
+
+      # === License file generation ===
+
+      def generate_license_file
+        license_path = "#{output_file}.LICENSES.txt"
+        sections = []
+
+        # Always include Konpeito itself
+        sections << license_section(
+          "Konpeito",
+          "MIT",
+          "Copyright (c) Konpeito contributors",
+          "https://github.com/i2y/konpeito",
+          <<~MIT
+            Permission is hereby granted, free of charge, to any person obtaining a copy
+            of this software and associated documentation files (the "Software"), to deal
+            in the Software without restriction, including without limitation the rights
+            to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+            copies of the Software, and to permit persons to whom the Software is
+            furnished to do so, subject to the following conditions:
+
+            The above copyright notice and this permission notice shall be included in all
+            copies or substantial portions of the Software.
+
+            THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+            IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+            FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+            AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+            LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+            OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+            SOFTWARE.
+          MIT
+        )
+
+        # Always include mruby (statically linked)
+        sections << license_section(
+          "mruby",
+          "MIT",
+          "Copyright (c) mruby developers",
+          "https://github.com/mruby/mruby",
+          <<~MIT
+            Permission is hereby granted, free of charge, to any person obtaining a copy
+            of this software and associated documentation files (the "Software"), to deal
+            in the Software without restriction, including without limitation the rights
+            to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+            copies of the Software, and to permit persons to whom the Software is
+            furnished to do so, subject to the following conditions:
+
+            The above copyright notice and this permission notice shall be included in all
+            copies or substantial portions of the Software.
+
+            THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+            IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+            FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+            AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+            LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+            OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+            SOFTWARE.
+          MIT
+        )
+
+        # Include yyjson if JSON stdlib is used
+        json_used = @extra_c_files.any? { |f| File.basename(f).include?("json") }
+        if json_used
+          sections << license_section(
+            "yyjson",
+            "MIT",
+            "Copyright (c) 2020 YaoYuan <ibireme@gmail.com>",
+            "https://github.com/ibireme/yyjson",
+            <<~MIT
+              Permission is hereby granted, free of charge, to any person obtaining a copy
+              of this software and associated documentation files (the "Software"), to deal
+              in the Software without restriction, including without limitation the rights
+              to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+              copies of the Software, and to permit persons to whom the Software is
+              furnished to do so, subject to the following conditions:
+
+              The above copyright notice and this permission notice shall be included in all
+              copies or substantial portions of the Software.
+
+              THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+              IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+              FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+              AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+              LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+              OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+              SOFTWARE.
+            MIT
+          )
+        end
+
+        # Include raylib if linked
+        ffi_libs = @rbs_loader&.all_ffi_libraries || []
+        if ffi_libs.any? { |lib| lib.to_s.include?("raylib") }
+          sections << license_section(
+            "raylib",
+            "zlib/libpng",
+            "Copyright (c) 2013-2024 Ramon Santamaria (@raysan5)",
+            "https://github.com/raysan5/raylib",
+            <<~ZLIB
+              This software is provided 'as-is', without any express or implied warranty.
+              In no event will the authors be held liable for any damages arising from the
+              use of this software.
+
+              Permission is granted to anyone to use this software for any purpose,
+              including commercial applications, and to alter it and redistribute it freely,
+              subject to the following restrictions:
+
+              1. The origin of this software must not be misrepresented; you must not claim
+                 that you wrote the original software. If you use this software in a product,
+                 an acknowledgment in the product documentation would be appreciated but is
+                 not required.
+              2. Altered source versions must be plainly marked as such, and must not be
+                 misrepresented as being the original software.
+              3. This notice may not be removed or altered from any source distribution.
+            ZLIB
+          )
+        end
+
+        File.write(license_path, sections.join("\n"))
+      end
+
+      def license_section(name, license_type, copyright, url, license_text)
+        <<~SECTION
+          ================================================================================
+          #{name}
+          License: #{license_type}
+          #{copyright}
+          #{url}
+          ================================================================================
+
+          #{license_text.strip}
+
+        SECTION
       end
 
       # === Compilation pipeline ===

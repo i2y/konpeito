@@ -431,6 +431,8 @@ konpeito build --target mruby -o hello hello.rb
 ./hello
 ```
 
+A license file (`hello.LICENSES.txt`) is automatically generated alongside the executable, containing the MIT license for mruby and any other linked libraries. When distributing your binary, include this file to comply with third-party license requirements.
+
 Or build and run in one step (with compilation caching):
 
 ```bash

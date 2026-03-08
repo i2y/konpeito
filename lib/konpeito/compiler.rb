@@ -431,12 +431,17 @@ module Konpeito
 
       log "Compiling to standalone executable (mruby)..."
 
+      # Auto-detect extra C source files in the same directory as the source
+      source_dir = File.dirname(source_file)
+      extra_c_files = Dir.glob(File.join(source_dir, "*.c"))
+
       backend = Codegen::MRubyBackend.new(
         llvm_gen,
         output_file: output_file,
         module_name: module_name,
         rbs_loader: @rbs_loader,
-        debug: @debug
+        debug: @debug,
+        extra_c_files: extra_c_files
       )
       backend.generate
 

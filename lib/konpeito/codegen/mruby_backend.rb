@@ -10,12 +10,13 @@ module Konpeito
     class MRubyBackend
       attr_reader :llvm_generator, :output_file, :module_name, :rbs_loader, :debug
 
-      def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false)
+      def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false, extra_c_files: [])
         @llvm_generator = llvm_generator
         @output_file = output_file
         @module_name = module_name || derive_module_name(output_file)
         @rbs_loader = rbs_loader
         @debug = debug
+        @extra_c_files = extra_c_files
       end
 
       def generate
@@ -24,6 +25,7 @@ module Konpeito
         init_c_file = "#{output_base}_mruby_init.c"
         init_obj_file = "#{output_base}_mruby_init.o"
         helpers_obj_file = "#{output_base}_mruby_helpers.o"
+        extra_obj_files = []
 
         begin
           # Write LLVM IR to file
@@ -41,13 +43,21 @@ module Konpeito
           # Compile mruby_helpers.c
           compile_helpers_to_object(helpers_obj_file)
 
-          obj_files = [obj_file, init_obj_file, helpers_obj_file]
+          # Compile extra C source files
+          @extra_c_files.each do |c_file|
+            extra_obj = "#{output_base}_extra_#{File.basename(c_file, '.c')}.o"
+            compile_extra_c_to_object(c_file, extra_obj)
+            extra_obj_files << extra_obj
+          end
+
+          obj_files = [obj_file, init_obj_file, helpers_obj_file] + extra_obj_files
 
           # Link into standalone executable
           link_to_executable(obj_files, output_file)
         ensure
           # Clean up intermediate files
-          [ir_file, obj_file, init_c_file, init_obj_file, helpers_obj_file].each do |f|
+          all_temps = [ir_file, obj_file, init_c_file, init_obj_file, helpers_obj_file] + extra_obj_files
+          all_temps.each do |f|
             FileUtils.rm_f(f) if f && File.exist?(f)
           end
           # Also clean optimized IR if it was generated
@@ -845,6 +855,21 @@ module Konpeito
         system(*cmd) or raise CodegenError, "Failed to compile mruby helpers"
       end
 
+      def compile_extra_c_to_object(c_file, obj_file)
+        cc = find_llvm_tool("clang") || "cc"
+        cflags = Platform.mruby_cflags
+
+        # Add include paths for FFI libraries (e.g., raylib)
+        extra_includes = ffi_include_flags
+
+        cmd = [cc, "-c"]
+        cmd.concat(cflags.split)
+        cmd.concat(extra_includes)
+        cmd += ["-o", obj_file, c_file]
+
+        system(*cmd) or raise CodegenError, "Failed to compile #{File.basename(c_file)}"
+      end
+
       def link_to_executable(obj_files, output_file)
         cc = find_llvm_tool("clang") || "cc"
         ldflags = Platform.mruby_ldflags
@@ -852,6 +877,12 @@ module Konpeito
 
         cmd = [cc, "-o", output_file, *obj_files]
         cmd.concat(ldflags.split)
+
+        # Add library search paths for homebrew
+        if Dir.exist?("/opt/homebrew/lib")
+          cmd << "-L/opt/homebrew/lib"
+        end
+
         cmd.concat(ffi_libs)
 
         if @debug
@@ -877,6 +908,15 @@ module Konpeito
             link_name = lib_name.sub(/^lib/, "")
             flags << "-l#{link_name}"
           end
+        end
+        flags
+      end
+
+      def ffi_include_flags
+        flags = []
+        # Add homebrew include paths for common libraries
+        if Dir.exist?("/opt/homebrew/include")
+          flags << "-I/opt/homebrew/include"
         end
         flags
       end

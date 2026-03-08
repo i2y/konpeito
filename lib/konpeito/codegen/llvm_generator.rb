@@ -506,10 +506,11 @@ module Konpeito
 
       # Runtime-aware constant accessors
       # For CRuby, these return pre-computed LLVM constants.
-      # For mruby, these load from globals initialized by konpeito_mruby_init_constants().
+      # For mruby, these load from globals once per function (cached in @mrb_cached_*).
+      # Caching is critical: loading in a merge block before a phi node is illegal in LLVM IR.
       def qnil
         if @runtime == :mruby
-          @builder.load2(value_type, @mrb_qnil_global, "qnil")
+          @mrb_cached_qnil ||= load_mrb_constant(@mrb_qnil_global, "qnil")
         else
           @qnil
         end
@@ -517,7 +518,7 @@ module Konpeito
 
       def qtrue
         if @runtime == :mruby
-          @builder.load2(value_type, @mrb_qtrue_global, "qtrue")
+          @mrb_cached_qtrue ||= load_mrb_constant(@mrb_qtrue_global, "qtrue")
         else
           @qtrue
         end
@@ -525,7 +526,7 @@ module Konpeito
 
       def qfalse
         if @runtime == :mruby
-          @builder.load2(value_type, @mrb_qfalse_global, "qfalse")
+          @mrb_cached_qfalse ||= load_mrb_constant(@mrb_qfalse_global, "qfalse")
         else
           @qfalse
         end
@@ -533,15 +534,66 @@ module Konpeito
 
       def qundef
         if @runtime == :mruby
-          @builder.load2(value_type, @mrb_qundef_global, "qundef")
+          @mrb_cached_qundef ||= load_mrb_constant(@mrb_qundef_global, "qundef")
         else
           @qundef
         end
       end
 
+      # Load an mruby constant value from a global, positioned at the function entry
+      # block so the load dominates all uses and doesn't interfere with phi nodes.
+      def load_mrb_constant(global, name)
+        saved_block = @builder.insert_block
+        entry_block = @current_function.basic_blocks.first
+
+        # Find position after existing allocas/loads in entry block
+        # to insert the load (must be before any branches)
+        instructions = entry_block.instructions.to_a
+        last_non_term = instructions.reject { |i| i.opcode == :br || i.opcode == :ret || i.opcode == :switch || i.opcode == :cond_br }.last
+
+        if last_non_term
+          # Position after the last non-terminator instruction
+          # Use a workaround: position at end if entry has no terminator yet,
+          # otherwise position before the terminator
+          terminator = instructions.last
+          if terminator && [:br, :ret, :switch, :cond_br, :unreachable].include?(terminator.opcode)
+            @builder.position_before(terminator)
+          else
+            @builder.position_at_end(entry_block)
+          end
+        else
+          @builder.position_at_end(entry_block)
+        end
+
+        result = @builder.load2(value_type, global, name)
+        @builder.position_at_end(saved_block)
+        result
+      end
+
       # Check if running with mruby runtime
       def mruby?
         @runtime == :mruby
+      end
+
+      # Reset cached mruby constant loads (called when entering a new function)
+      def reset_mrb_constant_cache
+        @mrb_cached_qnil = nil
+        @mrb_cached_qtrue = nil
+        @mrb_cached_qfalse = nil
+        @mrb_cached_qundef = nil
+      end
+
+      def save_mrb_constant_cache
+        { qnil: @mrb_cached_qnil, qtrue: @mrb_cached_qtrue,
+          qfalse: @mrb_cached_qfalse, qundef: @mrb_cached_qundef }
+      end
+
+      def restore_mrb_constant_cache(cache)
+        return unless cache
+        @mrb_cached_qnil = cache[:qnil]
+        @mrb_cached_qtrue = cache[:qtrue]
+        @mrb_cached_qfalse = cache[:qfalse]
+        @mrb_cached_qundef = cache[:qundef]
       end
 
       # Load the global mrb_state pointer (mruby only)
@@ -1207,6 +1259,7 @@ module Konpeito
         @current_function = func
         @current_hir_func = hir_func
         @current_native_class = native_class_type  # Track for self field access
+        reset_mrb_constant_cache
 
         # Create basic blocks
         hir_func.body.each do |hir_block|
@@ -1281,6 +1334,7 @@ module Konpeito
         @block_exit_overrides = {}
         @current_function = func
         @current_hir_func = hir_func
+        reset_mrb_constant_cache
 
         # Create debug info for function if debug mode enabled
         @current_subprogram = nil
@@ -5518,6 +5572,8 @@ module Konpeito
         entry = callback_func.basic_blocks.append("entry")
         @builder.position_at_end(entry)
         @current_function = callback_func
+        saved_mrb_cache = save_mrb_constant_cache
+        reset_mrb_constant_cache
 
         # Reset variable tracking for callback scope.
         # Thread callbacks are independent execution contexts — reset block callback state.
@@ -5658,6 +5714,7 @@ module Konpeito
         @variable_types = saved_types
         @variable_allocas = saved_allocas
         @current_function = saved_current_function
+        restore_mrb_constant_cache(saved_mrb_cache)
         @in_block_callback = saved_in_block_callback
         @block_callback_self = saved_block_callback_self
         @in_thread_callback = saved_in_thread_callback
@@ -8082,6 +8139,8 @@ module Konpeito
           end
           # Set @current_function so generate_store_local creates allocas in the callback.
           @current_function = callback_func
+          saved_mrb_cache2 = save_mrb_constant_cache
+          reset_mrb_constant_cache
           # Populate @return_blocks so generate_phi skips Return-predecessor entries.
           @return_blocks = Set.new
           try_hir_blocks.each do |hb|
@@ -8148,6 +8207,7 @@ module Konpeito
         @variable_types  = saved_types
         @variable_allocas = saved_allocas
         @current_function = saved_cur_func
+        restore_mrb_constant_cache(saved_mrb_cache2)
         @return_blocks    = saved_return_blocks
         @block_callback_self = saved_block_callback_self
         @rescue_escape_array = saved_rescue_escape_array
@@ -13280,7 +13340,7 @@ module Konpeito
         case type_sym
         when :Float then LLVM::Double
         when :Integer then LLVM::Int64
-        when :String then LLVM::Int64  # VALUE
+        when :String then ptr_type  # const char* for C functions
         when :Bool then LLVM::Int1
         when :void then LLVM.Void
         else LLVM::Int64  # Default to VALUE for unknown types
@@ -13317,14 +13377,18 @@ module Konpeito
             @builder.call(@rb_num2long, boxed)
           end
         when :String
-          # Keep as VALUE
-          if current_type_tag == :i64
+          # Convert Ruby String VALUE to const char* for C functions
+          boxed = if current_type_tag == :i64
             @builder.call(@rb_int2inum, value)
           elsif current_type_tag == :double
             @builder.call(@rb_float_new, value)
           else
             value
           end
+          # Store VALUE to alloca, then call rb_string_value_cstr(&val)
+          str_alloca = @builder.alloca(value_type, "cfunc_str_tmp")
+          @builder.store(boxed, str_alloca)
+          @builder.call(@rb_string_value_cstr, str_alloca, "cfunc_cstr")
         when :Bool
           # VALUE -> i1 (truthy check)
           boxed = if current_type_tag == :i64
@@ -13359,8 +13423,8 @@ module Konpeito
           # int64_t -> VALUE
           @builder.call(@rb_int2inum, value)
         when :String
-          # Assume VALUE string returned
-          value
+          # const char* -> Ruby String VALUE
+          @builder.call(@rb_str_new_cstr, value)
         when :Bool
           # i1 -> VALUE (Qtrue/Qfalse)
           @builder.select(value, qtrue, qfalse)

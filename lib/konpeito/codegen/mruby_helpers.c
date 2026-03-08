@@ -266,7 +266,10 @@ mrb_value rb_ary_new_from_values(int64_t n, const mrb_value *elts) {
 
 /* CRuby: VALUE rb_ary_subseq(VALUE ary, long beg, long len) */
 mrb_value rb_ary_subseq(mrb_value ary, int64_t beg, int64_t len) {
-    return mrb_ary_subseq(konpeito_mrb_state, ary, (mrb_int)beg, (mrb_int)len);
+    mrb_state *mrb = konpeito_mrb_state;
+    /* mruby doesn't have mrb_ary_subseq — use Array#[start, length] */
+    mrb_value args[2] = { mrb_fixnum_value((mrb_int)beg), mrb_fixnum_value((mrb_int)len) };
+    return mrb_funcall_argv(mrb, ary, mrb_intern_cstr(mrb, "[]"), 2, args);
 }
 
 /* CRuby: VALUE rb_ary_concat(VALUE ary1, VALUE ary2) */
@@ -313,11 +316,12 @@ mrb_value rb_hash_aset(mrb_value hash, mrb_value key, mrb_value val) {
 
 /* CRuby: VALUE rb_hash_lookup2(VALUE hash, VALUE key, VALUE def) */
 mrb_value rb_hash_lookup2(mrb_value hash, mrb_value key, mrb_value def_val) {
-    mrb_value result = mrb_hash_get(konpeito_mrb_state, hash, key);
+    mrb_state *mrb = konpeito_mrb_state;
+    mrb_value result = mrb_hash_get(mrb, hash, key);
     if (mrb_nil_p(result)) {
         /* Check if key actually exists with nil value */
-        mrb_value exists = mrb_hash_key_p(konpeito_mrb_state, hash, key);
-        if (!mrb_test(exists)) {
+        mrb_bool exists = mrb_hash_key_p(mrb, hash, key);
+        if (!exists) {
             return def_val;
         }
     }
@@ -407,9 +411,10 @@ mrb_value rb_obj_class(mrb_value obj) {
 
 /* CRuby: VALUE rb_yield(VALUE val) */
 mrb_value rb_yield(mrb_value val) {
+    mrb_state *mrb = konpeito_mrb_state;
     mrb_value block = konpeito_get_block();
     if (mrb_nil_p(block)) {
-        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "no block given (yield)");
+        mrb_raise(mrb, E_RUNTIME_ERROR, "no block given (yield)");
         return mrb_nil_value();
     }
     return mrb_funcall(konpeito_mrb_state, block, "call", 1, val);
@@ -417,13 +422,14 @@ mrb_value rb_yield(mrb_value val) {
 
 /* CRuby: VALUE rb_yield_values2(int argc, const VALUE *argv) */
 mrb_value rb_yield_values2(int argc, const mrb_value *argv) {
+    mrb_state *mrb = konpeito_mrb_state;
     mrb_value block = konpeito_get_block();
     if (mrb_nil_p(block)) {
-        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "no block given (yield)");
+        mrb_raise(mrb, E_RUNTIME_ERROR, "no block given (yield)");
         return mrb_nil_value();
     }
-    mrb_sym call_sym = mrb_intern_cstr(konpeito_mrb_state, "call");
-    return mrb_funcall_argv(konpeito_mrb_state, block, call_sym, argc, argv);
+    mrb_sym call_sym = mrb_intern_cstr(mrb, "call");
+    return mrb_funcall_argv(mrb, block, call_sym, argc, argv);
 }
 
 /* CRuby: int rb_block_given_p(void) */
@@ -561,31 +567,35 @@ mrb_value rb_fiber_alive_p(mrb_value fiber) {
 /* --- Thread (stubs — mruby is single-threaded) --- */
 
 mrb_value rb_thread_create(void *func, void *arg) {
-    (void)func;
-    (void)arg;
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "Thread is not supported in mruby target");
+    mrb_state *mrb = konpeito_mrb_state;
+    (void)func; (void)arg;
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Thread is not supported in mruby target");
     return mrb_nil_value();
 }
 
 mrb_value rb_thread_current(void) {
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "Thread is not supported in mruby target");
+    mrb_state *mrb = konpeito_mrb_state;
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Thread is not supported in mruby target");
     return mrb_nil_value();
 }
 
 mrb_value rb_mutex_new(void) {
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
+    mrb_state *mrb = konpeito_mrb_state;
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
     return mrb_nil_value();
 }
 
 mrb_value rb_mutex_lock(mrb_value mutex) {
+    mrb_state *mrb = konpeito_mrb_state;
     (void)mutex;
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
     return mrb_nil_value();
 }
 
 mrb_value rb_mutex_unlock(mrb_value mutex) {
+    mrb_state *mrb = konpeito_mrb_state;
     (void)mutex;
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Mutex is not supported in mruby target");
     return mrb_nil_value();
 }
 
@@ -624,8 +634,9 @@ static mrb_value rescue_handler_wrapper(mrb_state *mrb, mrb_value data) {
 /* CRuby: VALUE rb_rescue2(VALUE (*body)(VALUE), VALUE data1,
  *                         VALUE (*handler)(VALUE, VALUE), VALUE data2, ...) */
 mrb_value rb_rescue2(void *body, mrb_value data1, void *handler, mrb_value data2, ...) {
+    mrb_state *mrb = konpeito_mrb_state;
     if (rescue_depth >= KONPEITO_MAX_RESCUE_STACK) {
-        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "rescue nesting too deep");
+        mrb_raise(mrb, E_RUNTIME_ERROR, "rescue nesting too deep");
         return mrb_nil_value();
     }
     rescue_stack[rescue_depth].body = (konpeito_callback_fn)body;
@@ -633,7 +644,7 @@ mrb_value rb_rescue2(void *body, mrb_value data1, void *handler, mrb_value data2
     rescue_stack[rescue_depth].handler = (konpeito_callback_fn)handler;
     rescue_stack[rescue_depth].data2 = data2;
     rescue_depth++;
-    mrb_value result = mrb_rescue(konpeito_mrb_state,
+    mrb_value result = mrb_rescue(mrb,
                                    rescue_body_wrapper, mrb_nil_value(),
                                    rescue_handler_wrapper, mrb_nil_value());
     rescue_depth--;
@@ -664,8 +675,9 @@ static mrb_value ensure_cleanup_wrapper(mrb_state *mrb, mrb_value data) {
 /* CRuby: VALUE rb_ensure(VALUE (*body)(VALUE), VALUE data1,
  *                        VALUE (*ensure_fn)(VALUE), VALUE data2) */
 mrb_value rb_ensure(void *body, mrb_value data1, void *cleanup, mrb_value data2) {
+    mrb_state *mrb = konpeito_mrb_state;
     if (ensure_depth >= KONPEITO_MAX_RESCUE_STACK) {
-        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "ensure nesting too deep");
+        mrb_raise(mrb, E_RUNTIME_ERROR, "ensure nesting too deep");
         return mrb_nil_value();
     }
     ensure_stack[ensure_depth].body = (konpeito_callback_fn)body;
@@ -673,7 +685,7 @@ mrb_value rb_ensure(void *body, mrb_value data1, void *cleanup, mrb_value data2)
     ensure_stack[ensure_depth].cleanup = (konpeito_callback_fn)cleanup;
     ensure_stack[ensure_depth].data2 = data2;
     ensure_depth++;
-    mrb_value result = mrb_ensure(konpeito_mrb_state,
+    mrb_value result = mrb_ensure(mrb,
                                    ensure_body_wrapper, mrb_nil_value(),
                                    ensure_cleanup_wrapper, mrb_nil_value());
     ensure_depth--;
@@ -711,8 +723,9 @@ void rb_set_errinfo(mrb_value err) {
 /* CRuby: void rb_jump_tag(int state) */
 void rb_jump_tag(int state) {
     (void)state;
+    mrb_state *mrb = konpeito_mrb_state;
     /* In mruby, there's no direct equivalent. Raise a runtime error. */
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "rb_jump_tag called");
+    mrb_raise(mrb, E_RUNTIME_ERROR, "rb_jump_tag called");
 }
 
 /* CRuby: void rb_raise(VALUE exc_class, const char *fmt, ...) */
@@ -791,12 +804,13 @@ mrb_value rb_gv_set(const char *name, mrb_value val) {
 
 /* CRuby: VALUE rb_call_super(int argc, const VALUE *argv) */
 mrb_value rb_call_super(int argc, const mrb_value *argv) {
+    mrb_state *mrb = konpeito_mrb_state;
     /* mruby doesn't expose a C API for super calls from cfuncs.
      * The Konpeito compiler handles super by directly calling the parent
      * class method by its mangled name. This stub is a fallback. */
     (void)argc;
     (void)argv;
-    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR,
+    mrb_raise(mrb, E_RUNTIME_ERROR,
               "super call from C function is not supported in mruby target");
     return mrb_nil_value();
 }

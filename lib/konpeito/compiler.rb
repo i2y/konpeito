@@ -665,6 +665,11 @@ module Konpeito
     def ast_references_module?(node, name)
       return false unless node
 
+      # MergedAST doesn't have child_nodes — walk its statements instead
+      if node.is_a?(MergedAST)
+        return node.statements.body.any? { |child| ast_references_module?(child, name) }
+      end
+
       case node
       when Prism::ConstantReadNode
         return true if node.name.to_s == name

@@ -26,7 +26,7 @@ class CustomExceptionTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@output_dir, "#{name}.bundle"),
+      output_file: File.join(@output_dir, "#{name}#{SHARED_EXT}"),
       module_name: name
     )
 

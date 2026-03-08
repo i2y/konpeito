@@ -230,7 +230,7 @@ class ValueStructTest < Minitest::Test
   def compile_and_run(ruby_source, rbs_source, method_name, *args)
     rb_file = File.join(@temp_dir, "test.rb")
     rbs_file = File.join(@temp_dir, "types.rbs")
-    bundle_file = File.join(@temp_dir, "test.bundle")
+    bundle_file = File.join(@temp_dir, "test#{SHARED_EXT}")
 
     File.write(rb_file, ruby_source)
     File.write(rbs_file, rbs_source)

@@ -200,7 +200,7 @@ class SliceTest < Minitest::Test
   def compile_and_run(source, call_expr)
     @test_counter += 1
     source_file = File.join(@tmp_dir, "test_#{@test_counter}.rb")
-    output_file = File.join(@tmp_dir, "test_#{@test_counter}.bundle")
+    output_file = File.join(@tmp_dir, "test_#{@test_counter}#{SHARED_EXT}")
     rbs_file = File.join(@tmp_dir, "test_#{@test_counter}.rbs")
 
     File.write(source_file, source)

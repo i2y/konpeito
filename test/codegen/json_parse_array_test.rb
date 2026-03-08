@@ -18,7 +18,7 @@ class JSONParseArrayTest < Minitest::Test
     @test_count += 1
     source_path = File.join(@tmp_dir, "test#{@test_count}.rb")
     rbs_path = File.join(@tmp_dir, "test#{@test_count}.rbs")
-    output_path = File.join(@tmp_dir, "test#{@test_count}.bundle")
+    output_path = File.join(@tmp_dir, "test#{@test_count}#{SHARED_EXT}")
 
     File.write(source_path, source)
     File.write(rbs_path, rbs_source)

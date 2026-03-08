@@ -184,7 +184,7 @@ class HashIterationTest < Minitest::Test
 
   def compile_and_run(source, call_expr)
     source_file = File.join(@tmp_dir, "test.rb")
-    output_file = File.join(@tmp_dir, "test.bundle")
+    output_file = File.join(@tmp_dir, "test#{SHARED_EXT}")
 
     File.write(source_file, source)
 

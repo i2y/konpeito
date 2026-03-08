@@ -24,7 +24,7 @@ class LogicalOperatorsTest < Minitest::Test
     llvm_gen = Konpeito::Codegen::LLVMGenerator.new(module_name: name)
     llvm_gen.generate(hir)
 
-    output_file = File.join(@output_dir, "#{name}.bundle")
+    output_file = File.join(@output_dir, "#{name}#{SHARED_EXT}")
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
       output_file: output_file,

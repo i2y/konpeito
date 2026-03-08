@@ -280,7 +280,7 @@ class NativeMethodTest < Minitest::Test
     # Test CRuby backend generates TypedData code
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "vector_typed.bundle"),
+      output_file: File.join(@tmp_dir, "vector_typed#{SHARED_EXT}"),
       module_name: "vector_typed",
       rbs_loader: loader
     )
@@ -350,7 +350,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "point_test.bundle"),
+      output_file: File.join(@tmp_dir, "point_test#{SHARED_EXT}"),
       module_name: "point_test",
       rbs_loader: loader
     )
@@ -410,7 +410,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "node_test.bundle"),
+      output_file: File.join(@tmp_dir, "node_test#{SHARED_EXT}"),
       module_name: "node_test",
       rbs_loader: loader
     )
@@ -466,7 +466,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "entity_test.bundle"),
+      output_file: File.join(@tmp_dir, "entity_test#{SHARED_EXT}"),
       module_name: "entity_test",
       rbs_loader: loader
     )
@@ -539,7 +539,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "transform_test.bundle"),
+      output_file: File.join(@tmp_dir, "transform_test#{SHARED_EXT}"),
       module_name: "transform_test",
       rbs_loader: loader
     )
@@ -598,7 +598,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "particle_test.bundle"),
+      output_file: File.join(@tmp_dir, "particle_test#{SHARED_EXT}"),
       module_name: "particle_test",
       rbs_loader: loader
     )
@@ -651,7 +651,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "vectors_test.bundle"),
+      output_file: File.join(@tmp_dir, "vectors_test#{SHARED_EXT}"),
       module_name: "vectors_test",
       rbs_loader: loader
     )
@@ -750,7 +750,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       generator,
-      output_file: "shapes_test.bundle",
+      output_file: "shapes_test#{SHARED_EXT}",
       module_name: "shapes_test",
       rbs_loader: loader
     )
@@ -878,7 +878,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       generator,
-      output_file: "point_test.bundle",
+      output_file: "point_test#{SHARED_EXT}",
       module_name: "point_test",
       rbs_loader: loader
     )
@@ -969,7 +969,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       generator,
-      output_file: "calculator_test.bundle",
+      output_file: "calculator_test#{SHARED_EXT}",
       module_name: "calculator_test",
       rbs_loader: loader
     )
@@ -1042,7 +1042,7 @@ class NativeMethodTest < Minitest::Test
     # Test CRuby backend generates GC mark function and TypedData
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "person_gc.bundle"),
+      output_file: File.join(@tmp_dir, "person_gc#{SHARED_EXT}"),
       module_name: "person_gc",
       rbs_loader: loader
     )
@@ -1113,7 +1113,7 @@ class NativeMethodTest < Minitest::Test
 
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
-      output_file: File.join(@tmp_dir, "config_gc.bundle"),
+      output_file: File.join(@tmp_dir, "config_gc#{SHARED_EXT}"),
       module_name: "config_gc",
       rbs_loader: loader
     )

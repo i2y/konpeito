@@ -1,11 +1,8 @@
 # frozen_string_literal: true
 
-require "minitest/autorun"
+require_relative "../test_helper"
 require "tempfile"
 require "fileutils"
-
-$LOAD_PATH.unshift File.expand_path("../../lib", __dir__)
-require "konpeito"
 
 class NativeHashTest < Minitest::Test
   def setup
@@ -19,7 +16,7 @@ class NativeHashTest < Minitest::Test
   def compile_and_run(source, rbs, method_name, *args)
     source_path = File.join(@tmp_dir, "test.rb")
     rbs_path = File.join(@tmp_dir, "test.rbs")
-    output_path = File.join(@tmp_dir, "test.bundle")
+    output_path = File.join(@tmp_dir, "test#{SHARED_EXT}")
 
     File.write(source_path, source)
     File.write(rbs_path, rbs)

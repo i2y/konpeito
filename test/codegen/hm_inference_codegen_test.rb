@@ -34,7 +34,7 @@ class HMInferenceCodegenTest < Minitest::Test
     # Compile without RBS
     compiler = Konpeito::Compiler.new(
       source_file: rb_file,
-      output_file: File.join(@temp_dir, "hm_test.bundle"),
+      output_file: File.join(@temp_dir, "hm_test#{SHARED_EXT}"),
       format: :cruby_ext,
       verbose: false,
       rbs_paths: [],
@@ -63,7 +63,7 @@ class HMInferenceCodegenTest < Minitest::Test
 
     compiler = Konpeito::Compiler.new(
       source_file: rb_file,
-      output_file: File.join(@temp_dir, "multiply_test.bundle"),
+      output_file: File.join(@temp_dir, "multiply_test#{SHARED_EXT}"),
       format: :cruby_ext,
       verbose: false,
       rbs_paths: [],
@@ -95,7 +95,7 @@ class HMInferenceCodegenTest < Minitest::Test
 
     compiler = Konpeito::Compiler.new(
       source_file: rb_file,
-      output_file: File.join(@temp_dir, "float_test.bundle"),
+      output_file: File.join(@temp_dir, "float_test#{SHARED_EXT}"),
       format: :cruby_ext,
       verbose: false,
       rbs_paths: [],
@@ -127,7 +127,7 @@ class HMInferenceCodegenTest < Minitest::Test
 
     compiler = Konpeito::Compiler.new(
       source_file: rb_file,
-      output_file: File.join(@temp_dir, "compare_test.bundle"),
+      output_file: File.join(@temp_dir, "compare_test#{SHARED_EXT}"),
       format: :cruby_ext,
       verbose: false,
       rbs_paths: [],
@@ -165,7 +165,7 @@ class HMInferenceCodegenTest < Minitest::Test
 
     compiler = Konpeito::Compiler.new(
       source_file: rb_file,
-      output_file: File.join(@temp_dir, "loop_test.bundle"),
+      output_file: File.join(@temp_dir, "loop_test#{SHARED_EXT}"),
       format: :cruby_ext,
       verbose: false,
       rbs_paths: [],

@@ -129,7 +129,7 @@ class StdlibRequireTest < Minitest::Test
     llvm_gen = Konpeito::Codegen::LLVMGenerator.new(module_name: "test_stdlib")
     llvm_gen.generate(hir)
 
-    output_file = File.join(@output_dir, "test_stdlib.bundle")
+    output_file = File.join(@output_dir, "test_stdlib#{SHARED_EXT}")
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
       output_file: output_file,
@@ -163,7 +163,7 @@ class StdlibRequireTest < Minitest::Test
     llvm_gen = Konpeito::Codegen::LLVMGenerator.new(module_name: "test_no_stdlib")
     llvm_gen.generate(hir)
 
-    output_file = File.join(@output_dir, "test_no_stdlib.bundle")
+    output_file = File.join(@output_dir, "test_no_stdlib#{SHARED_EXT}")
     backend = Konpeito::Codegen::CRubyBackend.new(
       llvm_gen,
       output_file: output_file,
@@ -187,7 +187,7 @@ class StdlibRequireTest < Minitest::Test
       end
     RUBY
 
-    output_file = File.join(@output_dir, "json_integration.bundle")
+    output_file = File.join(@output_dir, "json_integration#{SHARED_EXT}")
 
     compiler = Konpeito::Compiler.new(
       source_file: source_file,

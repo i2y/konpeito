@@ -5,8 +5,7 @@ require "minitest/autorun"
 # Build the extension if needed (skip if native build fails on CI)
 JSON_NATIVE_AVAILABLE = begin
   json_dir = File.expand_path("../../lib/konpeito/stdlib/json", __dir__)
-  unless File.exist?(File.join(json_dir, "konpeito_json.bundle")) ||
-         File.exist?(File.join(json_dir, "konpeito_json.so"))
+  unless File.exist?(File.join(json_dir, "konpeito_json.#{RbConfig::CONFIG['DLEXT']}"))
     Dir.chdir(json_dir) do
       system("ruby extconf.rb > /dev/null 2>&1 && make > /dev/null 2>&1")
     end
@@ -14,7 +13,7 @@ JSON_NATIVE_AVAILABLE = begin
   $LOAD_PATH.unshift(json_dir)
   require "konpeito_json"
   true
-rescue Exception
+rescue LoadError, StandardError
   false
 end
 

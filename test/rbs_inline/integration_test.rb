@@ -25,7 +25,7 @@ class RBSInlineIntegrationTest < Minitest::Test
       end
     RUBY
 
-    output_file = File.join(@output_dir, "inline_demo.bundle")
+    output_file = File.join(@output_dir, "inline_demo#{SHARED_EXT}")
 
     # Compile with --inline option
     compiler = Konpeito::Compiler.new(
@@ -54,7 +54,7 @@ class RBSInlineIntegrationTest < Minitest::Test
       end
     RUBY
 
-    output_file = File.join(@output_dir, "no_magic.bundle")
+    output_file = File.join(@output_dir, "no_magic#{SHARED_EXT}")
 
     compiler = Konpeito::Compiler.new(
       source_file: source_file,

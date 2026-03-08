@@ -81,7 +81,7 @@ class SizedQueueTest < Minitest::Test
   def compile_and_run(source, method_name)
     @test_counter += 1
     source_file = File.join(@tmp_dir, "test_#{method_name}_#{@test_counter}.rb")
-    output_file = File.join(@tmp_dir, "test_#{method_name}_#{@test_counter}.bundle")
+    output_file = File.join(@tmp_dir, "test_#{method_name}_#{@test_counter}#{SHARED_EXT}")
 
     File.write(source_file, source)
 

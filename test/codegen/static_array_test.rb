@@ -121,7 +121,7 @@ class StaticArrayTest < Minitest::Test
     @test_counter += 1
     source_file = File.join(@tmp_dir, "test_#{@test_counter}.rb")
     rbs_file = File.join(@tmp_dir, "test_#{@test_counter}.rbs")
-    output_file = File.join(@tmp_dir, "test_#{@test_counter}.bundle")
+    output_file = File.join(@tmp_dir, "test_#{@test_counter}#{SHARED_EXT}")
 
     File.write(source_file, source)
 

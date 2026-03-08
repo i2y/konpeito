@@ -45,6 +45,7 @@ module Konpeito
       @cross_mruby_dir = cross_mruby_dir
       @cross_libs_dir = cross_libs_dir
       @output_file = output_file || default_output_file(target: target)
+      normalize_output_extension! if @output_file && target == :native
       @compile_stats = nil
       @_resolved_file_count = 0
       @_specialization_count = 0
@@ -530,6 +531,14 @@ module Konpeito
         else
           base
         end
+      end
+    end
+
+    def normalize_output_extension!
+      ext = File.extname(@output_file)
+      expected = Platform.shared_lib_extension
+      if (ext == ".bundle" || ext == ".so") && ext != expected
+        @output_file = @output_file.sub(/#{Regexp.escape(ext)}\z/, expected)
       end
     end
 

@@ -5,6 +5,19 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-03-09
+
+### Added
+- `THIRD_PARTY_NOTICES.md` — vendored code and linked library license summary
+- `vendor/yyjson/LICENSE` — MIT license file for vendored yyjson
+- mruby backend: auto-generate `<output>.LICENSES.txt` alongside standalone executables
+  - Always includes Konpeito (MIT) and mruby (MIT)
+  - Conditionally includes yyjson (MIT) when JSON stdlib is used
+  - Conditionally includes raylib (zlib) when raylib stdlib is used
+
+### Changed
+- `.gitignore`: allow `vendor/yyjson/LICENSE` to be tracked
+
 ## [0.4.0] - 2026-03-08
 
 ### Added
@@ -247,6 +260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.4.1]: https://github.com/i2y/konpeito/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/i2y/konpeito/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/i2y/konpeito/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/i2y/konpeito/compare/v0.2.4...v0.3.0

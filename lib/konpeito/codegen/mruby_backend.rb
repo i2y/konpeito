@@ -906,10 +906,51 @@ module Konpeito
         if @rbs_loader
           @rbs_loader.all_ffi_libraries.each do |lib_name|
             link_name = lib_name.sub(/^lib/, "")
-            flags << "-l#{link_name}"
+            # Prefer static library (.a) for standalone executables
+            static_lib = find_static_library(link_name)
+            if static_lib
+              flags << static_lib
+              # Add macOS framework dependencies for known libraries
+              flags.concat(macos_framework_flags(link_name)) if darwin?
+            else
+              flags << "-l#{link_name}"
+            end
           end
         end
         flags
+      end
+
+      def find_static_library(lib_name)
+        search_paths = []
+        search_paths << "/opt/homebrew/lib" if Dir.exist?("/opt/homebrew/lib")
+        search_paths << "/usr/local/lib" if Dir.exist?("/usr/local/lib")
+
+        search_paths.each do |dir|
+          path = File.join(dir, "lib#{lib_name}.a")
+          return path if File.exist?(path)
+        end
+        nil
+      end
+
+      def macos_framework_flags(lib_name)
+        # Known framework dependencies for popular libraries
+        case lib_name
+        when "raylib"
+          ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "OpenGL"]
+        when "SDL2", "sdl2"
+          ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "Carbon",
+           "-framework", "CoreAudio", "-framework", "AudioToolbox",
+           "-framework", "ForceFeedback", "-framework", "CoreVideo",
+           "-framework", "Metal", "-framework", "GameController"]
+        when "glfw3", "glfw"
+          ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "OpenGL"]
+        else
+          []
+        end
+      end
+
+      def darwin?
+        RbConfig::CONFIG["host_os"] =~ /darwin/
       end
 
       def ffi_include_flags

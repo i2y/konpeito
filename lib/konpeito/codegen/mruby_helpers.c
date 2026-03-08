@@ -41,6 +41,37 @@ mrb_state *konpeito_get_mrb_state(void) {
 }
 
 /* ================================================================
+ * Block stack for rb_yield / rb_block_given_p / rb_block_proc
+ *
+ * mruby requires explicit block values, unlike CRuby's implicit
+ * "current block" context. We maintain a stack of block values
+ * that wrapper functions push/pop around LLVM function calls.
+ * ================================================================ */
+
+#define KONPEITO_MAX_BLOCK_STACK 64
+static mrb_value konpeito_block_stack[KONPEITO_MAX_BLOCK_STACK];
+static int konpeito_block_stack_depth = 0;
+
+void konpeito_push_block(mrb_value block) {
+    if (konpeito_block_stack_depth < KONPEITO_MAX_BLOCK_STACK) {
+        konpeito_block_stack[konpeito_block_stack_depth++] = block;
+    }
+}
+
+void konpeito_pop_block(void) {
+    if (konpeito_block_stack_depth > 0) {
+        konpeito_block_stack_depth--;
+    }
+}
+
+static mrb_value konpeito_get_block(void) {
+    if (konpeito_block_stack_depth > 0) {
+        return konpeito_block_stack[konpeito_block_stack_depth - 1];
+    }
+    return mrb_nil_value();
+}
+
+/* ================================================================
  * mruby constant values (Qnil, Qtrue, Qfalse, Qundef equivalents)
  * These are stored as mrb_value but exposed as uint64_t (VALUE) to
  * match CRuby's convention. Initialized by konpeito_mruby_init_constants().
@@ -376,60 +407,103 @@ mrb_value rb_obj_class(mrb_value obj) {
 
 /* CRuby: VALUE rb_yield(VALUE val) */
 mrb_value rb_yield(mrb_value val) {
-    /* In mruby, yield requires mrb_state and a block value.
-     * This is a compatibility shim - actual block passing is handled
-     * differently in mruby (via mrb_get_args with &block). */
-    return mrb_yield(konpeito_mrb_state, val, mrb_nil_value());
+    mrb_value block = konpeito_get_block();
+    if (mrb_nil_p(block)) {
+        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "no block given (yield)");
+        return mrb_nil_value();
+    }
+    return mrb_funcall(konpeito_mrb_state, block, "call", 1, val);
 }
 
 /* CRuby: VALUE rb_yield_values2(int argc, const VALUE *argv) */
 mrb_value rb_yield_values2(int argc, const mrb_value *argv) {
-    /* Use mrb_yield_argv for multi-value yield */
-    return mrb_yield_argv(konpeito_mrb_state, mrb_nil_value(), argc, argv);
+    mrb_value block = konpeito_get_block();
+    if (mrb_nil_p(block)) {
+        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "no block given (yield)");
+        return mrb_nil_value();
+    }
+    mrb_sym call_sym = mrb_intern_cstr(konpeito_mrb_state, "call");
+    return mrb_funcall_argv(konpeito_mrb_state, block, call_sym, argc, argv);
 }
 
 /* CRuby: int rb_block_given_p(void) */
 int rb_block_given_p(void) {
-    /* In mruby, block handling is different - blocks are passed via mrb_get_args.
-     * This stub always returns 0; actual block detection is done differently. */
-    return 0;
+    mrb_value block = konpeito_get_block();
+    return !mrb_nil_p(block);
 }
 
 /* CRuby: VALUE rb_block_proc(void) */
 mrb_value rb_block_proc(void) {
-    /* Stub - block capturing works differently in mruby */
-    return mrb_nil_value();
+    return konpeito_get_block();
+}
+
+/* ================================================================
+ * rb_block_call / rb_proc_new callback adapter
+ *
+ * CRuby callbacks have signature:
+ *   VALUE func(VALUE yielded_arg, VALUE data2, int argc, VALUE *argv)
+ *
+ * mruby cfunc procs have signature:
+ *   mrb_value func(mrb_state *mrb, mrb_value self)
+ *
+ * We bridge the gap using mrb_proc_new_cfunc_with_env() which stores
+ * the original callback pointer and data in the proc's environment.
+ * ================================================================ */
+
+typedef mrb_value (*cruby_block_callback_t)(mrb_value, mrb_value, int, const mrb_value*);
+
+/* Adapter: called as mruby cfunc, delegates to CRuby-style callback */
+static mrb_value konpeito_cfunc_adapter(mrb_state *mrb, mrb_value self) {
+    mrb_value cb_ptr_val = mrb_proc_cfunc_env_get(mrb, 0);
+    mrb_value data = mrb_proc_cfunc_env_get(mrb, 1);
+    void *cb_ptr = mrb_cptr(cb_ptr_val);
+    cruby_block_callback_t cb = (cruby_block_callback_t)cb_ptr;
+
+    mrb_value *argv;
+    mrb_int argc;
+    mrb_get_args(mrb, "*", &argv, &argc);
+
+    mrb_value yielded = (argc > 0) ? argv[0] : mrb_nil_value();
+    return cb(yielded, data, (int)argc, argv);
 }
 
 /* CRuby: VALUE rb_block_call(VALUE obj, ID mid, int argc, const VALUE *argv,
  *                            rb_block_call_func_t proc, VALUE data2) */
 mrb_value rb_block_call(mrb_value obj, mrb_sym mid, int argc, const mrb_value *argv,
                         void *proc, mrb_value data2) {
-    /* mruby has no rb_block_call equivalent.
-     * For inlined loops (each, map, etc.) this isn't called.
-     * For non-inlined cases, fall back to mrb_funcall. */
-    (void)proc;
-    (void)data2;
-    return mrb_funcall_argv(konpeito_mrb_state, obj, mid, argc, argv);
+    if (!proc) {
+        return mrb_funcall_argv(konpeito_mrb_state, obj, mid, argc, argv);
+    }
+
+    /* Create a proc that wraps the CRuby callback via environment */
+    mrb_value env[2];
+    env[0] = mrb_cptr_value(konpeito_mrb_state, proc);
+    env[1] = data2;
+    struct RProc *block_proc = mrb_proc_new_cfunc_with_env(
+        konpeito_mrb_state, konpeito_cfunc_adapter, 2, env);
+    mrb_value block_val = mrb_obj_value(block_proc);
+
+    return mrb_funcall_with_block(konpeito_mrb_state, obj, mid, argc, argv, block_val);
 }
 
 /* CRuby: VALUE rb_block_call_kw(...) */
 mrb_value rb_block_call_kw(mrb_value obj, mrb_sym mid, int argc, const mrb_value *argv,
                            void *proc, mrb_value data2, int kw_splat) {
-    (void)proc;
-    (void)data2;
     (void)kw_splat;
-    return mrb_funcall_argv(konpeito_mrb_state, obj, mid, argc, argv);
+    return rb_block_call(obj, mid, argc, argv, proc, data2);
 }
 
 /* --- Proc --- */
 
 /* CRuby: VALUE rb_proc_new(rb_block_call_func_t func, VALUE val) */
 mrb_value rb_proc_new(void *func, mrb_value val) {
-    /* mruby uses mrb_proc_new_cfunc which has a different callback signature.
-     * For now, create a proc that wraps the function. */
-    (void)val;
-    struct RProc *proc = mrb_proc_new_cfunc(konpeito_mrb_state, (mrb_func_t)func);
+    /* Use mrb_proc_new_cfunc_with_env to store callback + data in proc env.
+     * The adapter konpeito_cfunc_adapter reads them back when called. */
+    mrb_value env[2];
+    env[0] = mrb_cptr_value(konpeito_mrb_state, func);
+    env[1] = val;
+    struct RProc *proc = mrb_proc_new_cfunc_with_env(
+        konpeito_mrb_state, konpeito_cfunc_adapter, 2, env);
     return mrb_obj_value(proc);
 }
 
@@ -444,12 +518,20 @@ mrb_value rb_proc_call(mrb_value proc, mrb_value args) {
 
 /* CRuby: VALUE rb_fiber_new(rb_block_call_func_t func, VALUE obj) */
 mrb_value rb_fiber_new(void *func, mrb_value obj) {
-    (void)obj;
-    /* Create a proc from the function, then create a fiber from the proc */
-    struct RProc *proc = mrb_proc_new_cfunc(konpeito_mrb_state, (mrb_func_t)func);
-    mrb_value fiber_class = mrb_obj_value(mrb_class_get(konpeito_mrb_state, "Fiber"));
+    /* Create a proc via env-based adapter (same as rb_proc_new),
+     * then create a Fiber from it. */
+    mrb_value env[2];
+    env[0] = mrb_cptr_value(konpeito_mrb_state, func);
+    env[1] = obj;
+    struct RProc *proc = mrb_proc_new_cfunc_with_env(
+        konpeito_mrb_state, konpeito_cfunc_adapter, 2, env);
     mrb_value proc_val = mrb_obj_value(proc);
-    return mrb_funcall(konpeito_mrb_state, fiber_class, "new", 1, proc_val);
+
+    /* Fiber.new(&proc) */
+    mrb_value fiber_class = mrb_obj_value(mrb_class_get(konpeito_mrb_state, "Fiber"));
+    mrb_sym new_sym = mrb_intern_cstr(konpeito_mrb_state, "new");
+    return mrb_funcall_with_block(konpeito_mrb_state, fiber_class, new_sym,
+                                  0, NULL, proc_val);
 }
 
 /* CRuby: VALUE rb_fiber_resume(VALUE fiber, int argc, const VALUE *argv) */
@@ -509,69 +591,93 @@ mrb_value rb_mutex_unlock(mrb_value mutex) {
 
 /* --- Exception handling --- */
 
-/* CRuby: VALUE rb_rescue2(VALUE (*body)(VALUE), VALUE data1,
- *                         VALUE (*handler)(VALUE, VALUE), VALUE data2, ...) */
-/* Note: CRuby's rb_rescue2 is variadic (exception class list terminated by 0).
- * mruby's mrb_rescue catches all exceptions. We ignore the exception class list. */
-typedef mrb_value (*rescue_body_fn)(mrb_state *, mrb_value);
-typedef mrb_value (*rescue_handler_fn)(mrb_state *, mrb_value);
-
-/* For the CRuby-compatible interface, we need adapter functions since
+/* Stack-based rescue/ensure adapters for proper nesting support.
  * CRuby callbacks have signature VALUE(*)(VALUE) while mruby has
- * mrb_value(*)(mrb_state*, mrb_value). */
-static rescue_body_fn _rescue_body_adapter;
-static mrb_value _rescue_data1;
-static rescue_handler_fn _rescue_handler_adapter;
-static mrb_value _rescue_data2;
+ * mrb_value(*)(mrb_state*, mrb_value). We use a stack since
+ * begin/rescue blocks can be nested. */
+
+typedef mrb_value (*konpeito_callback_fn)(mrb_state *, mrb_value);
+
+#define KONPEITO_MAX_RESCUE_STACK 32
+
+/* Rescue stack */
+static struct {
+    konpeito_callback_fn body;
+    mrb_value data1;
+    konpeito_callback_fn handler;
+    mrb_value data2;
+} rescue_stack[KONPEITO_MAX_RESCUE_STACK];
+static int rescue_depth = 0;
 
 static mrb_value rescue_body_wrapper(mrb_state *mrb, mrb_value data) {
-    (void)mrb;
     (void)data;
-    return _rescue_body_adapter(konpeito_mrb_state, _rescue_data1);
+    int idx = rescue_depth - 1;
+    return rescue_stack[idx].body(mrb, rescue_stack[idx].data1);
 }
 
 static mrb_value rescue_handler_wrapper(mrb_state *mrb, mrb_value data) {
-    (void)mrb;
     (void)data;
-    return _rescue_handler_adapter(konpeito_mrb_state, _rescue_data2);
+    int idx = rescue_depth - 1;
+    return rescue_stack[idx].handler(mrb, rescue_stack[idx].data2);
 }
 
+/* CRuby: VALUE rb_rescue2(VALUE (*body)(VALUE), VALUE data1,
+ *                         VALUE (*handler)(VALUE, VALUE), VALUE data2, ...) */
 mrb_value rb_rescue2(void *body, mrb_value data1, void *handler, mrb_value data2, ...) {
-    _rescue_body_adapter = (rescue_body_fn)body;
-    _rescue_data1 = data1;
-    _rescue_handler_adapter = (rescue_handler_fn)handler;
-    _rescue_data2 = data2;
-    return mrb_rescue(konpeito_mrb_state, rescue_body_wrapper, mrb_nil_value(),
-                      rescue_handler_wrapper, mrb_nil_value());
+    if (rescue_depth >= KONPEITO_MAX_RESCUE_STACK) {
+        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "rescue nesting too deep");
+        return mrb_nil_value();
+    }
+    rescue_stack[rescue_depth].body = (konpeito_callback_fn)body;
+    rescue_stack[rescue_depth].data1 = data1;
+    rescue_stack[rescue_depth].handler = (konpeito_callback_fn)handler;
+    rescue_stack[rescue_depth].data2 = data2;
+    rescue_depth++;
+    mrb_value result = mrb_rescue(konpeito_mrb_state,
+                                   rescue_body_wrapper, mrb_nil_value(),
+                                   rescue_handler_wrapper, mrb_nil_value());
+    rescue_depth--;
+    return result;
+}
+
+/* Ensure stack */
+static struct {
+    konpeito_callback_fn body;
+    mrb_value data1;
+    konpeito_callback_fn cleanup;
+    mrb_value data2;
+} ensure_stack[KONPEITO_MAX_RESCUE_STACK];
+static int ensure_depth = 0;
+
+static mrb_value ensure_body_wrapper(mrb_state *mrb, mrb_value data) {
+    (void)data;
+    int idx = ensure_depth - 1;
+    return ensure_stack[idx].body(mrb, ensure_stack[idx].data1);
+}
+
+static mrb_value ensure_cleanup_wrapper(mrb_state *mrb, mrb_value data) {
+    (void)data;
+    int idx = ensure_depth - 1;
+    return ensure_stack[idx].cleanup(mrb, ensure_stack[idx].data2);
 }
 
 /* CRuby: VALUE rb_ensure(VALUE (*body)(VALUE), VALUE data1,
  *                        VALUE (*ensure_fn)(VALUE), VALUE data2) */
-typedef mrb_value (*ensure_fn_t)(mrb_state *, mrb_value);
-static ensure_fn_t _ensure_body;
-static mrb_value _ensure_data1;
-static ensure_fn_t _ensure_cleanup;
-static mrb_value _ensure_data2;
-
-static mrb_value ensure_body_wrapper(mrb_state *mrb, mrb_value data) {
-    (void)mrb;
-    (void)data;
-    return _ensure_body(konpeito_mrb_state, _ensure_data1);
-}
-
-static mrb_value ensure_cleanup_wrapper(mrb_state *mrb, mrb_value data) {
-    (void)mrb;
-    (void)data;
-    return _ensure_cleanup(konpeito_mrb_state, _ensure_data2);
-}
-
 mrb_value rb_ensure(void *body, mrb_value data1, void *cleanup, mrb_value data2) {
-    _ensure_body = (ensure_fn_t)body;
-    _ensure_data1 = data1;
-    _ensure_cleanup = (ensure_fn_t)cleanup;
-    _ensure_data2 = data2;
-    return mrb_ensure(konpeito_mrb_state, ensure_body_wrapper, mrb_nil_value(),
-                      ensure_cleanup_wrapper, mrb_nil_value());
+    if (ensure_depth >= KONPEITO_MAX_RESCUE_STACK) {
+        mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR, "ensure nesting too deep");
+        return mrb_nil_value();
+    }
+    ensure_stack[ensure_depth].body = (konpeito_callback_fn)body;
+    ensure_stack[ensure_depth].data1 = data1;
+    ensure_stack[ensure_depth].cleanup = (konpeito_callback_fn)cleanup;
+    ensure_stack[ensure_depth].data2 = data2;
+    ensure_depth++;
+    mrb_value result = mrb_ensure(konpeito_mrb_state,
+                                   ensure_body_wrapper, mrb_nil_value(),
+                                   ensure_cleanup_wrapper, mrb_nil_value());
+    ensure_depth--;
+    return result;
 }
 
 /* CRuby: VALUE rb_protect(VALUE (*func)(VALUE), VALUE arg, int *state) */
@@ -685,9 +791,14 @@ mrb_value rb_gv_set(const char *name, mrb_value val) {
 
 /* CRuby: VALUE rb_call_super(int argc, const VALUE *argv) */
 mrb_value rb_call_super(int argc, const mrb_value *argv) {
-    /* mruby doesn't have rb_call_super; use mrb_funcall with "super" */
-    return mrb_funcall_argv(konpeito_mrb_state, mrb_top_self(konpeito_mrb_state),
-                           mrb_intern_cstr(konpeito_mrb_state, "super"), argc, argv);
+    /* mruby doesn't expose a C API for super calls from cfuncs.
+     * The Konpeito compiler handles super by directly calling the parent
+     * class method by its mangled name. This stub is a fallback. */
+    (void)argc;
+    (void)argv;
+    mrb_raise(konpeito_mrb_state, E_RUNTIME_ERROR,
+              "super call from C function is not supported in mruby target");
+    return mrb_nil_value();
 }
 
 /* --- Type checking --- */

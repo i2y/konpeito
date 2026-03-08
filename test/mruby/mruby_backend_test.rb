@@ -102,6 +102,78 @@ class MRubyBackendTest < Minitest::Test
     assert_includes ir, "konpeito_qnil"
   end
 
+  # Test that init code declares block stack functions
+  def test_init_code_declares_block_stack
+    gen = create_mruby_generator
+    output_file = File.join(@test_dir, "test_block")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_block"
+    )
+    init_code = backend.send(:generate_init_c_code)
+    assert_includes init_code, "konpeito_push_block"
+    assert_includes init_code, "konpeito_pop_block"
+  end
+
+  # Test that wrapper functions capture blocks via mrb_get_args with "&"
+  def test_wrapper_captures_block
+    gen = create_mruby_generator_with_method
+
+    output_file = File.join(@test_dir, "test_wrapper")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_wrapper"
+    )
+
+    init_code = backend.send(:generate_init_c_code)
+    # Non-variadic wrappers should capture block
+    assert_includes init_code, "konpeito_push_block(_block)"
+    assert_includes init_code, "konpeito_pop_block()"
+  end
+
+  # Test that LLVM IR declares block-related CRuby functions
+  def test_mruby_ir_declares_block_functions
+    gen = create_mruby_generator
+    ir = gen.to_ir
+
+    assert_includes ir, "rb_yield"
+    assert_includes ir, "rb_block_given_p"
+    assert_includes ir, "rb_block_proc"
+    assert_includes ir, "rb_block_call"
+  end
+
+  # Test that LLVM IR declares Fiber-related CRuby functions
+  def test_mruby_ir_declares_fiber_functions
+    gen = create_mruby_generator
+    ir = gen.to_ir
+
+    assert_includes ir, "rb_fiber_new"
+    assert_includes ir, "rb_fiber_resume"
+    assert_includes ir, "rb_fiber_yield"
+  end
+
+  # Test that LLVM IR declares Proc-related function
+  def test_mruby_ir_declares_proc_functions
+    gen = create_mruby_generator
+    ir = gen.to_ir
+
+    assert_includes ir, "rb_proc_new"
+  end
+
+  # Test that LLVM IR declares exception-related functions
+  def test_mruby_ir_declares_exception_functions
+    gen = create_mruby_generator
+    ir = gen.to_ir
+
+    assert_includes ir, "rb_rescue2"
+    assert_includes ir, "rb_ensure"
+    assert_includes ir, "rb_raise"
+    assert_includes ir, "rb_errinfo"
+    assert_includes ir, "rb_set_errinfo"
+  end
+
   # Test that CRuby backend still works after changes (regression)
   def test_cruby_backend_unaffected
     gen = Konpeito::Codegen::LLVMGenerator.new(
@@ -150,5 +222,58 @@ class MRubyBackendTest < Minitest::Test
       classes: [],
       modules: []
     )
+  end
+
+  # Create a generator with a class that has a method (for wrapper generation tests)
+  def create_mruby_generator_with_method
+    gen = Konpeito::Codegen::LLVMGenerator.new(
+      module_name: "test_mruby_method",
+      runtime: :mruby
+    )
+
+    # Create a class with a method
+    greet_block = Konpeito::HIR::BasicBlock.new(label: "entry")
+    greet_block.set_terminator(Konpeito::HIR::Return.new(
+      value: Konpeito::HIR::NilLit.new(result_var: "t1")
+    ))
+
+    greet_func = Konpeito::HIR::Function.new(
+      name: "greet",
+      params: [
+        Konpeito::HIR::Param.new(name: "self"),
+        Konpeito::HIR::Param.new(name: "name")
+      ],
+      body: [greet_block],
+      return_type: nil,
+      owner_class: "Greeter"
+    )
+
+    class_def = Konpeito::HIR::ClassDef.new(
+      name: "Greeter",
+      superclass: nil,
+      method_names: ["greet"],
+      included_modules: []
+    )
+
+    main_block = Konpeito::HIR::BasicBlock.new(label: "entry")
+    main_block.set_terminator(Konpeito::HIR::Return.new(
+      value: Konpeito::HIR::NilLit.new(result_var: "t0")
+    ))
+
+    main_func = Konpeito::HIR::Function.new(
+      name: "__main__",
+      params: [Konpeito::HIR::Param.new(name: "self")],
+      body: [main_block],
+      return_type: nil
+    )
+
+    hir = Konpeito::HIR::Program.new(
+      functions: [greet_func, main_func],
+      classes: [class_def],
+      modules: []
+    )
+
+    gen.generate(hir)
+    gen
   end
 end

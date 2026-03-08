@@ -89,6 +89,10 @@ module Konpeito
         lines << "/* Global mrb_state pointer (referenced by LLVM-generated code) */"
         lines << "extern mrb_state *konpeito_mrb_state;"
         lines << ""
+        lines << "/* Block stack for rb_yield/rb_block_given_p support */"
+        lines << "extern void konpeito_push_block(mrb_value block);"
+        lines << "extern void konpeito_pop_block(void);"
+        lines << ""
 
         # Collect NativeClasses from RBS loader
         native_classes = @rbs_loader&.native_classes || {}
@@ -384,30 +388,46 @@ module Konpeito
         lines.join("\n")
       end
 
-      # Generate mrb_func_t wrapper that calls the LLVM-generated function
+      # Generate mrb_func_t wrapper that calls the LLVM-generated function.
+      # All wrappers capture the block argument so rb_yield/rb_block_given_p
+      # work correctly via the konpeito_push_block/konpeito_pop_block mechanism.
       def generate_mruby_method_wrapper(mangled_name, llvm_func)
         lines = []
         wrapper_name = "mrb_wrap_#{mangled_name}"
 
         if llvm_generator.variadic_functions[mangled_name]
-          # Variadic function: already has (mrb_state*, mrb_value self) signature
+          # Variadic function: already has (mrb_state*, mrb_value self) signature.
+          # Capture block before delegating.
           lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
-          lines << "    return #{mangled_name}(mrb, self);"
+          lines << "    mrb_value _block = mrb_nil_value();"
+          lines << "    mrb_get_args(mrb, \"|&\", &_block);"
+          lines << "    konpeito_push_block(_block);"
+          lines << "    mrb_value _result = #{mangled_name}(mrb, self);"
+          lines << "    konpeito_pop_block();"
+          lines << "    return _result;"
           lines << "}"
         else
           arity = llvm_func.params.size - 1  # Subtract self
 
           lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
           if arity > 0
-            lines << "    mrb_value #{(0...arity).map { |i| "a#{i}" }.join(', ')};"
-            format_str = "o" * arity
-            args_list = (0...arity).map { |i| "&a#{i}" }.join(", ")
+            lines << "    mrb_value #{(0...arity).map { |i| "a#{i}" }.join(', ')}, _block;"
+            format_str = "o" * arity + "&"
+            args_list = (0...arity).map { |i| "&a#{i}" }.join(", ") + ", &_block"
             lines << "    mrb_get_args(mrb, \"#{format_str}\", #{args_list});"
-            call_args = (["self"] + (0...arity).map { |i| "a#{i}" }).join(", ")
-            lines << "    return #{mangled_name}(#{call_args});"
           else
-            lines << "    return #{mangled_name}(self);"
+            lines << "    mrb_value _block;"
+            lines << "    mrb_get_args(mrb, \"&\", &_block);"
           end
+          lines << "    konpeito_push_block(_block);"
+          if arity > 0
+            call_args = (["self"] + (0...arity).map { |i| "a#{i}" }).join(", ")
+          else
+            call_args = "self"
+          end
+          lines << "    mrb_value _result = #{mangled_name}(#{call_args});"
+          lines << "    konpeito_pop_block();"
+          lines << "    return _result;"
           lines << "}"
         end
 

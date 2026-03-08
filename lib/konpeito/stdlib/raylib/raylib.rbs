@@ -1,0 +1,375 @@
+# Konpeito stdlib: Raylib bindings
+#
+# Usage:
+#   konpeito build --target mruby game.rb
+#   konpeito run --target mruby game.rb
+#
+# Colors are packed RGBA integers. Use Raylib.color_* methods or
+# Raylib.color_new(r, g, b, a) for custom colors.
+#
+# Key/mouse button constants are accessed via Raylib.key_* / Raylib.mouse_*.
+
+%a{ffi: "raylib"}
+module Raylib
+  # ── Window Management ──
+
+  %a{cfunc: "konpeito_init_window"}
+  def self.init_window: (Integer w, Integer h, String title) -> void
+
+  %a{cfunc: "konpeito_close_window"}
+  def self.close_window: () -> void
+
+  %a{cfunc: "konpeito_window_should_close"}
+  def self.window_should_close: () -> Integer
+
+  %a{cfunc: "konpeito_set_target_fps"}
+  def self.set_target_fps: (Integer fps) -> void
+
+  %a{cfunc: "konpeito_get_frame_time"}
+  def self.get_frame_time: () -> Float
+
+  %a{cfunc: "konpeito_get_time"}
+  def self.get_time: () -> Float
+
+  %a{cfunc: "konpeito_get_screen_width"}
+  def self.get_screen_width: () -> Integer
+
+  %a{cfunc: "konpeito_get_screen_height"}
+  def self.get_screen_height: () -> Integer
+
+  %a{cfunc: "konpeito_set_window_title"}
+  def self.set_window_title: (String title) -> void
+
+  %a{cfunc: "konpeito_set_window_size"}
+  def self.set_window_size: (Integer w, Integer h) -> void
+
+  %a{cfunc: "konpeito_is_window_focused"}
+  def self.window_focused?: () -> Integer
+
+  %a{cfunc: "konpeito_is_window_resized"}
+  def self.window_resized?: () -> Integer
+
+  %a{cfunc: "konpeito_toggle_fullscreen"}
+  def self.toggle_fullscreen: () -> void
+
+  %a{cfunc: "konpeito_get_fps"}
+  def self.get_fps: () -> Integer
+
+  # ── Drawing — Core ──
+
+  %a{cfunc: "konpeito_begin_drawing"}
+  def self.begin_drawing: () -> void
+
+  %a{cfunc: "konpeito_end_drawing"}
+  def self.end_drawing: () -> void
+
+  %a{cfunc: "konpeito_clear_background"}
+  def self.clear_background: (Integer color) -> void
+
+  # ── Drawing — Shapes ──
+
+  %a{cfunc: "konpeito_draw_rectangle"}
+  def self.draw_rectangle: (Integer x, Integer y, Integer w, Integer h, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_rectangle_lines"}
+  def self.draw_rectangle_lines: (Integer x, Integer y, Integer w, Integer h, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_circle"}
+  def self.draw_circle: (Integer cx, Integer cy, Float radius, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_circle_lines"}
+  def self.draw_circle_lines: (Integer cx, Integer cy, Float radius, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_line"}
+  def self.draw_line: (Integer x1, Integer y1, Integer x2, Integer y2, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_line_ex"}
+  def self.draw_line_ex: (Float x1, Float y1, Float x2, Float y2, Float thick, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_triangle"}
+  def self.draw_triangle: (Float x1, Float y1, Float x2, Float y2, Float x3, Float y3, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_pixel"}
+  def self.draw_pixel: (Integer x, Integer y, Integer color) -> void
+
+  # ── Drawing — Text ──
+
+  %a{cfunc: "konpeito_draw_text"}
+  def self.draw_text: (String text, Integer x, Integer y, Integer size, Integer color) -> void
+
+  %a{cfunc: "konpeito_measure_text"}
+  def self.measure_text: (String text, Integer size) -> Integer
+
+  # ── Input — Keyboard ──
+
+  %a{cfunc: "konpeito_is_key_down"}
+  def self.key_down?: (Integer key) -> Integer
+
+  %a{cfunc: "konpeito_is_key_pressed"}
+  def self.key_pressed?: (Integer key) -> Integer
+
+  %a{cfunc: "konpeito_is_key_released"}
+  def self.key_released?: (Integer key) -> Integer
+
+  %a{cfunc: "konpeito_is_key_up"}
+  def self.key_up?: (Integer key) -> Integer
+
+  %a{cfunc: "konpeito_get_key_pressed"}
+  def self.get_key_pressed: () -> Integer
+
+  %a{cfunc: "konpeito_get_char_pressed"}
+  def self.get_char_pressed: () -> Integer
+
+  # ── Input — Mouse ──
+
+  %a{cfunc: "konpeito_get_mouse_x"}
+  def self.get_mouse_x: () -> Integer
+
+  %a{cfunc: "konpeito_get_mouse_y"}
+  def self.get_mouse_y: () -> Integer
+
+  %a{cfunc: "konpeito_is_mouse_button_pressed"}
+  def self.mouse_button_pressed?: (Integer btn) -> Integer
+
+  %a{cfunc: "konpeito_is_mouse_button_down"}
+  def self.mouse_button_down?: (Integer btn) -> Integer
+
+  %a{cfunc: "konpeito_is_mouse_button_released"}
+  def self.mouse_button_released?: (Integer btn) -> Integer
+
+  %a{cfunc: "konpeito_get_mouse_wheel_move"}
+  def self.get_mouse_wheel_move: () -> Float
+
+  # ── Color Constants ──
+
+  %a{cfunc: "konpeito_color_white"}
+  def self.color_white: () -> Integer
+
+  %a{cfunc: "konpeito_color_black"}
+  def self.color_black: () -> Integer
+
+  %a{cfunc: "konpeito_color_red"}
+  def self.color_red: () -> Integer
+
+  %a{cfunc: "konpeito_color_green"}
+  def self.color_green: () -> Integer
+
+  %a{cfunc: "konpeito_color_blue"}
+  def self.color_blue: () -> Integer
+
+  %a{cfunc: "konpeito_color_yellow"}
+  def self.color_yellow: () -> Integer
+
+  %a{cfunc: "konpeito_color_orange"}
+  def self.color_orange: () -> Integer
+
+  %a{cfunc: "konpeito_color_pink"}
+  def self.color_pink: () -> Integer
+
+  %a{cfunc: "konpeito_color_purple"}
+  def self.color_purple: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkgray"}
+  def self.color_darkgray: () -> Integer
+
+  %a{cfunc: "konpeito_color_lightgray"}
+  def self.color_lightgray: () -> Integer
+
+  %a{cfunc: "konpeito_color_gray"}
+  def self.color_gray: () -> Integer
+
+  %a{cfunc: "konpeito_color_raywhite"}
+  def self.color_raywhite: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkblue"}
+  def self.color_darkblue: () -> Integer
+
+  %a{cfunc: "konpeito_color_skyblue"}
+  def self.color_skyblue: () -> Integer
+
+  %a{cfunc: "konpeito_color_lime"}
+  def self.color_lime: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkgreen"}
+  def self.color_darkgreen: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkpurple"}
+  def self.color_darkpurple: () -> Integer
+
+  %a{cfunc: "konpeito_color_violet"}
+  def self.color_violet: () -> Integer
+
+  %a{cfunc: "konpeito_color_brown"}
+  def self.color_brown: () -> Integer
+
+  %a{cfunc: "konpeito_color_darkbrown"}
+  def self.color_darkbrown: () -> Integer
+
+  %a{cfunc: "konpeito_color_beige"}
+  def self.color_beige: () -> Integer
+
+  %a{cfunc: "konpeito_color_maroon"}
+  def self.color_maroon: () -> Integer
+
+  %a{cfunc: "konpeito_color_gold"}
+  def self.color_gold: () -> Integer
+
+  %a{cfunc: "konpeito_color_magenta"}
+  def self.color_magenta: () -> Integer
+
+  %a{cfunc: "konpeito_color_blank"}
+  def self.color_blank: () -> Integer
+
+  %a{cfunc: "konpeito_color_new"}
+  def self.color_new: (Integer r, Integer g, Integer b, Integer a) -> Integer
+
+  %a{cfunc: "konpeito_color_alpha"}
+  def self.color_alpha: (Integer color, Float alpha) -> Integer
+
+  # ── Key Constants ──
+
+  %a{cfunc: "konpeito_key_right"}
+  def self.key_right: () -> Integer
+
+  %a{cfunc: "konpeito_key_left"}
+  def self.key_left: () -> Integer
+
+  %a{cfunc: "konpeito_key_up"}
+  def self.key_up: () -> Integer
+
+  %a{cfunc: "konpeito_key_down"}
+  def self.key_down: () -> Integer
+
+  %a{cfunc: "konpeito_key_space"}
+  def self.key_space: () -> Integer
+
+  %a{cfunc: "konpeito_key_enter"}
+  def self.key_enter: () -> Integer
+
+  %a{cfunc: "konpeito_key_escape"}
+  def self.key_escape: () -> Integer
+
+  %a{cfunc: "konpeito_key_a"}
+  def self.key_a: () -> Integer
+
+  %a{cfunc: "konpeito_key_b"}
+  def self.key_b: () -> Integer
+
+  %a{cfunc: "konpeito_key_c"}
+  def self.key_c: () -> Integer
+
+  %a{cfunc: "konpeito_key_d"}
+  def self.key_d: () -> Integer
+
+  %a{cfunc: "konpeito_key_e"}
+  def self.key_e: () -> Integer
+
+  %a{cfunc: "konpeito_key_f"}
+  def self.key_f: () -> Integer
+
+  %a{cfunc: "konpeito_key_g"}
+  def self.key_g: () -> Integer
+
+  %a{cfunc: "konpeito_key_h"}
+  def self.key_h: () -> Integer
+
+  %a{cfunc: "konpeito_key_i"}
+  def self.key_i: () -> Integer
+
+  %a{cfunc: "konpeito_key_j"}
+  def self.key_j: () -> Integer
+
+  %a{cfunc: "konpeito_key_k"}
+  def self.key_k: () -> Integer
+
+  %a{cfunc: "konpeito_key_l"}
+  def self.key_l: () -> Integer
+
+  %a{cfunc: "konpeito_key_m"}
+  def self.key_m: () -> Integer
+
+  %a{cfunc: "konpeito_key_n"}
+  def self.key_n: () -> Integer
+
+  %a{cfunc: "konpeito_key_o"}
+  def self.key_o: () -> Integer
+
+  %a{cfunc: "konpeito_key_p"}
+  def self.key_p: () -> Integer
+
+  %a{cfunc: "konpeito_key_q"}
+  def self.key_q: () -> Integer
+
+  %a{cfunc: "konpeito_key_r"}
+  def self.key_r: () -> Integer
+
+  %a{cfunc: "konpeito_key_s"}
+  def self.key_s: () -> Integer
+
+  %a{cfunc: "konpeito_key_t"}
+  def self.key_t: () -> Integer
+
+  %a{cfunc: "konpeito_key_u"}
+  def self.key_u: () -> Integer
+
+  %a{cfunc: "konpeito_key_v"}
+  def self.key_v: () -> Integer
+
+  %a{cfunc: "konpeito_key_w"}
+  def self.key_w: () -> Integer
+
+  %a{cfunc: "konpeito_key_x"}
+  def self.key_x: () -> Integer
+
+  %a{cfunc: "konpeito_key_y"}
+  def self.key_y: () -> Integer
+
+  %a{cfunc: "konpeito_key_z"}
+  def self.key_z: () -> Integer
+
+  %a{cfunc: "konpeito_key_zero"}
+  def self.key_zero: () -> Integer
+
+  %a{cfunc: "konpeito_key_one"}
+  def self.key_one: () -> Integer
+
+  %a{cfunc: "konpeito_key_two"}
+  def self.key_two: () -> Integer
+
+  %a{cfunc: "konpeito_key_three"}
+  def self.key_three: () -> Integer
+
+  %a{cfunc: "konpeito_key_four"}
+  def self.key_four: () -> Integer
+
+  %a{cfunc: "konpeito_key_five"}
+  def self.key_five: () -> Integer
+
+  %a{cfunc: "konpeito_key_six"}
+  def self.key_six: () -> Integer
+
+  %a{cfunc: "konpeito_key_seven"}
+  def self.key_seven: () -> Integer
+
+  %a{cfunc: "konpeito_key_eight"}
+  def self.key_eight: () -> Integer
+
+  %a{cfunc: "konpeito_key_nine"}
+  def self.key_nine: () -> Integer
+
+  # ── Mouse Button Constants ──
+
+  %a{cfunc: "konpeito_mouse_left"}
+  def self.mouse_left: () -> Integer
+
+  %a{cfunc: "konpeito_mouse_right"}
+  def self.mouse_right: () -> Integer
+
+  %a{cfunc: "konpeito_mouse_middle"}
+  def self.mouse_middle: () -> Integer
+
+  # ── Random ──
+
+  %a{cfunc: "konpeito_get_random_value"}
+  def self.get_random_value: (Integer min, Integer max) -> Integer
+end

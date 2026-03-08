@@ -125,6 +125,9 @@ module Konpeito
       # Merge auto-detected RBS paths (normalize to absolute for dedup)
       @rbs_paths = (@rbs_paths.map { |p| File.expand_path(p) } + auto_rbs_paths).uniq
 
+      # Auto-inject stdlib RBS when known modules are referenced in source
+      inject_stdlib_rbs(merged_ast)
+
       # Store stdlib requires for runtime loading
       @stdlib_requires = stdlib_requires
 
@@ -440,6 +443,9 @@ module Konpeito
       source_dir = File.dirname(source_file)
       extra_c_files = Dir.glob(File.join(source_dir, "*.c"))
 
+      # Auto-include stdlib C files for detected FFI libraries
+      extra_c_files = inject_stdlib_c_files(extra_c_files)
+
       backend = Codegen::MRubyBackend.new(
         llvm_gen,
         output_file: output_file,
@@ -633,6 +639,70 @@ module Konpeito
       return unless @cache_manager
 
       @cache_manager.add_dependency(from, to)
+    end
+
+    # Map of stdlib modules: module name pattern => stdlib directory name
+    STDLIB_MODULE_MAP = {
+      "Raylib" => "raylib"
+    }.freeze
+
+    # Scan AST for known stdlib module references and auto-add their RBS paths
+    def inject_stdlib_rbs(ast)
+      return unless ast
+
+      STDLIB_MODULE_MAP.each do |mod_name, stdlib_name|
+        if ast_references_module?(ast, mod_name)
+          stdlib_rbs = File.expand_path("stdlib/#{stdlib_name}/#{stdlib_name}.rbs", __dir__)
+          if File.exist?(stdlib_rbs) && !@rbs_paths.include?(stdlib_rbs)
+            @rbs_paths << stdlib_rbs
+            log "Auto-detected #{mod_name} module, using stdlib RBS" if verbose
+          end
+        end
+      end
+    end
+
+    # Check if AST references a module/class name (constant lookup)
+    def ast_references_module?(node, name)
+      return false unless node
+
+      case node
+      when Prism::ConstantReadNode
+        return true if node.name.to_s == name
+      when Prism::ConstantPathNode
+        return true if node.name.to_s == name
+        return ast_references_module?(node.parent, name) if node.parent
+      when Prism::ModuleNode
+        return true if node.constant_path.is_a?(Prism::ConstantReadNode) && node.constant_path.name.to_s == name
+      end
+
+      # Recurse into child nodes
+      node.child_nodes.compact.any? { |child| ast_references_module?(child, name) }
+    end
+
+    # Auto-include stdlib C files based on FFI libraries detected by RBS loader
+    def inject_stdlib_c_files(extra_c_files)
+      return extra_c_files unless @rbs_loader
+
+      @rbs_loader.all_ffi_libraries.each do |lib_name|
+        link_name = lib_name.sub(/^lib/, "")
+        stdlib_name = STDLIB_MODULE_MAP.values.find do |sn|
+          stdlib_rbs = File.expand_path("stdlib/#{sn}/#{sn}.rbs", __dir__)
+          next false unless File.exist?(stdlib_rbs)
+
+          # Check if this stdlib declares the same FFI library
+          File.read(stdlib_rbs).include?("%a{ffi: \"#{lib_name}\"}")
+        end
+
+        next unless stdlib_name
+
+        stdlib_c = File.expand_path("stdlib/#{stdlib_name}/#{stdlib_name}_native.c", __dir__)
+        if File.exist?(stdlib_c) && !extra_c_files.include?(stdlib_c)
+          extra_c_files << stdlib_c
+          log "Auto-including stdlib C wrapper: #{stdlib_name}" if verbose
+        end
+      end
+
+      extra_c_files
     end
   end
 end

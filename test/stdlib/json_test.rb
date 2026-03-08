@@ -14,7 +14,7 @@ JSON_NATIVE_AVAILABLE = begin
   $LOAD_PATH.unshift(json_dir)
   require "konpeito_json"
   true
-rescue => e
+rescue Exception
   false
 end
 

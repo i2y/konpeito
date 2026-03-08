@@ -277,7 +277,7 @@ module Konpeito
 
         # Include extra C files in cache key (they affect the binary)
         source_dir = File.dirname(File.expand_path(source_file))
-        extra_c_files = Dir.glob(File.join(source_dir, "*.c")).sort
+        extra_c_files = Dir.glob(File.join(source_dir, "*.c"))
 
         options_hash = {
           "inline_rbs" => options[:inline_rbs].to_s,

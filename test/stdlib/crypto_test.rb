@@ -11,7 +11,7 @@ CRYPTO_NATIVE_AVAILABLE = begin
       (system('make clean > /dev/null 2>&1'); true) &&
       system('make > /dev/null 2>&1')
   end && (require_relative('../../lib/konpeito/stdlib/crypto/crypto'); true)
-rescue => e
+rescue Exception
   false
 end
 

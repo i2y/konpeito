@@ -1174,3 +1174,144 @@ end
 MathLib.sin(3.14159 / 2)      # => 1.0 (direct C call)
 MathLib.square_root(16.0)     # => 4.0 (direct C call)
 ```
+
+---
+
+## E. Raylib (Graphics & Games — mruby Backend)
+
+Raylib is a graphics stdlib for the mruby backend, providing zero-boilerplate game development. Simply reference `module Raylib` in your code and the compiler auto-detects the stdlib — no manual RBS or C file setup needed.
+
+### Usage
+
+```ruby
+module Raylib
+end
+
+def main
+  Raylib.init_window(800, 600, "My Game")
+  Raylib.set_target_fps(60)
+
+  while Raylib.window_should_close == 0
+    Raylib.begin_drawing
+    Raylib.clear_background(Raylib.color_raywhite)
+    Raylib.draw_text("Hello, Raylib!", 200, 260, 40, Raylib.color_darkgray)
+    Raylib.end_drawing
+  end
+
+  Raylib.close_window
+end
+
+main
+```
+
+```bash
+konpeito run --target mruby game.rb
+```
+
+**Note:** Boolean-returning functions (e.g., `key_down?`, `window_should_close`) return `Integer` (0 or 1), not Ruby `true`/`false`. Use `!= 0` for conditionals.
+
+### E1. Window Management
+
+| Method | Signature | Description |
+|---|---|---|
+| `init_window` | `(Integer w, Integer h, String title) -> void` | Create window |
+| `close_window` | `() -> void` | Close window |
+| `window_should_close` | `() -> Integer` | Returns 1 if close requested |
+| `set_target_fps` | `(Integer fps) -> void` | Set target framerate |
+| `get_frame_time` | `() -> Float` | Delta time since last frame |
+| `get_time` | `() -> Float` | Elapsed time since init |
+| `get_screen_width` | `() -> Integer` | Window width |
+| `get_screen_height` | `() -> Integer` | Window height |
+| `set_window_title` | `(String title) -> void` | Update window title |
+| `set_window_size` | `(Integer w, Integer h) -> void` | Resize window |
+| `window_focused?` | `() -> Integer` | 1 if window has focus |
+| `window_resized?` | `() -> Integer` | 1 if window was resized |
+| `toggle_fullscreen` | `() -> void` | Toggle fullscreen mode |
+| `get_fps` | `() -> Integer` | Current FPS |
+
+### E2. Drawing
+
+| Method | Signature | Description |
+|---|---|---|
+| `begin_drawing` | `() -> void` | Start drawing frame |
+| `end_drawing` | `() -> void` | End drawing frame (swap buffers) |
+| `clear_background` | `(Integer color) -> void` | Clear with color |
+| `draw_rectangle` | `(Integer x, y, w, h, Integer color) -> void` | Filled rectangle |
+| `draw_rectangle_lines` | `(Integer x, y, w, h, Integer color) -> void` | Rectangle outline |
+| `draw_circle` | `(Integer cx, cy, Float radius, Integer color) -> void` | Filled circle |
+| `draw_circle_lines` | `(Integer cx, cy, Float radius, Integer color) -> void` | Circle outline |
+| `draw_line` | `(Integer x1, y1, x2, y2, Integer color) -> void` | Line |
+| `draw_line_ex` | `(Float x1, y1, x2, y2, Float thick, Integer color) -> void` | Thick line |
+| `draw_triangle` | `(Float x1, y1, x2, y2, x3, y3, Integer color) -> void` | Filled triangle |
+| `draw_pixel` | `(Integer x, y, Integer color) -> void` | Single pixel |
+
+### E3. Text
+
+| Method | Signature | Description |
+|---|---|---|
+| `draw_text` | `(String text, Integer x, y, size, Integer color) -> void` | Draw text |
+| `measure_text` | `(String text, Integer size) -> Integer` | Text width in pixels |
+
+### E4. Keyboard Input
+
+| Method | Signature | Description |
+|---|---|---|
+| `key_down?` | `(Integer key) -> Integer` | 1 if key is held down |
+| `key_pressed?` | `(Integer key) -> Integer` | 1 if key was pressed this frame |
+| `key_released?` | `(Integer key) -> Integer` | 1 if key was released this frame |
+| `key_up?` | `(Integer key) -> Integer` | 1 if key is not pressed |
+| `get_key_pressed` | `() -> Integer` | Last key pressed (0 if none) |
+| `get_char_pressed` | `() -> Integer` | Last char pressed (0 if none) |
+
+### E5. Mouse Input
+
+| Method | Signature | Description |
+|---|---|---|
+| `get_mouse_x` | `() -> Integer` | Mouse X position |
+| `get_mouse_y` | `() -> Integer` | Mouse Y position |
+| `mouse_button_pressed?` | `(Integer btn) -> Integer` | 1 if button pressed this frame |
+| `mouse_button_down?` | `(Integer btn) -> Integer` | 1 if button is held |
+| `mouse_button_released?` | `(Integer btn) -> Integer` | 1 if button released this frame |
+| `get_mouse_wheel_move` | `() -> Float` | Mouse wheel movement |
+
+### E6. Colors
+
+27 built-in color constants, plus custom color creation:
+
+| Method | Description |
+|---|---|
+| `color_white`, `color_black` | Basic colors |
+| `color_red`, `color_green`, `color_blue` | Primary colors |
+| `color_yellow`, `color_orange`, `color_pink`, `color_purple` | Secondary colors |
+| `color_darkgray`, `color_lightgray`, `color_gray`, `color_raywhite` | Grays |
+| `color_darkblue`, `color_skyblue`, `color_lime`, `color_darkgreen` | Extended colors |
+| `color_darkpurple`, `color_violet`, `color_brown`, `color_darkbrown` | Extended colors |
+| `color_beige`, `color_maroon`, `color_gold`, `color_magenta`, `color_blank` | More colors |
+| `color_new(r, g, b, a) -> Integer` | Custom RGBA color |
+| `color_alpha(color, alpha) -> Integer` | Modify alpha channel |
+
+Colors are packed RGBA integers. Use `color_new(255, 0, 0, 255)` for red with full opacity.
+
+### E7. Key Constants
+
+| Method | Value | Method | Value |
+|---|---|---|---|
+| `key_right` | Right arrow | `key_left` | Left arrow |
+| `key_up` | Up arrow | `key_down` | Down arrow |
+| `key_space` | Space | `key_enter` | Enter/Return |
+| `key_escape` | Escape | `key_a` .. `key_z` | Letter keys |
+| `key_zero` .. `key_nine` | Number keys | | |
+
+### E8. Mouse Button Constants
+
+| Method | Description |
+|---|---|
+| `mouse_left` | Left mouse button |
+| `mouse_right` | Right mouse button |
+| `mouse_middle` | Middle mouse button |
+
+### E9. Random
+
+| Method | Signature | Description |
+|---|---|---|
+| `get_random_value` | `(Integer min, Integer max) -> Integer` | Random integer in range |

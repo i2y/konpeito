@@ -16,10 +16,11 @@ This tutorial walks you through installing Konpeito and running your first compi
 | Dependency | Version | Required for |
 |---|---|---|
 | Ruby | 4.0.1+ | Always (runs the compiler) |
-| LLVM | 20 | CRuby native backend |
+| LLVM | 20 | CRuby native backend, mruby backend |
 | Java | 21+ | JVM backend |
+| mruby | 3.x | mruby backend |
 
-LLVM and Java are needed depending on which backend you use. You only need one.
+LLVM, Java, and mruby are needed depending on which backend you use. You only need one.
 
 ### Install Konpeito
 
@@ -469,6 +470,122 @@ See [Getting Started](getting-started.md) for the full Castella UI widget catalo
 
 ---
 
+## 5.5. mruby Backend: Standalone Executables
+
+The mruby backend produces standalone executables — no Ruby or Java required on the target machine. This is ideal for distributing applications, writing games, or deploying to environments without a Ruby installation.
+
+### Standalone Hello World
+
+```ruby
+# hello.rb
+def main
+  puts "Hello from Konpeito!"
+end
+
+main
+```
+
+```bash
+konpeito build --target mruby -o hello hello.rb
+./hello    # => Hello from Konpeito!
+```
+
+Or build and run in one step:
+
+```bash
+konpeito run --target mruby hello.rb
+```
+
+### Game Development with raylib stdlib
+
+Konpeito includes a raylib stdlib for the mruby backend. Reference `module Raylib` in your code and the compiler auto-detects the RBS/C wrapper — no manual setup needed.
+
+```ruby
+# catch_game.rb
+module Raylib
+end
+
+def main
+  screen_w = 600
+  screen_h = 400
+
+  Raylib.init_window(screen_w, screen_h, "Catch Game")
+  Raylib.set_target_fps(60)
+
+  paddle_x = screen_w / 2 - 40
+  paddle_y = screen_h - 40
+  paddle_speed = 400
+
+  obj_x = Raylib.get_random_value(30, screen_w - 30)
+  obj_y = 0
+  obj_speed = 150.0
+  score = 0
+
+  while Raylib.window_should_close == 0
+    dt = Raylib.get_frame_time
+
+    if Raylib.key_down?(Raylib.key_left) != 0
+      paddle_x = paddle_x - (paddle_speed * dt).to_i
+    end
+    if Raylib.key_down?(Raylib.key_right) != 0
+      paddle_x = paddle_x + (paddle_speed * dt).to_i
+    end
+
+    obj_y = obj_y + (obj_speed * dt).to_i
+    if obj_y > screen_h
+      obj_x = Raylib.get_random_value(30, screen_w - 30)
+      obj_y = 0
+    end
+
+    Raylib.begin_drawing
+    Raylib.clear_background(Raylib.color_black)
+    Raylib.draw_rectangle(paddle_x, paddle_y, 80, 14, Raylib.color_skyblue)
+    Raylib.draw_rectangle(obj_x, obj_y, 16, 16, Raylib.color_gold)
+    Raylib.draw_text("Score: #{score}", 10, 10, 20, Raylib.color_white)
+    Raylib.end_drawing
+  end
+
+  Raylib.close_window
+end
+
+main
+```
+
+```bash
+konpeito run --target mruby catch_game.rb
+```
+
+### Cross-compilation
+
+Cross-compile for other platforms using `zig cc`:
+
+```bash
+konpeito build --target mruby \
+  --cross aarch64-linux-musl \
+  --cross-mruby ~/mruby-aarch64 \
+  -o game game.rb
+```
+
+| Option | Description |
+|---|---|
+| `--cross TARGET` | Target triple (e.g., `x86_64-linux-gnu`) |
+| `--cross-mruby DIR` | Cross-compiled mruby install path |
+| `--cross-libs DIR` | Additional library search path |
+
+### mruby vs CRuby backend comparison
+
+| Aspect | CRuby backend | mruby backend |
+|---|---|---|
+| Output | .so/.bundle (extension) | Standalone executable |
+| Runtime dependency | CRuby 4.0+ | None |
+| Use case | Library/app acceleration | Distribution, games |
+| raylib stdlib | Not available | Auto-detected |
+| Thread/Mutex | Supported | Not supported |
+| Keyword arguments | Supported | Not supported |
+| Compilation caching | `.konpeito_cache/run/` | `.konpeito_cache/run/` |
+
+---
+
 ## 6. Type System
 
 ### HM type inference (no annotations needed)
@@ -593,6 +710,11 @@ konpeito run --no-cache source.rb    # force recompilation (skip run cache)
 konpeito run --clean-run-cache source.rb  # clear run cache, then build and run
 konpeito fmt                         # format code (RuboCop)
 konpeito deps source.rb              # analyze and display dependencies
+
+# mruby backend
+konpeito build --target mruby -o app app.rb    # standalone executable
+konpeito run --target mruby app.rb             # build & run (cached)
+konpeito doctor --target mruby                 # check mruby environment
 ```
 
 ---

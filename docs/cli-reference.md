@@ -47,7 +47,7 @@ konpeito -c source.rb        # same as: konpeito check source.rb
 
 ## `konpeito build`
 
-Compile Ruby source to a CRuby extension or JVM JAR.
+Compile Ruby source to a CRuby extension, JVM JAR, or mruby standalone executable.
 
 ```
 konpeito build [options] <source.rb> [additional_files...]
@@ -59,7 +59,10 @@ konpeito build [options] <source.rb> [additional_files...]
 |---|---|---|---|
 | `-o, --output` | FILE | Output file name | Auto-generated from source |
 | `-f, --format` | FORMAT | Output format (`cruby_ext`, `standalone`) | `cruby_ext` |
-| `--target` | TARGET | Target platform (`native`, `jvm`) | `native` |
+| `--target` | TARGET | Target platform (`native`, `jvm`, `mruby`) | `native` |
+| `--cross` | TARGET | Cross-compile for target triple (e.g., `x86_64-linux-gnu`) | off |
+| `--cross-mruby` | DIR | Path to cross-compiled mruby (`include/` and `lib/`) | off |
+| `--cross-libs` | DIR | Additional library search path for cross-compilation | off |
 | `-g, --debug` | — | Generate DWARF debug info for lldb/gdb | off |
 | `-p, --profile` | — | Enable profiling instrumentation | off |
 | `--stats` | — | Show optimization statistics after compilation | off |
@@ -102,6 +105,13 @@ konpeito build --target jvm --classpath "lib/dep.jar:lib/other.jar" src/main.rb
 
 # Library JAR (no main entry point)
 konpeito build --target jvm --lib -o mylib.jar src/lib.rb
+
+# mruby standalone executable
+konpeito build --target mruby -o app src/main.rb
+konpeito build --target mruby --run src/main.rb
+
+# mruby cross-compilation (zig cc)
+konpeito build --target mruby --cross aarch64-linux-musl --cross-mruby ~/mruby-aarch64 -o app src/main.rb
 ```
 
 ### Notes
@@ -141,6 +151,7 @@ konpeito run src/main.rb                    # cached: skips recompilation if unc
 konpeito run --no-cache src/main.rb         # force recompilation
 konpeito run --clean-run-cache src/main.rb  # clear cache, then build and run
 konpeito run --target jvm src/main.rb
+konpeito run --target mruby src/main.rb          # mruby standalone (cached)
 ```
 
 ### Compilation Caching
@@ -156,6 +167,7 @@ konpeito run --target jvm src/main.rb
 
 - If no source file is given, Konpeito looks for `src/main.rb`, `main.rb`, or `app.rb` in that order.
 - For native targets, the compiled extension is loaded into a Ruby process. Cached builds are stored persistently; `--no-cache` builds use a temporary directory cleaned up after execution.
+- For mruby targets, the compiled standalone executable is cached and reused on subsequent runs.
 - For JVM targets, this delegates to `build --run` (no caching).
 
 ---
@@ -198,7 +210,7 @@ konpeito init [options] [project_name]
 
 | Option | Argument | Description | Default |
 |---|---|---|---|
-| `--target` | TARGET | Target platform (`native`, `jvm`) | `native` |
+| `--target` | TARGET | Target platform (`native`, `jvm`, `mruby`) | `native` |
 | `--no-git` | — | Do not create `.gitignore` | creates `.gitignore` |
 | `-v, --verbose` | — | Verbose output | off |
 | `--no-color` | — | Disable colored output | auto-detect TTY |
@@ -252,7 +264,7 @@ konpeito test [options] [test_files...]
 | `-p, --pattern` | PATTERN | Test file glob pattern | `test/**/*_test.rb` |
 | `-n, --name` | PATTERN | Run tests matching name pattern | all |
 | `--compile` | — | Compile source files before running tests | off |
-| `--target` | TARGET | Target platform (`native`, `jvm`) | from config |
+| `--target` | TARGET | Target platform (`native`, `jvm`, `mruby`) | from config |
 | `--classpath` | PATH | JVM classpath (colon-separated) | from config |
 | `-v, --verbose` | — | Verbose output | off |
 | `--no-color` | — | Disable colored output | auto-detect TTY |
@@ -264,6 +276,7 @@ konpeito test                              # run all tests
 konpeito test test/math_test.rb            # run specific file
 konpeito test -n test_addition             # run matching tests
 konpeito test --target jvm                 # run JVM tests
+konpeito test --target mruby               # run mruby tests
 ```
 
 ### Notes
@@ -393,7 +406,7 @@ konpeito doctor [options]
 
 | Option | Argument | Description | Default |
 |---|---|---|---|
-| `--target` | TARGET | Check only `native`, `jvm`, or `ui` dependencies | check all |
+| `--target` | TARGET | Check only `native`, `jvm`, `mruby`, or `ui` dependencies | check all |
 | `-v, --verbose` | — | Verbose output | off |
 | `--no-color` | — | Disable colored output | auto-detect TTY |
 
@@ -414,6 +427,11 @@ konpeito doctor [options]
 - Java (21+)
 - ASM tool (`tools/konpeito-asm/konpeito-asm.jar`)
 
+**mruby backend (`--target mruby`):**
+- mruby (`mruby-config` in PATH or `MRUBY_DIR` set)
+- clang or cc compiler
+- LLVM tools (llc, opt)
+
 **UI (`--target ui`):**
 - SDL3
 - Skia
@@ -429,6 +447,7 @@ konpeito doctor [options]
 konpeito doctor                            # check everything
 konpeito doctor --target jvm               # check JVM dependencies only
 konpeito doctor --target native            # check native dependencies only
+konpeito doctor --target mruby             # check mruby dependencies only
 ```
 
 ### Output format
@@ -455,7 +474,7 @@ name = "my_app"
 [build]
 output = "app.jar"                    # output file name
 format = "cruby_ext"                  # cruby_ext or standalone
-target = "jvm"                        # native or jvm
+target = "jvm"                        # native, jvm, or mruby
 rbs_paths = ["sig/types.rbs"]         # RBS type definition files
 require_paths = ["lib"]               # require search paths
 debug = false                         # DWARF debug info
@@ -491,5 +510,7 @@ extensions = ["rb", "rbs"]            # file extensions to watch
 | Variable | Description |
 |---|---|
 | `JAVA_HOME` | Java installation directory (overrides auto-detection) |
+| `MRUBY_DIR` | mruby installation directory (overrides `mruby-config` auto-detection) |
+| `MRUBY_CONFIG` | Path to `mruby-config` executable (overrides PATH search) |
 | `SKIA_DIR` | Skia library directory (for UI backend) |
 | `SDL3_DIR` | SDL3 library directory (for UI backend) |

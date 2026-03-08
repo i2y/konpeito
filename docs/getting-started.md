@@ -8,7 +8,7 @@ nav_order: 2
 
 ## What is Konpeito?
 
-Konpeito is an ahead-of-time (AOT) compiler for Ruby. It takes ordinary Ruby source files and compiles them to CRuby C extensions or standalone JVM JARs — no runtime interpreter overhead. Types are inferred automatically via Hindley-Milner inference; RBS annotations are optional for extra precision.
+Konpeito is an ahead-of-time (AOT) compiler for Ruby. It takes ordinary Ruby source files and compiles them to CRuby C extensions, standalone JVM JARs, or mruby standalone executables — no runtime interpreter overhead. Types are inferred automatically via Hindley-Milner inference; RBS annotations are optional for extra precision.
 
 ## Installation
 
@@ -17,8 +17,9 @@ Konpeito is an ahead-of-time (AOT) compiler for Ruby. It takes ordinary Ruby sou
 | Dependency | Version | Required for |
 |---|---|---|
 | Ruby | 4.0+ | Always |
-| LLVM | 20 | CRuby native backend |
+| LLVM | 20 | CRuby native backend, mruby backend |
 | Java | 21+ | JVM backend only |
+| mruby | 3.x | mruby backend only |
 
 See the [README](https://github.com/i2y/konpeito/blob/main/README.md) for platform-specific LLVM installation instructions.
 
@@ -410,6 +411,100 @@ bar_chart(
 
 pie_chart(["Ruby", "Python", "Go"], [45.0, 30.0, 25.0])
 ```
+
+## Standalone Executables (mruby Backend)
+
+The mruby backend compiles Ruby code to standalone executables. No Ruby or Java installation is needed on the target machine — a single binary is all you need.
+
+### Prerequisites
+
+mruby must be installed. Konpeito uses `mruby-config` to locate the mruby installation, or you can set the `MRUBY_DIR` environment variable.
+
+```bash
+konpeito doctor --target mruby
+```
+
+### Build and run
+
+```bash
+konpeito build --target mruby -o hello hello.rb
+./hello
+```
+
+Or build and run in one step (with compilation caching):
+
+```bash
+konpeito run --target mruby hello.rb
+```
+
+Cached artifacts are stored in `.konpeito_cache/run/`. Use `--no-cache` to force a rebuild, or `--clean-run-cache` to wipe the cache.
+
+### Game development with raylib stdlib
+
+Konpeito includes a raylib stdlib for the mruby backend. Simply reference `module Raylib` in your code and the compiler auto-detects and injects the RBS definitions and C wrapper.
+
+```ruby
+# bouncing_ball.rb
+module Raylib
+end
+
+def main
+  Raylib.init_window(800, 600, "Bouncing Ball")
+  Raylib.set_target_fps(60)
+
+  x = 400
+  y = 300
+  dx = 4
+  dy = 3
+  radius = 20.0
+  color = Raylib.color_red
+
+  while Raylib.window_should_close == 0
+    x = x + dx
+    y = y + dy
+    if x < 20 || x > 780
+      dx = 0 - dx
+    end
+    if y < 20 || y > 580
+      dy = 0 - dy
+    end
+
+    Raylib.begin_drawing
+    Raylib.clear_background(Raylib.color_black)
+    Raylib.draw_circle(x, y, radius, color)
+    Raylib.end_drawing
+  end
+
+  Raylib.close_window
+end
+
+main
+```
+
+```bash
+konpeito run --target mruby bouncing_ball.rb
+```
+
+The raylib stdlib provides 87 functions covering window management, shape/text drawing, keyboard/mouse input, 27 color constants, key constants, and random number generation. See the [API Reference](api-reference.md) for the full list.
+
+### Cross-compilation
+
+Cross-compile for other platforms using `zig cc` as the cross-compiler:
+
+```bash
+konpeito build --target mruby \
+  --cross aarch64-linux-musl \
+  --cross-mruby ~/mruby-aarch64 \
+  -o game game.rb
+```
+
+Options:
+
+| Option | Description |
+|---|---|
+| `--cross TARGET` | Target triple (e.g., `x86_64-linux-gnu`, `aarch64-linux-musl`) |
+| `--cross-mruby DIR` | Path to cross-compiled mruby (must contain `include/` and `lib/`) |
+| `--cross-libs DIR` | Additional library search path for cross-compilation |
 
 ## Next Steps
 

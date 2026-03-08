@@ -93,11 +93,16 @@ Konpeito defines two backend conformance levels:
 |-------|---------|--------|-------------------|
 | **LLVM** | LLVM 20 | CRuby extension (.so/.bundle) | CRuby 4.0+ |
 | **JVM** | ASM bytecode | Standalone JAR (.jar) | Java 21+ |
+| **mruby** | LLVM 20 + mruby | Standalone executable | None |
 
-Both backends accept the same source language but may differ in:
+All backends accept the same source language but may differ in:
 - Available standard library modules
 - Native data structure memory layout details
-- Java interop (JVM only) / C interop (LLVM only)
+- Java interop (JVM only) / C interop (LLVM only) / raylib stdlib (mruby only)
+
+**mruby-specific constraints:**
+- Keyword arguments (`def foo(name:)`) are not supported
+- Thread, Mutex, ConditionVariable, and SizedQueue are not available
 
 Backend-specific differences are documented in Part VII.
 

@@ -228,27 +228,113 @@ module Konpeito
       end
 
       def run_mruby(source_file)
-        require "tmpdir"
+        require "konpeito/cache"
 
         base = File.basename(source_file, ".rb")
-        output_name = Platform.windows? ? "#{base}.exe" : base
+        basename = Platform.windows? ? "#{base}.exe" : base
+        run_cache = Cache::RunCache.new(cache_dir: ".konpeito_cache/run_mruby")
 
-        Dir.mktmpdir("konpeito_mruby_run") do |tmpdir|
-          output_file = File.join(tmpdir, output_name)
-
-          build_args = ["--target", "mruby", "-o", output_file]
-          build_args << "-v" if options[:verbose]
-          build_args << "--no-color" unless options[:color]
-          build_args << "--inline" if options[:inline_rbs]
-          options[:rbs_paths].each { |p| build_args << "--rbs" << p }
-          options[:require_paths].each { |p| build_args << "-I" << p }
-          build_args << source_file
-
-          Commands::BuildCommand.new(build_args, config: config).run
-
-          emit("Running", output_file)
-          system(output_file)
+        if options[:clean_run_cache]
+          run_cache.clean!
+          emit("Cleaned", "mruby run cache")
         end
+
+        if options[:no_cache]
+          build_and_run_mruby_tmpdir(source_file, basename)
+          return
+        end
+
+        cache_key = compute_mruby_run_cache_key(source_file, run_cache)
+
+        if cache_key
+          artifact = run_cache.lookup(cache_key, basename)
+          if artifact
+            emit("Cached", source_file)
+            emit("Running", artifact)
+            system(artifact)
+            return
+          end
+        end
+
+        if cache_key
+          build_and_run_mruby_cached(source_file, run_cache, cache_key, basename)
+        else
+          build_and_run_mruby_tmpdir(source_file, basename)
+        end
+      end
+
+      def compute_mruby_run_cache_key(source_file, run_cache)
+        resolver = DependencyResolver.new(
+          base_paths: options[:require_paths],
+          verbose: false
+        )
+        resolver.resolve(source_file)
+
+        all_sources = resolver.resolved_files.keys
+        auto_rbs = resolver.rbs_paths
+        all_rbs = (options[:rbs_paths].map { |p| File.expand_path(p) } + auto_rbs).uniq
+        all_rbs = all_rbs.select { |f| File.exist?(f) }
+
+        # Include extra C files in cache key (they affect the binary)
+        source_dir = File.dirname(File.expand_path(source_file))
+        extra_c_files = Dir.glob(File.join(source_dir, "*.c")).sort
+
+        options_hash = {
+          "inline_rbs" => options[:inline_rbs].to_s,
+          "target" => "mruby"
+        }
+
+        digest = Digest::SHA256.new
+        all_sources.sort.each { |f| digest.update(Digest::SHA256.file(f).hexdigest) }
+        all_rbs.sort.each { |f| digest.update(Digest::SHA256.file(f).hexdigest) }
+        extra_c_files.each { |f| digest.update(Digest::SHA256.file(f).hexdigest) }
+        digest.update(options_hash.sort.map { |k, v| "#{k}=#{v}" }.join("|"))
+        digest.update(Konpeito::VERSION)
+        digest.hexdigest
+      rescue StandardError => e
+        puts_verbose("Cache key computation failed: #{e.message}")
+        nil
+      end
+
+      def build_and_run_mruby_cached(source_file, run_cache, cache_key, basename)
+        dir = run_cache.artifact_dir(cache_key)
+        FileUtils.mkdir_p(dir)
+        output_file = File.join(dir, basename)
+
+        build_args = build_mruby_args(source_file, output_file)
+        Commands::BuildCommand.new(build_args, config: config).run
+
+        run_cache.store(cache_key, basename)
+
+        emit("Running", output_file)
+        system(output_file)
+      end
+
+      def build_and_run_mruby_tmpdir(source_file, basename)
+        require "tmpdir"
+
+        @run_tmpdir = File.join(Dir.tmpdir, "konpeito_mruby_run_#{Process.pid}")
+        FileUtils.mkdir_p(@run_tmpdir)
+        output_file = File.join(@run_tmpdir, basename)
+
+        build_args = build_mruby_args(source_file, output_file)
+        Commands::BuildCommand.new(build_args, config: config).run
+
+        emit("Running", output_file)
+        system(output_file)
+      ensure
+        FileUtils.rm_rf(@run_tmpdir) if @run_tmpdir && Dir.exist?(@run_tmpdir)
+      end
+
+      def build_mruby_args(source_file, output_file)
+        build_args = ["--target", "mruby", "-o", output_file, "-q"]
+        build_args << "-v" if options[:verbose]
+        build_args << "--no-color" unless options[:color]
+        build_args << "--inline" if options[:inline_rbs]
+        options[:rbs_paths].each { |p| build_args << "--rbs" << p }
+        options[:require_paths].each { |p| build_args << "-I" << p }
+        build_args << source_file
+        build_args
       end
 
       def build_classpath

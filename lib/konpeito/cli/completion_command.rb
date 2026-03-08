@@ -60,7 +60,7 @@ module Konpeito
         --no-color -h --help
       ].freeze
 
-      TARGET_VALUES = %w[native jvm].freeze
+      TARGET_VALUES = %w[native jvm mruby].freeze
 
       def bash_completion
         <<~'BASH'
@@ -81,7 +81,7 @@ module Konpeito
 
               # Complete --target values
               if [[ "${prev}" == "--target" ]]; then
-                  COMPREPLY=( $(compgen -W "native jvm" -- "${cur}") )
+                  COMPREPLY=( $(compgen -W "native jvm mruby" -- "${cur}") )
                   return 0
               fi
 
@@ -170,7 +170,7 @@ module Konpeito
                           '--incremental[Enable incremental compilation]' \
                           '--clean-cache[Clear compilation cache]' \
                           '--inline[Use inline RBS annotations]' \
-                          '--target[Target platform]:target:(native jvm)' \
+                          '--target[Target platform]:target:(native jvm mruby)' \
                           '--run[Run after building]' \
                           '--emit-ir[Emit intermediate representation]' \
                           '--classpath[JVM classpath]:path:_files' \
@@ -185,7 +185,7 @@ module Konpeito
                       ;;
                   run)
                       _arguments \
-                          '--target[Target platform]:target:(native jvm)' \
+                          '--target[Target platform]:target:(native jvm mruby)' \
                           '--classpath[JVM classpath]:path:_files' \
                           '--rbs[RBS type definition file]:file:_files -g "*.rbs"' \
                           '-I[Add require search path]:path:_directories' \
@@ -265,7 +265,7 @@ module Konpeito
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l incremental -d 'Incremental compilation'
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l clean-cache -d 'Clear compilation cache'
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l inline -d 'Use inline RBS annotations'
-          complete -c konpeito -n '__fish_seen_subcommand_from build' -l target -r -a 'native jvm' -d 'Target platform'
+          complete -c konpeito -n '__fish_seen_subcommand_from build' -l target -r -a 'native jvm mruby' -d 'Target platform'
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l run -d 'Run after building'
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l emit-ir -d 'Emit intermediate representation'
           complete -c konpeito -n '__fish_seen_subcommand_from build' -l classpath -r -d 'JVM classpath'
@@ -276,7 +276,7 @@ module Konpeito
           complete -c konpeito -n '__fish_seen_subcommand_from build' -F -d 'Ruby source file'
 
           # run options
-          complete -c konpeito -n '__fish_seen_subcommand_from run' -l target -r -a 'native jvm' -d 'Target platform'
+          complete -c konpeito -n '__fish_seen_subcommand_from run' -l target -r -a 'native jvm mruby' -d 'Target platform'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -l classpath -r -d 'JVM classpath'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -l rbs -r -d 'RBS type definition file'
           complete -c konpeito -n '__fish_seen_subcommand_from run' -s I -l require-path -r -d 'Add require search path'

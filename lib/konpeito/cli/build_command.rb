@@ -94,7 +94,7 @@ module Konpeito
           options[:inline_rbs] = true
         end
 
-        opts.on("--target TARGET", %i[native jvm], "Target platform (native, jvm)") do |target|
+        opts.on("--target TARGET", %i[native jvm mruby], "Target platform (native, jvm, mruby)") do |target|
           options[:target] = target
         end
 
@@ -154,7 +154,11 @@ module Konpeito
           end
         end
 
-        target_label = options[:target] == :jvm ? "jvm" : "native"
+        target_label = case options[:target]
+                       when :jvm then "jvm"
+                       when :mruby then "mruby"
+                       else "native"
+                       end
         emit("Compiling", "#{source_file} (#{target_label})") unless options[:quiet]
 
         compiler = Compiler.new(
@@ -210,8 +214,11 @@ module Konpeito
 
           # Show usage hint (skip for --run and --lib)
           unless options[:run_after] || options[:library]
-            if options[:target] == :jvm
+            case options[:target]
+            when :jvm
               emit("Hint", "java -jar #{output_file}")
+            when :mruby
+              emit("Hint", "./#{output_file}")
             else
               ext_name = File.basename(output_file, File.extname(output_file))
               emit("Hint", "ruby -r ./#{ext_name} -e \"YourModule.method\"")

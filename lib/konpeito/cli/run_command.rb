@@ -33,6 +33,8 @@ module Konpeito
         case target
         when :jvm
           run_jvm(source_file)
+        when :mruby
+          run_mruby(source_file)
         else
           run_native(source_file)
         end
@@ -56,7 +58,7 @@ module Konpeito
       end
 
       def setup_option_parser(opts)
-        opts.on("--target TARGET", %i[native jvm], "Target platform (native, jvm)") do |target|
+        opts.on("--target TARGET", %i[native jvm mruby], "Target platform (native, jvm, mruby)") do |target|
           options[:target] = target
         end
 
@@ -223,6 +225,30 @@ module Konpeito
         options[:require_paths].each { |p| build_args << "-I" << p }
         build_args << source_file
         build_args
+      end
+
+      def run_mruby(source_file)
+        require "tmpdir"
+
+        base = File.basename(source_file, ".rb")
+        output_name = Platform.windows? ? "#{base}.exe" : base
+
+        Dir.mktmpdir("konpeito_mruby_run") do |tmpdir|
+          output_file = File.join(tmpdir, output_name)
+
+          build_args = ["--target", "mruby", "-o", output_file]
+          build_args << "-v" if options[:verbose]
+          build_args << "--no-color" unless options[:color]
+          build_args << "--inline" if options[:inline_rbs]
+          options[:rbs_paths].each { |p| build_args << "--rbs" << p }
+          options[:require_paths].each { |p| build_args << "-I" << p }
+          build_args << source_file
+
+          Commands::BuildCommand.new(build_args, config: config).run
+
+          emit("Running", output_file)
+          system(output_file)
+        end
       end
 
       def build_classpath

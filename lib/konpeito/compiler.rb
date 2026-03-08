@@ -358,6 +358,8 @@ module Konpeito
     def generate_code(hir)
       if @target == :jvm
         generate_jvm(hir)
+      elsif @target == :mruby
+        generate_mruby_standalone(hir)
       else
         log "Generating #{format} code..."
         case format
@@ -410,6 +412,35 @@ module Konpeito
 
     def generate_standalone(hir)
       raise CodegenError, "Standalone generation not yet implemented"
+    end
+
+    def generate_mruby_standalone(hir)
+      require_relative "codegen/mruby_backend"
+
+      log "Generating LLVM IR (mruby runtime)..."
+
+      llvm_gen = Codegen::LLVMGenerator.new(
+        module_name: module_name,
+        monomorphizer: @monomorphizer,
+        rbs_loader: @rbs_loader,
+        debug: @debug,
+        source_file: source_file,
+        runtime: :mruby
+      )
+      llvm_gen.generate(hir)
+
+      log "Compiling to standalone executable (mruby)..."
+
+      backend = Codegen::MRubyBackend.new(
+        llvm_gen,
+        output_file: output_file,
+        module_name: module_name,
+        rbs_loader: @rbs_loader,
+        debug: @debug
+      )
+      backend.generate
+
+      log "Generated: #{output_file}"
     end
 
     def generate_jvm(hir)
@@ -469,6 +500,8 @@ module Konpeito
       base = File.basename(source_file, ".rb")
       if target == :jvm
         "#{base}.jar"
+      elsif target == :mruby
+        Platform.windows? ? "#{base}.exe" : base
       else
         case format
         when :cruby_ext

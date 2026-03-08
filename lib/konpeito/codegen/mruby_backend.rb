@@ -1,0 +1,912 @@
+# frozen_string_literal: true
+
+require "fileutils"
+require "rbconfig"
+require "set"
+
+module Konpeito
+  module Codegen
+    # Generates standalone executable from LLVM module using mruby runtime
+    class MRubyBackend
+      attr_reader :llvm_generator, :output_file, :module_name, :rbs_loader, :debug
+
+      def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false)
+        @llvm_generator = llvm_generator
+        @output_file = output_file
+        @module_name = module_name || derive_module_name(output_file)
+        @rbs_loader = rbs_loader
+        @debug = debug
+      end
+
+      def generate
+        ir_file = "#{output_base}.ll"
+        obj_file = "#{output_base}.o"
+        init_c_file = "#{output_base}_mruby_init.c"
+        init_obj_file = "#{output_base}_mruby_init.o"
+        helpers_obj_file = "#{output_base}_mruby_helpers.o"
+
+        begin
+          # Write LLVM IR to file
+          File.write(ir_file, llvm_generator.to_ir)
+
+          # Generate C wrapper with main() function
+          File.write(init_c_file, generate_init_c_code)
+
+          # Compile IR to object file (static relocation for executable)
+          compile_ir_to_object(ir_file, obj_file)
+
+          # Compile C init wrapper with mruby headers
+          compile_c_to_object(init_c_file, init_obj_file)
+
+          # Compile mruby_helpers.c
+          compile_helpers_to_object(helpers_obj_file)
+
+          obj_files = [obj_file, init_obj_file, helpers_obj_file]
+
+          # Link into standalone executable
+          link_to_executable(obj_files, output_file)
+        ensure
+          # Clean up intermediate files
+          [ir_file, obj_file, init_c_file, init_obj_file, helpers_obj_file].each do |f|
+            FileUtils.rm_f(f) if f && File.exist?(f)
+          end
+          # Also clean optimized IR if it was generated
+          FileUtils.rm_f("#{ir_file}.opt.ll") if File.exist?("#{ir_file}.opt.ll")
+        end
+      end
+
+      private
+
+      def output_base
+        output_file.sub(/(\.[^.]+)?$/, "")
+      end
+
+      def derive_module_name(path)
+        File.basename(path).sub(/\.[^.]*$/, "").gsub(/[^a-zA-Z0-9_]/, "_")
+      end
+
+      def generate_init_c_code
+        hir = llvm_generator.hir_program
+        lines = []
+
+        lines << "#include <mruby.h>"
+        lines << "#include <mruby/class.h>"
+        lines << "#include <mruby/data.h>"
+        lines << "#include <mruby/string.h>"
+        lines << "#include <mruby/array.h>"
+        lines << "#include <mruby/hash.h>"
+        lines << "#include <mruby/error.h>"
+        lines << "#include <mruby/proc.h>"
+        lines << "#include <mruby/variable.h>"
+        lines << "#include <mruby/numeric.h>"
+        lines << "#include <stddef.h>"
+        lines << "#include <stdlib.h>"
+        lines << "#include <string.h>"
+        lines << "#include <stdio.h>"
+        lines << ""
+
+        # Global mrb_state pointer (LLVM-generated code references this)
+        lines << "/* Global mrb_state pointer (referenced by LLVM-generated code) */"
+        lines << "extern mrb_state *konpeito_mrb_state;"
+        lines << ""
+
+        # Collect NativeClasses from RBS loader
+        native_classes = @rbs_loader&.native_classes || {}
+
+        # Sort native classes by dependency order
+        sorted_classes = topological_sort_native_classes(native_classes)
+
+        # Forward declare structs
+        sorted_classes.each do |class_name|
+          lines << "typedef struct Native_#{class_name}_s Native_#{class_name};"
+        end
+        lines << ""
+
+        # Generate struct definitions and mrb_data_type for NativeClasses
+        sorted_classes.each do |class_name|
+          class_type = native_classes[class_name]
+          lines.concat(generate_native_class_struct(class_name, class_type))
+        end
+
+        # Declare external native functions from LLVM module (NativeClass methods)
+        native_classes.each do |class_name, class_type|
+          class_type.methods.each do |method_name, method_sig|
+            lines.concat(generate_native_func_declaration(class_name, class_type, method_name, method_sig))
+          end
+        end
+
+        lines << ""
+
+        # Generate wrapper functions for NativeClass methods (mrb_get_args style)
+        native_classes.each do |class_name, class_type|
+          class_type.methods.each do |method_name, method_sig|
+            lines.concat(generate_native_method_wrapper(class_name, class_type, method_name, method_sig))
+          end
+        end
+
+        # Declare external functions from LLVM module (non-native classes)
+        hir.classes.each do |class_def|
+          next if native_classes.key?(class_def.name.to_sym)
+
+          (class_def.method_names + class_def.singleton_methods).each do |method_name|
+            mangled_name = mangle_method_name(class_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            if llvm_generator.variadic_functions[mangled_name]
+              lines << "extern mrb_value #{mangled_name}(mrb_state *mrb, mrb_value self);"
+            else
+              param_count = func.params.size
+              param_types = (["mrb_value"] * param_count).join(", ")
+              lines << "extern mrb_value #{mangled_name}(#{param_types});"
+            end
+          end
+        end
+
+        # Declare external functions from LLVM module (modules)
+        hir.modules.each do |module_def|
+          (module_def.methods + module_def.singleton_methods).each do |method_name|
+            mangled_name = mangle_method_name(module_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            if llvm_generator.variadic_functions[mangled_name]
+              lines << "extern mrb_value #{mangled_name}(mrb_state *mrb, mrb_value self);"
+            else
+              param_count = func.params.size
+              param_types = (["mrb_value"] * param_count).join(", ")
+              lines << "extern mrb_value #{mangled_name}(#{param_types});"
+            end
+          end
+        end
+
+        # Declare top-level functions
+        hir.functions.each do |func_def|
+          next if func_def.owner_class
+
+          mangled_name = "rn_#{func_def.name}".gsub(/[^a-zA-Z0-9_]/, "_")
+          func = llvm_generator.mod.functions[mangled_name]
+          next unless func
+
+          if llvm_generator.variadic_functions[mangled_name]
+            lines << "extern mrb_value #{mangled_name}(mrb_state *mrb, mrb_value self);"
+          else
+            param_count = func.params.size
+            param_types = (["mrb_value"] * param_count).join(", ")
+            lines << "extern mrb_value #{mangled_name}(#{param_types});"
+          end
+        end
+
+        # Declare external C functions used by @cfunc annotations
+        cfunc_methods = @rbs_loader&.cfunc_methods || {}
+        unless cfunc_methods.empty?
+          lines << ""
+          lines << "/* External C functions (@cfunc) */"
+          declared_cfuncs = Set.new
+          cfunc_methods.each_value do |cfunc_type|
+            next if declared_cfuncs.include?(cfunc_type.c_func_name)
+
+            declared_cfuncs << cfunc_type.c_func_name
+            lines.concat(generate_cfunc_extern_declaration(cfunc_type))
+          end
+        end
+
+        lines << ""
+
+        # Generate mrb_value wrapper functions for non-native methods
+        # These adapt the mrb_func_t signature (mrb_state*, mrb_value self) to
+        # the LLVM-generated VALUE-style signatures
+        hir.classes.each do |class_def|
+          next if native_classes.key?(class_def.name.to_sym)
+
+          (class_def.method_names + class_def.singleton_methods).each do |method_name|
+            mangled_name = mangle_method_name(class_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            lines.concat(generate_mruby_method_wrapper(mangled_name, func))
+          end
+        end
+
+        hir.modules.each do |module_def|
+          (module_def.methods + module_def.singleton_methods).each do |method_name|
+            mangled_name = mangle_method_name(module_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            lines.concat(generate_mruby_method_wrapper(mangled_name, func))
+          end
+        end
+
+        hir.functions.each do |func_def|
+          next if func_def.owner_class
+          next if func_def.owner_module
+          next if func_def.name == "__main__"
+
+          mangled_name = "rn_#{func_def.name}".gsub(/[^a-zA-Z0-9_]/, "_")
+          func = llvm_generator.mod.functions[mangled_name]
+          next unless func
+
+          lines.concat(generate_mruby_method_wrapper(mangled_name, func))
+        end
+
+        lines << ""
+        lines << "int main(int argc, char **argv) {"
+        lines << "    mrb_state *mrb = mrb_open();"
+        lines << "    if (!mrb) {"
+        lines << '        fprintf(stderr, "mruby initialization failed\\n");'
+        lines << "        return 1;"
+        lines << "    }"
+        lines << "    konpeito_mrb_state = mrb;"
+        lines << ""
+        lines << "    /* Initialize CRuby-compatible global variables (rb_cObject, rb_eStandardError, etc.) */"
+        lines << "    extern void konpeito_mruby_init_globals(void);"
+        lines << "    konpeito_mruby_init_globals();"
+        lines << ""
+        lines << "    /* Initialize mruby constant values (Qnil, Qtrue, etc.) */"
+        lines << "    extern void konpeito_mruby_init_constants(void);"
+        lines << "    konpeito_mruby_init_constants();"
+        lines << ""
+
+        # Define modules
+        hir.modules.each do |module_def|
+          module_var = "m#{module_def.name}"
+          lines << "    struct RClass *#{module_var} = mrb_define_module(mrb, \"#{module_def.name}\");"
+
+          # Register instance methods
+          module_def.methods.each do |method_name|
+            next if @rbs_loader&.cfunc_method?(module_def.name, method_name, singleton: false)
+
+            mangled_name = mangle_method_name(module_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
+            wrapper = "mrb_wrap_#{mangled_name}"
+            mrb_args = arity_to_mrb_args(arity)
+            lines << "    mrb_define_method(mrb, #{module_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
+          end
+
+          # Register singleton methods
+          module_def.singleton_methods.each do |method_name|
+            next if @rbs_loader&.cfunc_method?(module_def.name, method_name, singleton: true)
+
+            mangled_name = mangle_method_name(module_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
+            wrapper = "mrb_wrap_#{mangled_name}"
+            mrb_args = arity_to_mrb_args(arity)
+            lines << "    mrb_define_class_method(mrb, #{module_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
+          end
+
+          # Register module constants
+          module_def.constants.each do |const_name, value_node|
+            c_value = hir_literal_to_mrb_value(value_node)
+            next unless c_value
+
+            lines << "    mrb_define_const(mrb, #{module_var}, \"#{const_name}\", #{c_value});"
+          end
+        end
+
+        # Define NativeClasses with mrb_data_type
+        native_classes.each do |class_name, class_type|
+          lines.concat(generate_native_class_init(class_name, class_type))
+        end
+
+        # Define non-native classes
+        non_native_classes = hir.classes.reject { |cd| native_classes.key?(cd.name.to_sym) }
+        sorted_non_native = topological_sort_non_native_classes(non_native_classes)
+
+        sorted_non_native.each do |class_def|
+          class_var = "c#{class_def.name}"
+          if class_def.reopened
+            lines << "    struct RClass *#{class_var} = mrb_class_get(mrb, \"#{class_def.name}\");"
+          else
+            superclass_expr = resolve_superclass_mrb_expr(class_def.superclass, non_native_classes)
+            lines << "    struct RClass *#{class_var} = mrb_define_class(mrb, \"#{class_def.name}\", #{superclass_expr});"
+          end
+
+          # Include modules
+          class_def.included_modules.each do |mod_name|
+            mod_expr = resolve_module_mrb_expr(mod_name)
+            lines << "    mrb_include_module(mrb, #{class_var}, #{mod_expr});"
+          end
+
+          class_def.method_names.each do |method_name|
+            mangled_name = mangle_method_name(class_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
+            wrapper = "mrb_wrap_#{mangled_name}"
+            mrb_args = arity_to_mrb_args(arity)
+            lines << "    mrb_define_method(mrb, #{class_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
+          end
+
+          # Register singleton methods
+          class_def.singleton_methods.each do |method_name|
+            next if @rbs_loader&.cfunc_method?(class_def.name, method_name, singleton: true)
+
+            mangled_name = mangle_method_name(class_def.name, method_name)
+            func = llvm_generator.mod.functions[mangled_name]
+            next unless func
+
+            arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
+            wrapper = "mrb_wrap_#{mangled_name}"
+            mrb_args = arity_to_mrb_args(arity)
+            lines << "    mrb_define_class_method(mrb, #{class_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
+          end
+
+          # Register aliases
+          class_def.aliases.each do |new_name, old_name|
+            lines << "    mrb_define_alias(mrb, #{class_var}, \"#{new_name}\", \"#{old_name}\");"
+          end
+        end
+
+        # Define top-level methods on Object
+        hir.functions.each do |func_def|
+          next if func_def.owner_class
+          next if func_def.owner_module
+          next if func_def.name == "__main__"
+
+          mangled_name = "rn_#{func_def.name}".gsub(/[^a-zA-Z0-9_]/, "_")
+          func = llvm_generator.mod.functions[mangled_name]
+          next unless func
+
+          arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
+          wrapper = "mrb_wrap_#{mangled_name}"
+          mrb_args = arity_to_mrb_args(arity)
+          lines << "    mrb_define_method(mrb, mrb->object_class, \"#{func_def.name}\", #{wrapper}, #{mrb_args});"
+        end
+
+        # Call top-level entry point
+        has_main = hir.functions.any? { |f| f.name == "__main__" && !f.owner_class && !f.owner_module }
+        if has_main
+          lines << ""
+          lines << "    /* Run top-level code */"
+          lines << "    rn___main__(mrb_top_self(mrb));"
+        end
+
+        lines << ""
+        lines << "    if (mrb->exc) {"
+        lines << "        mrb_print_error(mrb);"
+        lines << "        mrb_close(mrb);"
+        lines << "        return 1;"
+        lines << "    }"
+        lines << ""
+        lines << "    mrb_close(mrb);"
+        lines << "    return 0;"
+        lines << "}"
+        lines << ""
+
+        lines.join("\n")
+      end
+
+      # Generate mrb_func_t wrapper that calls the LLVM-generated function
+      def generate_mruby_method_wrapper(mangled_name, llvm_func)
+        lines = []
+        wrapper_name = "mrb_wrap_#{mangled_name}"
+
+        if llvm_generator.variadic_functions[mangled_name]
+          # Variadic function: already has (mrb_state*, mrb_value self) signature
+          lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
+          lines << "    return #{mangled_name}(mrb, self);"
+          lines << "}"
+        else
+          arity = llvm_func.params.size - 1  # Subtract self
+
+          lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
+          if arity > 0
+            lines << "    mrb_value #{(0...arity).map { |i| "a#{i}" }.join(', ')};"
+            format_str = "o" * arity
+            args_list = (0...arity).map { |i| "&a#{i}" }.join(", ")
+            lines << "    mrb_get_args(mrb, \"#{format_str}\", #{args_list});"
+            call_args = (["self"] + (0...arity).map { |i| "a#{i}" }).join(", ")
+            lines << "    return #{mangled_name}(#{call_args});"
+          else
+            lines << "    return #{mangled_name}(self);"
+          end
+          lines << "}"
+        end
+
+        lines << ""
+        lines
+      end
+
+      # Generate C struct and mrb_data_type for NativeClass
+      def generate_native_class_struct(class_name, class_type)
+        lines = []
+        struct_name = "Native_#{class_name}"
+
+        # Struct definition
+        lines << "struct Native_#{class_name}_s {"
+        class_type.fields.each do |field_name, field_type|
+          c_type = case field_type
+          when :Int64 then "int64_t"
+          when :Float64 then "double"
+          when :Bool then "int8_t"
+          when :String, :Object, :Array, :Hash then "mrb_value"
+          when Hash then "mrb_value"
+          else
+            if @rbs_loader&.native_class?(field_type)
+              "Native_#{field_type}"
+            else
+              "mrb_value"
+            end
+          end
+          lines << "    #{c_type} #{field_name};"
+        end
+        lines << "};"
+        lines << ""
+
+        # mrb_data_type (replaces CRuby's rb_data_type_t)
+        lines << "static const mrb_data_type #{class_name}_type = {"
+        lines << "    \"#{class_name}\", mrb_free"
+        lines << "};"
+        lines << ""
+
+        # Allocator function
+        lines << "static mrb_value #{class_name}_alloc(mrb_state *mrb, mrb_value klass) {"
+        lines << "    #{struct_name} *ptr = (#{struct_name} *)mrb_malloc(mrb, sizeof(#{struct_name}));"
+        lines << "    memset(ptr, 0, sizeof(#{struct_name}));"
+
+        # Initialize VALUE fields to nil
+        class_type.fields.each do |field_name, field_type|
+          case field_type
+          when :String, :Object, :Array, :Hash
+            lines << "    ptr->#{field_name} = mrb_nil_value();"
+          when Hash
+            lines << "    ptr->#{field_name} = mrb_nil_value();"
+          end
+        end
+
+        lines << "    struct RClass *cls = mrb_class_ptr(klass);"
+        lines << "    struct RData *data = mrb_data_object_alloc(mrb, cls, ptr, &#{class_name}_type);"
+        lines << "    return mrb_obj_value(data);"
+        lines << "}"
+        lines << ""
+
+        # Field accessors (getter)
+        class_type.fields.each do |field_name, _field_type|
+          lines << "static mrb_value #{class_name}_get_#{field_name}(mrb_state *mrb, mrb_value self) {"
+          lines << "    #{struct_name} *ptr = (#{struct_name} *)DATA_PTR(self);"
+          case _field_type
+          when :Int64
+            lines << "    return mrb_fixnum_value(ptr->#{field_name});"
+          when :Float64
+            lines << "    return mrb_float_value(mrb, ptr->#{field_name});"
+          when :Bool
+            lines << "    return ptr->#{field_name} ? mrb_true_value() : mrb_false_value();"
+          else
+            lines << "    return ptr->#{field_name};"
+          end
+          lines << "}"
+          lines << ""
+        end
+
+        # Field accessors (setter)
+        class_type.fields.each do |field_name, _field_type|
+          lines << "static mrb_value #{class_name}_set_#{field_name}(mrb_state *mrb, mrb_value self) {"
+          lines << "    mrb_value val;"
+          lines << "    mrb_get_args(mrb, \"o\", &val);"
+          lines << "    #{struct_name} *ptr = (#{struct_name} *)DATA_PTR(self);"
+          case _field_type
+          when :Int64
+            lines << "    ptr->#{field_name} = mrb_integer(val);"
+          when :Float64
+            lines << "    ptr->#{field_name} = mrb_as_float(mrb, val);"
+          when :Bool
+            lines << "    ptr->#{field_name} = mrb_test(val) ? 1 : 0;"
+          else
+            lines << "    ptr->#{field_name} = val;"
+          end
+          lines << "    return val;"
+          lines << "}"
+          lines << ""
+        end
+
+        lines
+      end
+
+      # Generate Init code for a NativeClass in mruby
+      def generate_native_class_init(class_name, class_type)
+        lines = []
+        class_var = "c#{class_name}"
+
+        superclass = class_type.superclass
+        if superclass && @rbs_loader&.native_class?(superclass)
+          lines << "    struct RClass *#{class_var} = mrb_define_class(mrb, \"#{class_name}\", c#{superclass});"
+        else
+          lines << "    struct RClass *#{class_var} = mrb_define_class(mrb, \"#{class_name}\", mrb->object_class);"
+        end
+
+        lines << "    MRB_SET_INSTANCE_TT(#{class_var}, MRB_TT_CDATA);"
+
+        # Register allocator as class method "new"
+        lines << "    mrb_define_class_method(mrb, #{class_var}, \"new\", #{class_name}_alloc, MRB_ARGS_NONE());"
+
+        # Register field accessors
+        class_type.fields.each do |field_name, _field_type|
+          lines << "    mrb_define_method(mrb, #{class_var}, \"#{field_name}\", #{class_name}_get_#{field_name}, MRB_ARGS_NONE());"
+          lines << "    mrb_define_method(mrb, #{class_var}, \"#{field_name}=\", #{class_name}_set_#{field_name}, MRB_ARGS_REQ(1));"
+        end
+
+        # Register native methods
+        class_type.methods.each do |method_name, method_sig|
+          sanitized_method = sanitize_c_name(method_name.to_s)
+          wrapper_name = "rn_wrap_#{class_name}_#{sanitized_method}"
+          arity = method_sig.param_types.size
+          mrb_args = arity_to_mrb_args(arity)
+          lines << "    mrb_define_method(mrb, #{class_var}, \"#{method_name}\", #{wrapper_name}, #{mrb_args});"
+        end
+
+        lines
+      end
+
+      # Generate extern declaration for a native function
+      def generate_native_func_declaration(class_name, class_type, method_name, method_sig)
+        lines = []
+        struct_name = "Native_#{class_name}"
+        func_name = mangle_method_name(class_name, method_name)
+
+        params = ["#{struct_name}* self"]
+        method_sig.param_types.each_with_index do |param_type, i|
+          param_name = method_sig.param_names[i] || "arg#{i}"
+          c_type = native_type_to_c(param_type, class_name)
+          params << "#{c_type} #{param_name}"
+        end
+
+        return_c_type = native_return_type_to_c(method_sig.return_type, class_name)
+        lines << "extern #{return_c_type} #{func_name}(#{params.join(', ')});"
+        lines
+      end
+
+      # Generate wrapper function for a NativeClass method (mruby style)
+      def generate_native_method_wrapper(class_name, class_type, method_name, method_sig)
+        lines = []
+        struct_name = "Native_#{class_name}"
+        native_func = mangle_method_name(class_name, method_name)
+        sanitized_method = sanitize_c_name(method_name.to_s)
+        wrapper_name = "rn_wrap_#{class_name}_#{sanitized_method}"
+
+        arity = method_sig.param_types.size
+
+        lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
+        lines << "    #{struct_name} *ptr = (#{struct_name} *)DATA_PTR(self);"
+
+        # Get arguments with mrb_get_args
+        if arity > 0
+          lines << "    mrb_value #{(0...arity).map { |i| "arg#{i}" }.join(', ')};"
+          format_str = "o" * arity
+          args_list = (0...arity).map { |i| "&arg#{i}" }.join(", ")
+          lines << "    mrb_get_args(mrb, \"#{format_str}\", #{args_list});"
+        end
+
+        # Convert Ruby arguments to native types
+        call_args = ["ptr"]
+        method_sig.param_types.each_with_index do |param_type, i|
+          arg_name = "native_arg#{i}"
+          lines.concat(convert_ruby_to_native("arg#{i}", arg_name, param_type, class_name, class_type))
+          call_args << arg_name
+        end
+
+        # Call native function
+        return_type = method_sig.return_type
+        if return_type == :Void
+          lines << "    #{native_func}(#{call_args.join(', ')});"
+          lines << "    return mrb_nil_value();"
+        elsif return_type == :Self || @rbs_loader&.native_class?(return_type)
+          result_class = return_type == :Self ? class_name : return_type
+          result_struct = "Native_#{result_class}"
+          lines << "    #{result_struct} result = #{native_func}(#{call_args.join(', ')});"
+          lines << "    struct RClass *result_cls = mrb_class_get(mrb, \"#{result_class}\");"
+          lines << "    mrb_value result_obj = #{result_class}_alloc(mrb, mrb_obj_value(result_cls));"
+          lines << "    #{result_struct} *result_ptr = (#{result_struct} *)DATA_PTR(result_obj);"
+          lines << "    *result_ptr = result;"
+          lines << "    return result_obj;"
+        elsif return_type == :Int64
+          lines << "    int64_t result = #{native_func}(#{call_args.join(', ')});"
+          lines << "    return mrb_fixnum_value(result);"
+        elsif return_type == :Float64
+          lines << "    double result = #{native_func}(#{call_args.join(', ')});"
+          lines << "    return mrb_float_value(mrb, result);"
+        else
+          lines << "    double result = #{native_func}(#{call_args.join(', ')});"
+          lines << "    return mrb_float_value(mrb, result);"
+        end
+
+        lines << "}"
+        lines << ""
+        lines
+      end
+
+      # Convert native type symbol to C type string
+      def native_type_to_c(type_sym, current_class)
+        case type_sym
+        when :Int64 then "int64_t"
+        when :Float64 then "double"
+        when :Self then "Native_#{current_class}*"
+        else
+          "Native_#{type_sym}*"
+        end
+      end
+
+      def native_return_type_to_c(type_sym, current_class)
+        case type_sym
+        when :Int64 then "int64_t"
+        when :Float64 then "double"
+        when :Void then "void"
+        when :Self then "Native_#{current_class}"
+        else
+          "Native_#{type_sym}"
+        end
+      end
+
+      # Generate code to convert mruby mrb_value to native type
+      def convert_ruby_to_native(ruby_var, native_var, type_sym, current_class, class_type)
+        lines = []
+        case type_sym
+        when :Int64
+          lines << "    int64_t #{native_var} = mrb_integer(#{ruby_var});"
+        when :Float64
+          lines << "    double #{native_var} = mrb_as_float(mrb, #{ruby_var});"
+        when :Self
+          struct_name = "Native_#{current_class}"
+          lines << "    #{struct_name} *#{native_var} = (#{struct_name} *)DATA_PTR(#{ruby_var});"
+        else
+          struct_name = "Native_#{type_sym}"
+          lines << "    #{struct_name} *#{native_var} = (#{struct_name} *)DATA_PTR(#{ruby_var});"
+        end
+        lines
+      end
+
+      def generate_cfunc_extern_declaration(cfunc_type)
+        lines = []
+        # Generate extern declaration for C function
+        return_c = case cfunc_type.return_type
+        when :Float64, :float, :double then "double"
+        when :Int64, :int, :long then "long"
+        when :Void, :void then "void"
+        when :String, :string then "const char*"
+        when :Pointer, :ptr then "void*"
+        else "double"
+        end
+
+        params_c = cfunc_type.param_types.map do |pt|
+          case pt
+          when :Float64, :float, :double then "double"
+          when :Int64, :int, :long then "long"
+          when :String, :string then "const char*"
+          when :Pointer, :ptr then "void*"
+          else "double"
+          end
+        end
+
+        lines << "extern #{return_c} #{cfunc_type.c_func_name}(#{params_c.join(', ')});"
+        lines
+      end
+
+      # Convert HIR literal node to mruby C expression
+      def hir_literal_to_mrb_value(node)
+        case node
+        when HIR::IntLit
+          "mrb_fixnum_value(#{node.value})"
+        when HIR::FloatLit
+          "mrb_float_value(mrb, #{node.value})"
+        when HIR::StringLit
+          "mrb_str_new_cstr(mrb, \"#{escape_c_string(node.value)}\")"
+        when HIR::SymbolLit
+          "mrb_symbol_value(mrb_intern_cstr(mrb, \"#{node.value}\"))"
+        when HIR::BoolLit
+          node.value ? "mrb_true_value()" : "mrb_false_value()"
+        when HIR::NilLit
+          "mrb_nil_value()"
+        end
+      end
+
+      def escape_c_string(str)
+        str.gsub("\\", "\\\\\\\\")
+           .gsub("\"", "\\\"")
+           .gsub("\n", "\\n")
+           .gsub("\t", "\\t")
+           .gsub("\r", "\\r")
+      end
+
+      def arity_to_mrb_args(arity)
+        if arity == -1
+          "MRB_ARGS_ANY()"
+        elsif arity == 0
+          "MRB_ARGS_NONE()"
+        else
+          "MRB_ARGS_REQ(#{arity})"
+        end
+      end
+
+      def resolve_superclass_mrb_expr(superclass, non_native_classes)
+        return "mrb->object_class" unless superclass
+
+        known_core = {
+          "StandardError" => "E_STANDARD_ERROR",
+          "RuntimeError" => "E_RUNTIME_ERROR",
+          "ArgumentError" => "E_ARGUMENT_ERROR",
+          "TypeError" => "E_TYPE_ERROR",
+          "NameError" => "E_NAME_ERROR",
+          "IndexError" => "E_INDEX_ERROR",
+          "RangeError" => "E_RANGE_ERROR",
+        }
+
+        if known_core[superclass.to_s]
+          known_core[superclass.to_s]
+        elsif non_native_classes.any? { |cd| cd.name.to_s == superclass.to_s }
+          "c#{superclass}"
+        else
+          "mrb_class_get(mrb, \"#{superclass}\")"
+        end
+      end
+
+      def resolve_module_mrb_expr(module_name)
+        "mrb_module_get(mrb, \"#{module_name}\")"
+      end
+
+      def mangle_method_name(class_name, method_name)
+        owner = class_name.to_s.gsub(/[^a-zA-Z0-9_]/, "_")
+        name = sanitize_c_name(method_name.to_s)
+        "rn_#{owner}_#{name}"
+      end
+
+      OPERATOR_NAME_MAP = {
+        "+" => "op_plus", "-" => "op_minus", "*" => "op_mul", "/" => "op_div",
+        "%" => "op_mod", "**" => "op_pow", "==" => "op_eq", "!=" => "op_neq",
+        "<" => "op_lt", ">" => "op_gt", "<=" => "op_le", ">=" => "op_ge",
+        "<=>" => "op_cmp", "<<" => "op_lshift", ">>" => "op_rshift",
+        "&" => "op_and", "|" => "op_or", "^" => "op_xor", "~" => "op_not",
+        "[]" => "op_aref", "[]=" => "op_aset", "+@" => "op_uplus", "-@" => "op_uminus",
+      }.freeze
+
+      def sanitize_c_name(name)
+        return OPERATOR_NAME_MAP[name] if OPERATOR_NAME_MAP.key?(name)
+        name.gsub(/[^a-zA-Z0-9_]/, "_")
+      end
+
+      # === Compilation pipeline ===
+
+      def compile_ir_to_object(ir_file, obj_file)
+        llc = find_llvm_tool("llc")
+        optimized_ir = nil
+
+        unless @debug
+          opt = find_llvm_tool("opt")
+          if opt
+            optimized_ir = "#{ir_file}.opt.ll"
+            opt_cmd = [opt, "--passes=default<O2>", "-S", "-o", optimized_ir, ir_file]
+            if system(*opt_cmd)
+              ir_file = optimized_ir
+            else
+              optimized_ir = nil
+            end
+          end
+        end
+
+        opt_level = @debug ? "-O0" : "-O2"
+        cmd = [
+          llc, opt_level,
+          "-filetype=obj",
+          "-relocation-model=static",  # Static for standalone executable (not PIC)
+          "-o", obj_file, ir_file
+        ]
+
+        system(*cmd) or raise CodegenError, "Failed to compile LLVM IR to object file"
+      ensure
+        FileUtils.rm_f(optimized_ir) if optimized_ir
+      end
+
+      def compile_c_to_object(c_file, obj_file)
+        cc = find_llvm_tool("clang") || "cc"
+        cflags = Platform.mruby_cflags
+
+        cmd = [cc, "-c"]
+        cmd.concat(cflags.split)
+        cmd += ["-o", obj_file, c_file]
+
+        system(*cmd) or raise CodegenError, "Failed to compile mruby init wrapper"
+      end
+
+      def compile_helpers_to_object(obj_file)
+        cc = find_llvm_tool("clang") || "cc"
+        helpers_c = File.expand_path("mruby_helpers.c", __dir__)
+        cflags = Platform.mruby_cflags
+
+        cmd = [cc, "-c"]
+        cmd.concat(cflags.split)
+        cmd += ["-o", obj_file, helpers_c]
+
+        system(*cmd) or raise CodegenError, "Failed to compile mruby helpers"
+      end
+
+      def link_to_executable(obj_files, output_file)
+        cc = find_llvm_tool("clang") || "cc"
+        ldflags = Platform.mruby_ldflags
+        ffi_libs = ffi_link_flags
+
+        cmd = [cc, "-o", output_file, *obj_files]
+        cmd.concat(ldflags.split)
+        cmd.concat(ffi_libs)
+
+        if @debug
+          cmd << "-g"
+        end
+
+        # Platform-specific flags
+        case RbConfig::CONFIG["host_os"]
+        when /darwin/
+          # macOS may need frameworks for certain libs
+        when /linux/
+          cmd << "-lpthread" unless ldflags.include?("-lpthread")
+          cmd << "-ldl" unless ldflags.include?("-ldl")
+        end
+
+        system(*cmd) or raise CodegenError, "Failed to link standalone executable"
+      end
+
+      def ffi_link_flags
+        flags = []
+        if @rbs_loader
+          @rbs_loader.all_ffi_libraries.each do |lib_name|
+            link_name = lib_name.sub(/^lib/, "")
+            flags << "-l#{link_name}"
+          end
+        end
+        flags
+      end
+
+      def find_llvm_tool(name)
+        Platform.find_llvm_tool(name)
+      end
+
+      # Sort native classes in dependency order
+      def topological_sort_native_classes(native_classes)
+        sorted = []
+        visited = {}
+
+        visit = lambda do |name|
+          return if visited[name]
+          visited[name] = true
+          class_type = native_classes[name]
+          if class_type
+            class_type.fields.each_value do |field_type|
+              next if TypeChecker::Types::NativeClassType::ALLOWED_PRIMITIVE_TYPES.include?(field_type)
+              next if TypeChecker::Types::NativeClassType::RUBY_OBJECT_TYPES.include?(field_type)
+              next if field_type.is_a?(Hash)
+              dep_name = field_type.to_sym
+              visit.call(dep_name) if native_classes.key?(dep_name)
+            end
+          end
+          sorted << name.to_s
+        end
+
+        native_classes.each_key { |name| visit.call(name) }
+        sorted
+      end
+
+      def topological_sort_non_native_classes(classes)
+        class_map = classes.map { |c| [c.name.to_s, c] }.to_h
+        sorted = []
+        visited = {}
+
+        visit = lambda do |cls|
+          return if visited[cls.name.to_s]
+          visited[cls.name.to_s] = true
+          if cls.superclass && class_map[cls.superclass.to_s]
+            visit.call(class_map[cls.superclass.to_s])
+          end
+          sorted << cls
+        end
+
+        classes.each { |c| visit.call(c) }
+        sorted
+      end
+    end
+  end
+end

@@ -12,7 +12,7 @@ module Konpeito
       BLOCK_SELF_CAPTURE = "__blk_self__"
       attr_reader :mod, :builder, :hir_program
 
-      def initialize(module_name: "konpeito", monomorphizer: nil, rbs_loader: nil, debug: false, profile: false, source_file: nil)
+      def initialize(module_name: "konpeito", monomorphizer: nil, rbs_loader: nil, debug: false, profile: false, source_file: nil, runtime: :cruby)
         begin
           require "llvm/core"
           require "llvm/execution_engine"
@@ -50,6 +50,7 @@ module Konpeito
         @comparison_result_vars = Set.new  # Track variables holding comparison results (0/1 boolean)
         @polymorphic_methods = Set.new  # Method names defined in multiple classes (must not use direct call)
         @hir_functions = {}  # name -> HIR::Function; used to detect &blk params (proc-storing methods)
+        @runtime = runtime  # :cruby or :mruby
 
         # Register all NativeClass types from RBS upfront
         register_native_classes_from_rbs
@@ -85,8 +86,12 @@ module Konpeito
           @profiler = Profiler.new(@mod, @builder)
         end
 
-        # Declare external CRuby functions
-        declare_cruby_functions
+        # Declare external runtime functions
+        if @runtime == :mruby
+          declare_mruby_functions
+        else
+          declare_cruby_functions
+        end
 
         # Scan HIR to register NativeClassTypes before code generation
         scan_for_native_class_types(hir_program)
@@ -441,7 +446,7 @@ module Konpeito
       def generate_vtable_call(class_type, method_name, method_sig, receiver_ptr, call_args)
         # Get vtable index for this method
         vtable_idx = class_type.vtable_index(method_name, @native_class_type_registry)
-        return @qnil unless vtable_idx
+        return qnil unless vtable_idx
 
         # Load vptr from object (first field)
         llvm_struct = get_or_create_native_class_struct(class_type)
@@ -498,6 +503,51 @@ module Konpeito
       end
 
       private
+
+      # Runtime-aware constant accessors
+      # For CRuby, these return pre-computed LLVM constants.
+      # For mruby, these load from globals initialized by konpeito_mruby_init_constants().
+      def qnil
+        if @runtime == :mruby
+          @builder.load2(value_type, @mrb_qnil_global, "qnil")
+        else
+          @qnil
+        end
+      end
+
+      def qtrue
+        if @runtime == :mruby
+          @builder.load2(value_type, @mrb_qtrue_global, "qtrue")
+        else
+          @qtrue
+        end
+      end
+
+      def qfalse
+        if @runtime == :mruby
+          @builder.load2(value_type, @mrb_qfalse_global, "qfalse")
+        else
+          @qfalse
+        end
+      end
+
+      def qundef
+        if @runtime == :mruby
+          @builder.load2(value_type, @mrb_qundef_global, "qundef")
+        else
+          @qundef
+        end
+      end
+
+      # Check if running with mruby runtime
+      def mruby?
+        @runtime == :mruby
+      end
+
+      # Load the global mrb_state pointer (mruby only)
+      def load_mrb_state
+        @builder.load2(ptr_type, @mrb_state_global, "mrb")
+      end
 
       # Type helpers
       def value_type
@@ -957,6 +1007,73 @@ module Konpeito
         declare_builtin_methods
       end
 
+      # Declare mruby runtime functions using CRuby-compatible C wrappers.
+      #
+      # Strategy: mruby_helpers.c provides C functions with the SAME names and
+      # signatures as CRuby's API (rb_intern, rb_funcallv, rb_int2inum, etc.).
+      # These wrappers internally use the global konpeito_mrb_state to call the
+      # corresponding mruby API functions. This means the LLVM IR is identical
+      # for both runtimes — no call site changes needed.
+      #
+      # The only difference is Qnil/Qtrue/Qfalse/Qundef, which have different
+      # bit patterns in mruby. These are stored in globals initialized at startup.
+      def declare_mruby_functions
+        # Global mrb_state pointer (used by C wrappers in mruby_helpers.c)
+        @mrb_state_global = @mod.globals.add(ptr_type, "konpeito_mrb_state") do |var|
+          var.linkage = :external
+        end
+
+        # Reuse all CRuby function declarations — mruby_helpers.c provides
+        # compatible implementations under the same names.
+        declare_cruby_functions
+
+        # Override Qnil/Qtrue/Qfalse/Qundef with globals.
+        # mruby's value representation is runtime-dependent (NaN-boxing vs word-boxing),
+        # so we can't hardcode CRuby's constants (Qnil=4, Qtrue=2, etc.).
+        # These globals are initialized by konpeito_mruby_init_constants() called
+        # from main() before any Konpeito code runs.
+
+        # C wrapper functions to get mruby constant values
+        mrb_nil_fn = @mod.functions.add("konpeito_mrb_nil_value", [], value_type)
+        mrb_true_fn = @mod.functions.add("konpeito_mrb_true_value", [], value_type)
+        mrb_false_fn = @mod.functions.add("konpeito_mrb_false_value", [], value_type)
+        mrb_undef_fn = @mod.functions.add("konpeito_mrb_undef_value", [], value_type)
+
+        @mrb_qnil_global = @mod.globals.add(value_type, "konpeito_qnil") do |var|
+          var.initializer = LLVM::Int64.from_i(0)
+          var.linkage = :common
+        end
+        @mrb_qtrue_global = @mod.globals.add(value_type, "konpeito_qtrue") do |var|
+          var.initializer = LLVM::Int64.from_i(0)
+          var.linkage = :common
+        end
+        @mrb_qfalse_global = @mod.globals.add(value_type, "konpeito_qfalse") do |var|
+          var.initializer = LLVM::Int64.from_i(0)
+          var.linkage = :common
+        end
+        @mrb_qundef_global = @mod.globals.add(value_type, "konpeito_qundef") do |var|
+          var.initializer = LLVM::Int64.from_i(0)
+          var.linkage = :common
+        end
+
+        # Generate the init function that populates these globals
+        init_fn = @mod.functions.add("konpeito_mruby_init_constants", [], LLVM.Void)
+        init_builder = LLVM::Builder.new
+        entry_bb = init_fn.basic_blocks.append("entry")
+        init_builder.position_at_end(entry_bb)
+        init_builder.store(init_builder.call(mrb_nil_fn), @mrb_qnil_global)
+        init_builder.store(init_builder.call(mrb_true_fn), @mrb_qtrue_global)
+        init_builder.store(init_builder.call(mrb_false_fn), @mrb_qfalse_global)
+        init_builder.store(init_builder.call(mrb_undef_fn), @mrb_qundef_global)
+        init_builder.ret_void
+
+        # Clear @qnil etc. so the accessor methods know to load from globals
+        @qnil = nil
+        @qtrue = nil
+        @qfalse = nil
+        @qundef = nil
+      end
+
       # Declare yyjson wrapper functions for JSON parsing
       # Uses konpeito_yyjson_* wrappers for inline functions
       def declare_yyjson_functions
@@ -1217,7 +1334,7 @@ module Konpeito
             cell_typed = @builder.int2ptr(cell_int, LLVM::Pointer(value_type), "tbox_#{cap_name}_ptr")
 
             # Initialize with Qnil (variables haven't been assigned yet at entry)
-            @builder.store(@qnil, cell_typed)
+            @builder.store(qnil, cell_typed)
 
             # Replace stack alloca with heap cell — all subsequent reads/writes
             # in the function go through this shared heap location
@@ -1443,7 +1560,7 @@ module Konpeito
               generate_keyword_default_value(param.default_value)
             else
               # Required keyword - use Qundef to detect missing
-              @qundef
+              qundef
             end
 
             # Lookup value in kwargs hash
@@ -1459,7 +1576,7 @@ module Konpeito
               continue_block = current_func.basic_blocks.append("kwarg_ok_#{param.name}")
 
               # Check if value == Qundef (missing keyword)
-              is_missing = @builder.icmp(:eq, value, @qundef)
+              is_missing = @builder.icmp(:eq, value, qundef)
               @builder.cond(is_missing, error_block, continue_block)
 
               # Generate error block: raise ArgumentError
@@ -1542,7 +1659,7 @@ module Konpeito
             @builder.br(block_param_continue)
 
             @builder.position_at_end(block_param_continue)
-            block_value = @builder.phi(value_type, { has_block_bb => proc_val, no_block_bb => @qnil })
+            block_value = @builder.phi(value_type, { has_block_bb => proc_val, no_block_bb => qnil })
             @builder.store(block_value, alloca)
 
             # Remap entry block since we created new basic blocks
@@ -1839,7 +1956,7 @@ module Konpeito
       # Inside thread callbacks, params[0] is ptr (void*) not VALUE, so returns Qnil.
       def get_self_value
         return @block_callback_self if @block_callback_self
-        return @qnil if @in_thread_callback
+        return qnil if @in_thread_callback
 
         func = @builder.insert_block.parent
         mangled = func.name
@@ -2187,7 +2304,7 @@ module Konpeito
         else
           # Unknown instruction, store nil
           if inst.result_var
-            @variables[inst.result_var] = @qnil
+            @variables[inst.result_var] = qnil
           end
         end
       end
@@ -2226,7 +2343,7 @@ module Konpeito
       # This avoids multiple memory reallocations during concatenation
       def generate_string_concat(inst)
         parts = inst.parts
-        return @qnil if parts.empty?
+        return qnil if parts.empty?
 
         # Separate static (StringLit) and dynamic parts
         # Calculate static length at compile time
@@ -2324,14 +2441,14 @@ module Konpeito
       end
 
       def generate_bool_lit(inst)
-        value = inst.value ? @qtrue : @qfalse
+        value = inst.value ? qtrue : qfalse
         @variables[inst.result_var] = value if inst.result_var
         value
       end
 
       def generate_nil_lit(inst)
-        @variables[inst.result_var] = @qnil if inst.result_var
-        @qnil
+        @variables[inst.result_var] = qnil if inst.result_var
+        qnil
       end
 
       def generate_array_lit(inst)
@@ -2497,7 +2614,7 @@ module Konpeito
           end
           @builder.load2(llvm_type, alloca, "#{var_name}_val")
         else
-          @variables[var_name] || @qnil
+          @variables[var_name] || qnil
         end
 
         # Store with type tag for later use
@@ -2750,7 +2867,7 @@ module Konpeito
             # Generate the LoadLocal instruction to load from @variable_allocas.
             generate_instruction(hir_value)
             var_name = hir_value.result_var || hir_value.var.name
-            value = @variables[var_name] || @qnil
+            value = @variables[var_name] || qnil
             type_tag = @variable_types[var_name] || :value
             [value, type_tag]
           end
@@ -2772,19 +2889,19 @@ module Konpeito
               # Instruction hasn't been generated yet - generate it now
               # This handles cases like pattern match bodies where args haven't been emitted
               generate_instruction(hir_value)
-              value = @variables[hir_value.result_var] || @qnil
+              value = @variables[hir_value.result_var] || qnil
               type_tag = @variable_types[hir_value.result_var] || :value
               [value, type_tag]
             end
           else
-            [@qnil, :value]
+            [qnil, :value]
           end
         when String
-          value = @variables[hir_value] || @qnil
+          value = @variables[hir_value] || qnil
           type_tag = @variable_types[hir_value] || :value
           [value, type_tag]
         else
-          [@qnil, :value]
+          [qnil, :value]
         end
       end
 
@@ -2798,7 +2915,7 @@ module Konpeito
           @builder.call(@rb_num2dbl, value)
         when [:value, :i8]
           # RTEST: (value & ~Qnil) != 0
-          not_qnil = @builder.xor(@qnil, LLVM::Int64.from_i(-1))
+          not_qnil = @builder.xor(qnil, LLVM::Int64.from_i(-1))
           masked = @builder.and(value, not_qnil)
           is_truthy = @builder.icmp(:ne, masked, LLVM::Int64.from_i(0))
           @builder.zext(is_truthy, LLVM::Int8)
@@ -2809,7 +2926,7 @@ module Konpeito
         when [:i8, :value]
           # Convert bool to Ruby true/false
           is_true = @builder.icmp(:ne, value, LLVM::Int8.from_i(0))
-          @builder.select(is_true, @qtrue, @qfalse)
+          @builder.select(is_true, qtrue, qfalse)
         when [:i64, :double]
           @builder.si2fp(value, LLVM::Double)
         when [:double, :i64]
@@ -2869,7 +2986,7 @@ module Konpeito
 
       # Infer type tag from LLVM value (useful for constants)
       def infer_type_from_llvm_value(val)
-        return [@qnil, :value] if val.nil?
+        return [qnil, :value] if val.nil?
 
         if val.is_a?(LLVM::Constant)
           case val.type
@@ -3129,7 +3246,7 @@ module Konpeito
           int_result = @builder.call(@rb_block_given_p)
           # Convert to Ruby boolean
           is_given = @builder.icmp(:ne, int_result, LLVM::Int32.from_i(0))
-          result = @builder.select(is_given, @qtrue, @qfalse)
+          result = @builder.select(is_given, qtrue, qfalse)
           @variables[inst.result_var] = result if inst.result_var
           return result
         end
@@ -3344,7 +3461,7 @@ module Konpeito
         receiver = get_value_as_ruby(inst.receiver)
 
         # Compare receiver with Qnil
-        is_nil = @builder.icmp(:eq, receiver, @qnil)
+        is_nil = @builder.icmp(:eq, receiver, qnil)
 
         safe_call_bb = func.basic_blocks.append("safe_call")
         safe_nil_bb = func.basic_blocks.append("safe_nil")
@@ -3371,7 +3488,7 @@ module Konpeito
 
         # Merge
         @builder.position_at_end(safe_merge_bb)
-        phi = @builder.phi(value_type, { call_exit_bb => call_result, safe_nil_bb => @qnil })
+        phi = @builder.phi(value_type, { call_exit_bb => call_result, safe_nil_bb => qnil })
         if inst.result_var
           @variables[inst.result_var] = phi
           # Safe navigation result is always VALUE since it can be nil
@@ -3417,7 +3534,7 @@ module Konpeito
           @builder.call(@rb_float_new, value)
         when :i8
           is_true = @builder.icmp(:ne, value, LLVM::Int8.from_i(0))
-          @builder.select(is_true, @qtrue, @qfalse)
+          @builder.select(is_true, qtrue, qfalse)
         else
           value
         end
@@ -3521,11 +3638,11 @@ module Konpeito
         case type_str
         when "nil", "Nil", "NilClass"
           # nil check: value == Qnil
-          return @builder.icmp(:eq, value, @qnil)
+          return @builder.icmp(:eq, value, qnil)
         when "bool", "Bool"
           # bool check: value == Qtrue || value == Qfalse
-          is_true = @builder.icmp(:eq, value, @qtrue)
-          is_false = @builder.icmp(:eq, value, @qfalse)
+          is_true = @builder.icmp(:eq, value, qtrue)
+          is_false = @builder.icmp(:eq, value, qfalse)
           return @builder.or(is_true, is_false)
         end
 
@@ -3536,7 +3653,7 @@ module Konpeito
         is_kind = @builder.call(@rb_obj_is_kind_of, value, class_value)
 
         # rb_obj_is_kind_of returns Qtrue/Qfalse, convert to i1
-        @builder.icmp(:ne, is_kind, @qfalse)
+        @builder.icmp(:ne, is_kind, qfalse)
       end
 
       # Get the Ruby class VALUE for a type name
@@ -3899,7 +4016,7 @@ module Konpeito
         @variable_allocas = saved_allocas
 
         # Store result back to accumulator
-        new_acc = body_result || (use_unboxed ? (elem_unboxed_type == :i64 ? LLVM::Int64.from_i(0) : LLVM::Double.from_f(0.0)) : @qnil)
+        new_acc = body_result || (use_unboxed ? (elem_unboxed_type == :i64 ? LLVM::Int64.from_i(0) : LLVM::Double.from_f(0.0)) : qnil)
 
         if use_unboxed
           # Keep unboxed throughout the loop
@@ -4058,7 +4175,7 @@ module Konpeito
               ensure_ruby_value(body_result)
             end
           else
-            @qnil
+            qnil
           end
           @builder.call(@rb_ary_push, result_array, mapped_val)
         when :select, :filter
@@ -4077,8 +4194,8 @@ module Konpeito
             else
               # Boxed VALUE: check for truthy
               select_val = ensure_ruby_value(body_result)
-              is_truthy = @builder.icmp(:ne, select_val, @qfalse)
-              is_not_nil = @builder.icmp(:ne, select_val, @qnil)
+              is_truthy = @builder.icmp(:ne, select_val, qfalse)
+              is_not_nil = @builder.icmp(:ne, select_val, qnil)
               @builder.and(is_truthy, is_not_nil)
             end
           else
@@ -4110,8 +4227,8 @@ module Konpeito
               # Boxed VALUE: check for falsy
               reject_val = ensure_ruby_value(body_result)
               @builder.or(
-                @builder.icmp(:eq, reject_val, @qfalse),
-                @builder.icmp(:eq, reject_val, @qnil)
+                @builder.icmp(:eq, reject_val, qfalse),
+                @builder.icmp(:eq, reject_val, qnil)
               )
             end
           else
@@ -4209,8 +4326,8 @@ module Konpeito
             # For VALUE: not nil and not false
             # Check if this looks like an unboxed integer (large positive number)
             # For safety, check against Qnil and Qfalse
-            not_nil = @builder.icmp(:ne, value, @qnil)
-            not_false = @builder.icmp(:ne, value, @qfalse)
+            not_nil = @builder.icmp(:ne, value, qnil)
+            not_false = @builder.icmp(:ne, value, qfalse)
             @builder.and(not_nil, not_false)
           when LLVM::Double
             # Unboxed double: non-zero is truthy
@@ -4218,8 +4335,8 @@ module Konpeito
           else
             # Generic VALUE: not nil and not false
             val = ensure_ruby_value(value)
-            not_nil = @builder.icmp(:ne, val, @qnil)
-            not_false = @builder.icmp(:ne, val, @qfalse)
+            not_nil = @builder.icmp(:ne, val, qnil)
+            not_false = @builder.icmp(:ne, val, qfalse)
             @builder.and(not_nil, not_false)
           end
         else
@@ -4374,7 +4491,7 @@ module Konpeito
         @builder.position_at_end(loop_end)
         phi_incoming = {
           found_block => elem_value,
-          loop_cond => @qnil
+          loop_cond => qnil
         }
         @builder.phi(value_type, phi_incoming, "find_result")
       end
@@ -4464,18 +4581,18 @@ module Konpeito
         # Early exit block
         @builder.position_at_end(early_exit)
         early_result = case method_sym
-        when :any? then @qtrue   # Found truthy element
-        when :all? then @qfalse  # Found falsy element
-        when :none? then @qfalse # Found truthy element (should be none)
+        when :any? then qtrue   # Found truthy element
+        when :all? then qfalse  # Found falsy element
+        when :none? then qfalse # Found truthy element (should be none)
         end
         @builder.br(loop_end)
 
         # Loop end (completed without early exit)
         @builder.position_at_end(loop_end)
         default_result = case method_sym
-        when :any? then @qfalse  # No truthy element found
-        when :all? then @qtrue   # All elements were truthy
-        when :none? then @qtrue  # No truthy element found
+        when :any? then qfalse  # No truthy element found
+        when :all? then qtrue   # All elements were truthy
+        when :none? then qtrue  # No truthy element found
         end
 
         phi_incoming = {
@@ -4573,7 +4690,7 @@ module Konpeito
             val = if @variable_allocas[cap.name]
                     @builder.load2(value_type, @variable_allocas[cap.name], "blk_esc_#{cap.name}")
                   else
-                    @qnil
+                    qnil
                   end
             @builder.call(@rb_ary_push, esc_ary, val)
           end
@@ -4609,7 +4726,7 @@ module Konpeito
 
       # Create a struct containing pointers to captured variables
       def create_capture_struct(captures)
-        return @qnil if captures.empty?
+        return qnil if captures.empty?
 
         # Create struct with VALUE* for each captured variable
         # We store pointers to the allocas so the callback can read/write them
@@ -4900,7 +5017,7 @@ module Konpeito
                 result_type = :value  # Default
                 @builder.ret(result_val)
               else
-                @builder.ret(@qnil)
+                @builder.ret(qnil)
               end
             end
           end
@@ -4911,7 +5028,7 @@ module Konpeito
           @loop_stack = saved_loop_stack
         else
           # Single-block body (simple expression, no control flow)
-          result = @qnil
+          result = qnil
           result_type = :value
           last_inst = nil
           block_def.body.each do |basic_block|
@@ -4933,12 +5050,12 @@ module Konpeito
           end
 
           # Return the result, converting to VALUE if necessary
-          result = @qnil if result.nil?
+          result = qnil if result.nil?
           # Box the result if it's unboxed
           if result.is_a?(LLVM::Value) && result_type != :value
             result = convert_value(result, result_type, :value)
           end
-          @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
+          @builder.ret(result.is_a?(LLVM::Value) ? result : qnil)
         end
 
         # Restore builder state
@@ -4955,7 +5072,7 @@ module Konpeito
       # Generate a Proc object from a block definition
       def generate_proc_new(inst)
         block_def = inst.block_def
-        return @qnil unless block_def
+        return qnil unless block_def
 
         # Prepare captures - get current values of captured variables
         captures = block_def.captures
@@ -4996,7 +5113,7 @@ module Konpeito
                     @builder.load2(value_type, @variable_allocas[capture.name],
                                    "esc_load_#{capture.name}")
                   else
-                    @qnil
+                    qnil
                   end
             @builder.call(@rb_ary_push, esc_ary, val)
           end
@@ -5048,7 +5165,7 @@ module Konpeito
           f = @mod.functions.add("__konpeito_lambda_true", [value_type], value_type)
           bb = f.basic_blocks.append("entry")
           @builder.position_at_end(bb)
-          @builder.ret(@qtrue)
+          @builder.ret(qtrue)
           f
         end
 
@@ -5144,7 +5261,7 @@ module Konpeito
       # Generate a Fiber object from a block definition
       def generate_fiber_new(inst)
         block_def = inst.block_def
-        return @qnil unless block_def
+        return qnil unless block_def
 
         # Prepare captures - get current values of captured variables
         captures = block_def.captures
@@ -5299,7 +5416,7 @@ module Konpeito
       # Generate Thread.new { ... } call
       def generate_thread_new(inst)
         block_def = inst.block_def
-        return @qnil unless block_def
+        return qnil unless block_def
 
         # Prepare captures
         captures = block_def.captures
@@ -5351,7 +5468,7 @@ module Konpeito
               val = if @variable_allocas[capture.name]
                       @builder.load2(value_type, @variable_allocas[capture.name], "tc_#{capture.name}")
                     else
-                      @qnil
+                      qnil
                     end
               elem_ptr = @builder.gep2(value_type, val_arr_ptr, [LLVM::Int64.from_i(i)], "tc_elem_#{i}")
               @builder.store(val, elem_ptr)
@@ -5501,7 +5618,7 @@ module Konpeito
                              last_instr.opcode == :unreachable)
             unless has_terminator
               @builder.position_at_end(llvm_block)
-              @builder.ret(last_instr || @qnil)
+              @builder.ret(last_instr || qnil)
             end
           end
 
@@ -5509,7 +5626,7 @@ module Konpeito
           @return_blocks = saved_return_blocks
           @loop_stack = saved_loop_stack
         else
-          result = @qnil
+          result = qnil
           result_type = :value
           last_inst = nil
           block_def.body.each do |basic_block|
@@ -5528,11 +5645,11 @@ module Konpeito
             result_type = @variable_types[last_inst.result_var] || :value
           end
 
-          result = @qnil if result.nil?
+          result = qnil if result.nil?
           if result.is_a?(LLVM::Value) && result_type != :value
             result = convert_value(result, result_type, :value)
           end
-          @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
+          @builder.ret(result.is_a?(LLVM::Value) ? result : qnil)
         end
 
         # Restore builder state
@@ -5765,7 +5882,7 @@ module Konpeito
         end
 
         # Execute block body
-        result = @qnil
+        result = qnil
         result_type = :value
         last_inst = nil
 
@@ -5787,11 +5904,11 @@ module Konpeito
         end
 
         # Box result if needed
-        result = @qnil if result.nil?
+        result = qnil if result.nil?
         if result.is_a?(LLVM::Value) && result_type != :value
           result = convert_value(result, result_type, :value)
         end
-        @builder.ret(result.is_a?(LLVM::Value) ? result : @qnil)
+        @builder.ret(result.is_a?(LLVM::Value) ? result : qnil)
 
         # Restore builder state
         @builder.position_at_end(saved_block) if saved_block
@@ -5822,7 +5939,7 @@ module Konpeito
         @builder.call(@rb_mutex_unlock, callback_func.params[0])
 
         # Return Qnil
-        @builder.ret(@qnil)
+        @builder.ret(qnil)
 
         # Restore builder state
         @builder.position_at_end(saved_block) if saved_block
@@ -6458,7 +6575,7 @@ module Konpeito
           # even?(x) = (x & 1) == 0
           bit = @builder.and(val, LLVM::Int64.from_i(1))
           is_even = @builder.icmp(:eq, bit, LLVM::Int64.from_i(0))
-          result = @builder.select(is_even, @qtrue, @qfalse)
+          result = @builder.select(is_even, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6468,7 +6585,7 @@ module Konpeito
           # odd?(x) = (x & 1) != 0
           bit = @builder.and(val, LLVM::Int64.from_i(1))
           is_odd = @builder.icmp(:ne, bit, LLVM::Int64.from_i(0))
-          result = @builder.select(is_odd, @qtrue, @qfalse)
+          result = @builder.select(is_odd, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6476,7 +6593,7 @@ module Konpeito
           result
         when "zero?"
           is_zero = @builder.icmp(:eq, val, LLVM::Int64.from_i(0))
-          result = @builder.select(is_zero, @qtrue, @qfalse)
+          result = @builder.select(is_zero, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6484,7 +6601,7 @@ module Konpeito
           result
         when "positive?"
           is_pos = @builder.icmp(:sgt, val, LLVM::Int64.from_i(0))
-          result = @builder.select(is_pos, @qtrue, @qfalse)
+          result = @builder.select(is_pos, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6492,7 +6609,7 @@ module Konpeito
           result
         when "negative?"
           is_neg = @builder.icmp(:slt, val, LLVM::Int64.from_i(0))
-          result = @builder.select(is_neg, @qtrue, @qfalse)
+          result = @builder.select(is_neg, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6531,7 +6648,7 @@ module Konpeito
           result
         when "zero?"
           is_zero = @builder.fcmp(:oeq, val, LLVM::Double.from_f(0.0))
-          result = @builder.select(is_zero, @qtrue, @qfalse)
+          result = @builder.select(is_zero, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6539,7 +6656,7 @@ module Konpeito
           result
         when "positive?"
           is_pos = @builder.fcmp(:ogt, val, LLVM::Double.from_f(0.0))
-          result = @builder.select(is_pos, @qtrue, @qfalse)
+          result = @builder.select(is_pos, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6547,7 +6664,7 @@ module Konpeito
           result
         when "negative?"
           is_neg = @builder.fcmp(:olt, val, LLVM::Double.from_f(0.0))
-          result = @builder.select(is_neg, @qtrue, @qfalse)
+          result = @builder.select(is_neg, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6631,7 +6748,7 @@ module Konpeito
           )
           str_len = @builder.call(rb_str_strlen, receiver, "str_len")
           is_empty = @builder.icmp(:eq, str_len, LLVM::Int64.from_i(0), "is_empty")
-          result = @builder.select(is_empty, @qtrue, @qfalse)
+          result = @builder.select(is_empty, qtrue, qfalse)
           if inst.result_var
             @variables[inst.result_var] = result
             @variable_types[inst.result_var] = :value
@@ -6810,7 +6927,7 @@ module Konpeito
         end
 
         # Push block result to array
-        block_result = last_result ? get_value_as_ruby_from_llvm(last_result) : @qnil
+        block_result = last_result ? get_value_as_ruby_from_llvm(last_result) : qnil
         @builder.call(@rb_ary_push, result_ary, block_result)
 
         @variables = saved_vars
@@ -6886,7 +7003,7 @@ module Konpeito
         @variable_allocas = saved_allocas
 
         # Check if result is truthy
-        block_result = last_result || @qnil
+        block_result = last_result || qnil
         is_truthy = generate_truthy_check(block_result)
         @builder.cond(is_truthy, loop_push, loop_next)
 
@@ -7625,9 +7742,9 @@ module Konpeito
           end
 
           @builder.position_at_end(merge_bb)
-          phi_incoming = { defined_bb => defined_val, undefined_bb => @qnil }
+          phi_incoming = { defined_bb => defined_val, undefined_bb => qnil }
           if all_ok && all_ok[:fail_bbs]
-            all_ok[:fail_bbs].each { |fb| phi_incoming[fb] = @qnil }
+            all_ok[:fail_bbs].each { |fb| phi_incoming[fb] = qnil }
           end
           result = @builder.phi(value_type, phi_incoming)
         when :method
@@ -7660,7 +7777,7 @@ module Konpeito
           @builder.br(merge_bb)
 
           @builder.position_at_end(merge_bb)
-          result = @builder.phi(value_type, { defined_bb => defined_val, undefined_bb => @qnil })
+          result = @builder.phi(value_type, { defined_bb => defined_val, undefined_bb => qnil })
         when :global_variable
           rb_gv_defined = @mod.functions["rb_f_global_variables"] || begin
             # Fallback: just return the string since global vars are always "defined"
@@ -7707,7 +7824,7 @@ module Konpeito
       def generate_yield(inst)
         result = if inst.args.empty?
           # yield with no arguments - pass Qnil
-          @builder.call(@rb_yield, @qnil)
+          @builder.call(@rb_yield, qnil)
         elsif inst.args.size == 1
           # yield with single argument — must be boxed VALUE for rb_yield
           arg_value = get_value_as_ruby(inst.args.first)
@@ -7861,7 +7978,7 @@ module Konpeito
           @builder.cond(had_exception, after_else_bb, else_bb)
 
           @builder.position_at_end(else_bb)
-          else_result = @qnil
+          else_result = qnil
           inst.else_blocks.each do |else_inst|
             else_result = generate_instruction(else_inst)
           end
@@ -7891,7 +8008,7 @@ module Konpeito
 
       # Generate inline try/ensure when no rescue clauses
       def generate_begin_rescue_inline(inst)
-        result = @qnil
+        result = qnil
 
         # Execute try instructions
         if inst.try_blocks && !inst.try_blocks.empty?
@@ -7916,11 +8033,11 @@ module Konpeito
 
         # Store result
         if inst.result_var
-          @variables[inst.result_var] = result || @qnil
+          @variables[inst.result_var] = result || qnil
           @variable_types[inst.result_var] = :value
         end
 
-        result || @qnil
+        result || qnil
       end
 
       # Generate try callback function: VALUE func(VALUE data)
@@ -8017,12 +8134,12 @@ module Konpeito
             @block_callback_self = callback_func.params[0]
           end
 
-          result = @qnil
+          result = qnil
           if try_instructions && !try_instructions.empty?
             try_instructions.each { |inst| result = generate_instruction(inst) }
           end
 
-          @builder.ret(result || @qnil)
+          @builder.ret(result || qnil)
         end
 
         # Restore builder state
@@ -8106,7 +8223,7 @@ module Konpeito
 
           # Allocate result variable
           result_alloca = @builder.alloca(value_type, "rescue_result")
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
 
           # Jump to first check
           @builder.br(clause_blocks[0])
@@ -8123,7 +8240,7 @@ module Konpeito
               # rb_obj_is_kind_of returns Qtrue/Qfalse
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, exc_class)
               # Compare with Qfalse
-              is_match_bool = @builder.icmp(:ne, is_match, @qfalse)
+              is_match_bool = @builder.icmp(:ne, is_match, qfalse)
 
               if match_result.nil?
                 match_result = is_match_bool
@@ -8136,7 +8253,7 @@ module Konpeito
             if match_result.nil?
               std_error = @builder.load2(value_type, @rb_eStandardError, "StandardError")
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, std_error)
-              match_result = @builder.icmp(:ne, is_match, @qfalse)
+              match_result = @builder.icmp(:ne, is_match, qfalse)
             end
 
             # Branch to body or next check
@@ -8164,19 +8281,19 @@ module Konpeito
             end
 
             # Generate rescue body instructions
-            body_result = @qnil
+            body_result = qnil
             clause.body_blocks.each do |inst|
               body_result = generate_instruction(inst)
             end
 
             # Store result and jump to merge
-            @builder.store(body_result || @qnil, result_alloca)
+            @builder.store(body_result || qnil, result_alloca)
             @builder.br(merge_block)
           end
 
           # Fallback block: return Qnil (exception was handled by rb_rescue2 but no clause matched)
           @builder.position_at_end(fallback_block)
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
           @builder.br(merge_block)
 
           # Merge block: return result
@@ -8185,7 +8302,7 @@ module Konpeito
           @builder.ret(result)
         else
           # No rescue clauses, just return Qnil
-          @builder.ret(@qnil)
+          @builder.ret(qnil)
         end
 
         # Restore builder state
@@ -8263,7 +8380,7 @@ module Konpeito
           fallback_block = callback_func.basic_blocks.append("rescue_fallback")
 
           result_alloca = @builder.alloca(value_type, "rescue_result")
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
 
           @builder.br(clause_blocks[0])
 
@@ -8274,7 +8391,7 @@ module Konpeito
             clause.exception_classes.each do |exc_class_name|
               exc_class = get_exception_class_value(exc_class_name)
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, exc_class)
-              is_match_bool = @builder.icmp(:ne, is_match, @qfalse)
+              is_match_bool = @builder.icmp(:ne, is_match, qfalse)
               if match_result.nil?
                 match_result = is_match_bool
               else
@@ -8285,7 +8402,7 @@ module Konpeito
             if match_result.nil?
               std_error = @builder.load2(value_type, @rb_eStandardError, "StandardError")
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, std_error)
-              match_result = @builder.icmp(:ne, is_match, @qfalse)
+              match_result = @builder.icmp(:ne, is_match, qfalse)
             end
 
             next_block = i < rescue_clauses.size - 1 ? clause_blocks[i + 1] : fallback_block
@@ -8307,24 +8424,24 @@ module Konpeito
               @variable_types[clause.exception_var] = :value
             end
 
-            body_result = @qnil
+            body_result = qnil
             clause.body_blocks.each do |inst|
               body_result = generate_instruction(inst)
             end
 
-            @builder.store(body_result || @qnil, result_alloca)
+            @builder.store(body_result || qnil, result_alloca)
             @builder.br(merge_block)
           end
 
           @builder.position_at_end(fallback_block)
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
           @builder.br(merge_block)
 
           @builder.position_at_end(merge_block)
           result = @builder.load2(value_type, result_alloca, "final_result")
           @builder.ret(result)
         else
-          @builder.ret(@qnil)
+          @builder.ret(qnil)
         end
 
         @builder.position_at_end(saved_block) if saved_block
@@ -8376,7 +8493,7 @@ module Konpeito
           fallback_block = callback_func.basic_blocks.append("rescue_fallback")
 
           result_alloca = @builder.alloca(value_type, "rescue_result")
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
 
           @builder.br(clause_blocks[0])
 
@@ -8387,7 +8504,7 @@ module Konpeito
             clause.exception_classes.each do |exc_class_name|
               exc_class = get_exception_class_value(exc_class_name)
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, exc_class)
-              is_match_bool = @builder.icmp(:ne, is_match, @qfalse)
+              is_match_bool = @builder.icmp(:ne, is_match, qfalse)
               if match_result.nil?
                 match_result = is_match_bool
               else
@@ -8398,7 +8515,7 @@ module Konpeito
             if match_result.nil?
               std_error = @builder.load2(value_type, @rb_eStandardError, "StandardError")
               is_match = @builder.call(@rb_obj_is_kind_of, exception_val, std_error)
-              match_result = @builder.icmp(:ne, is_match, @qfalse)
+              match_result = @builder.icmp(:ne, is_match, qfalse)
             end
 
             next_block = i < rescue_clauses.size - 1 ? clause_blocks[i + 1] : fallback_block
@@ -8414,24 +8531,24 @@ module Konpeito
               @variable_types[clause.exception_var] = :value
             end
 
-            body_result = @qnil
+            body_result = qnil
             clause.body_blocks.each do |inst|
               body_result = generate_instruction(inst)
             end
 
-            @builder.store(body_result || @qnil, result_alloca)
+            @builder.store(body_result || qnil, result_alloca)
             @builder.br(merge_block)
           end
 
           @builder.position_at_end(fallback_block)
-          @builder.store(@qnil, result_alloca)
+          @builder.store(qnil, result_alloca)
           @builder.br(merge_block)
 
           @builder.position_at_end(merge_block)
           result = @builder.load2(value_type, result_alloca, "final_result")
           @builder.ret(result)
         else
-          @builder.ret(@qnil)
+          @builder.ret(qnil)
         end
 
         @builder.position_at_end(saved_block) if saved_block
@@ -8448,15 +8565,15 @@ module Konpeito
         # If no when clauses, return nil or execute else body
         if inst.when_clauses.nil? || inst.when_clauses.empty?
           if inst.else_body && !inst.else_body.empty?
-            result = @qnil
+            result = qnil
             inst.else_body.each do |else_inst|
               result = generate_instruction(else_inst)
             end
             @variables[inst.result_var] = result if inst.result_var
             return result
           else
-            @variables[inst.result_var] = @qnil if inst.result_var
-            return @qnil
+            @variables[inst.result_var] = qnil if inst.result_var
+            return qnil
           end
         end
 
@@ -8509,7 +8626,7 @@ module Konpeito
 
           # Generate when body
           @builder.position_at_end(when_body_block)
-          body_result = @qnil
+          body_result = qnil
           body_type_tag = :value
           when_clause.body.each do |body_inst|
             body_result = generate_instruction(body_inst)
@@ -8518,7 +8635,7 @@ module Konpeito
           if body_result
             body_result, body_type_tag = get_result_with_type(body_result, when_clause.body.last)
           else
-            body_result = @qnil
+            body_result = qnil
             body_type_tag = :value
           end
           incoming_data << [@builder.insert_block, body_result, body_type_tag]
@@ -8530,7 +8647,7 @@ module Konpeito
 
         # Generate else body or nil
         if inst.else_body && !inst.else_body.empty?
-          else_result = @qnil
+          else_result = qnil
           else_type_tag = :value
           inst.else_body.each do |else_inst|
             else_result = generate_instruction(else_inst)
@@ -8538,12 +8655,12 @@ module Konpeito
           if else_result
             else_result, else_type_tag = get_result_with_type(else_result, inst.else_body.last)
           else
-            else_result = @qnil
+            else_result = qnil
             else_type_tag = :value
           end
           incoming_data << [@builder.insert_block, else_result, else_type_tag]
         else
-          incoming_data << [@builder.insert_block, @qnil, :value]
+          incoming_data << [@builder.insert_block, qnil, :value]
         end
         @builder.br(merge_block)
 
@@ -8631,7 +8748,7 @@ module Konpeito
         result_bool = @builder.and(is_fixnum_bool, values_equal)
 
         # Convert i1 to VALUE (Qtrue/Qfalse)
-        @builder.select(result_bool, @qtrue, @qfalse)
+        @builder.select(result_bool, qtrue, qfalse)
       end
 
       # Inline String === arg comparison
@@ -8646,7 +8763,7 @@ module Konpeito
         result_int = @builder.call(@rb_obj_is_kind_of, arg, klass)
         # rb_obj_is_kind_of returns VALUE (i64); compare with i64 0 (Qfalse)
         is_true = @builder.icmp(:ne, result_int, LLVM::Int64.from_i(0))
-        @builder.select(is_true, @qtrue, @qfalse)
+        @builder.select(is_true, qtrue, qfalse)
       end
 
       # Generate LLVM value for keyword argument default from Prism AST node
@@ -8660,17 +8777,17 @@ module Konpeito
         when Prism::FloatNode
           @builder.call(@rb_float_new, LLVM::Double.from_f(prism_node.value))
         when Prism::NilNode
-          @qnil
+          qnil
         when Prism::TrueNode
-          @qtrue
+          qtrue
         when Prism::FalseNode
-          @qfalse
+          qfalse
         when Prism::SymbolNode
           sym_ptr = @builder.global_string_pointer(prism_node.value)
           sym_id = @builder.call(@rb_intern, sym_ptr)
           @builder.call(@rb_id2sym, sym_id)
         else
-          @qnil
+          qnil
         end
       end
 
@@ -8682,8 +8799,8 @@ module Konpeito
         # In Ruby, only nil and false are falsy
         # Qnil = 0x08, Qfalse = 0x00 (on 64-bit systems)
         # A simple check: value != Qnil && value != Qfalse
-        cmp_nil = @builder.icmp(:ne, value, @qnil)
-        cmp_false = @builder.icmp(:ne, value, @qfalse)
+        cmp_nil = @builder.icmp(:ne, value, qnil)
+        cmp_false = @builder.icmp(:ne, value, qfalse)
         @builder.and(cmp_nil, cmp_false)
       end
 
@@ -8696,7 +8813,7 @@ module Konpeito
         # If no in clauses, return nil or execute else body
         if inst.in_clauses.nil? || inst.in_clauses.empty?
           if inst.else_body && !inst.else_body.empty?
-            result = @qnil
+            result = qnil
             inst.else_body.each do |else_inst|
               result = generate_instruction(else_inst)
             end
@@ -8705,8 +8822,8 @@ module Konpeito
           else
             # No else and no clauses - raise NoMatchingPatternError
             raise_no_matching_pattern_error(get_value_as_ruby(inst.predicate))
-            @variables[inst.result_var] = @qnil if inst.result_var
-            return @qnil
+            @variables[inst.result_var] = qnil if inst.result_var
+            return qnil
           end
         end
 
@@ -8769,7 +8886,7 @@ module Konpeito
             @variable_types[predicate_var_name] = type_to_internal_tag(in_clause.pattern.narrowed_type)
           end
 
-          body_result = @qnil
+          body_result = qnil
           body_type_tag = :value
           in_clause.body.each do |body_inst|
             body_result = generate_instruction(body_inst)
@@ -8784,7 +8901,7 @@ module Konpeito
           if body_result
             body_result, body_type_tag = get_result_with_type(body_result, in_clause.body.last)
           else
-            body_result = @qnil
+            body_result = qnil
             body_type_tag = :value
           end
 
@@ -8797,13 +8914,13 @@ module Konpeito
 
         # Else or NoMatchingPatternError
         if inst.else_body && !inst.else_body.empty?
-          else_result = @qnil
+          else_result = qnil
           else_type_tag = :value
           inst.else_body.each { |else_inst| else_result = generate_instruction(else_inst) }
           if else_result
             else_result, else_type_tag = get_result_with_type(else_result, inst.else_body.last)
           else
-            else_result = @qnil
+            else_result = qnil
             else_type_tag = :value
           end
           incoming_data << [@builder.insert_block, else_result, else_type_tag]
@@ -8811,7 +8928,7 @@ module Konpeito
         else
           # Raise NoMatchingPatternError
           raise_no_matching_pattern_error(predicate_val)
-          incoming_data << [@builder.insert_block, @qnil, :value]
+          incoming_data << [@builder.insert_block, qnil, :value]
           @builder.br(merge_block)
         end
 
@@ -9035,7 +9152,7 @@ module Konpeito
           val = call_hash_lookup(deconstructed, key_sym)
 
           # Check if key present (val != Qundef)
-          present = @builder.icmp(:ne, val, @qundef)
+          present = @builder.icmp(:ne, val, qundef)
           match_result = @builder.and(match_result, present)
 
           if elem.value_pattern
@@ -9122,7 +9239,7 @@ module Konpeito
         match_bool, _bound_vars = compile_pattern(inst.pattern, value)
 
         # Convert i1 to Ruby boolean
-        result = @builder.select(match_bool, @qtrue, @qfalse)
+        result = @builder.select(match_bool, qtrue, qfalse)
 
         @variables[inst.result_var] = result if inst.result_var
         @variable_types[inst.result_var] = :value if inst.result_var
@@ -9171,7 +9288,7 @@ module Konpeito
 
       # Helper: get constant value by name
       def get_constant_value(name)
-        return @qnil if name.nil?
+        return qnil if name.nil?
 
         # Handle common constants
         case name
@@ -9251,12 +9368,12 @@ module Konpeito
 
       # Helper: call rb_hash_lookup2 with Qundef as default
       def call_hash_lookup(hash, key)
-        @builder.call(@rb_hash_lookup2, hash, key, @qundef)
+        @builder.call(@rb_hash_lookup2, hash, key, qundef)
       end
 
       # Helper: convert arbitrary value to Ruby VALUE
       def get_value_as_ruby_from_value(val)
-        return @qnil if val.nil?
+        return qnil if val.nil?
 
         # Check if value needs boxing
         if val.is_a?(LLVM::Value)
@@ -9354,9 +9471,9 @@ module Konpeito
         end
 
         if incoming_data.empty?
-          @variables[inst.result_var] = @qnil if inst.result_var
+          @variables[inst.result_var] = qnil if inst.result_var
           @variable_types[inst.result_var] = :value if inst.result_var
-          return @qnil
+          return qnil
         end
 
         # Determine the optimal phi type (unboxed if all incoming values match)
@@ -9396,7 +9513,7 @@ module Konpeito
             boxed = convert_value(value, type_tag, :value)
             @builder.ret(boxed)
           else
-            @builder.ret(@qnil)
+            @builder.ret(qnil)
           end
         when HIR::Branch
           condition, cond_type = get_value_with_type(term.condition)
@@ -9427,7 +9544,7 @@ module Konpeito
             @builder.icmp(:ne, condition, LLVM::Int8.from_i(0))
           else
             # For VALUE, use RTEST: (condition & ~Qnil) != 0
-            not_qnil = @builder.xor(@qnil, LLVM::Int64.from_i(-1))
+            not_qnil = @builder.xor(qnil, LLVM::Int64.from_i(-1))
             masked = @builder.and(condition, not_qnil)
             @builder.icmp(:ne, masked, LLVM::Int64.from_i(0))
           end
@@ -9508,23 +9625,23 @@ module Konpeito
           # For LoadLocal: if it has a result_var, use that (instruction was generated)
           # If no result_var (inliner-created reference), use var.name
           if hir_value.result_var
-            @variables[hir_value.result_var] || @qnil
+            @variables[hir_value.result_var] || qnil
           else
             # Inliner-created LoadLocal with no result_var - look up by var.name
-            @variables[hir_value.var.name] || @qnil
+            @variables[hir_value.var.name] || qnil
           end
         when HIR::Instruction
           # Already generated, get from variables
           if hir_value.result_var
-            @variables[hir_value.result_var] || @qnil
+            @variables[hir_value.result_var] || qnil
           else
-            @qnil
+            qnil
           end
         when String
           # Variable name
-          @variables[hir_value] || @qnil
+          @variables[hir_value] || qnil
         else
-          @qnil
+          qnil
         end
       end
 
@@ -9538,7 +9655,7 @@ module Konpeito
       # Ensure an LLVM value is a Ruby VALUE, boxing if needed
       # Used for inline loop results where type may be unboxed
       def ensure_ruby_value(llvm_val)
-        return @qnil unless llvm_val
+        return qnil unless llvm_val
         return llvm_val unless llvm_val.is_a?(LLVM::Value)
 
         case llvm_val.type
@@ -9824,7 +9941,7 @@ module Konpeito
 
         # Loop end: return self (the array as VALUE - need to wrap)
         @builder.position_at_end(loop_end)
-        @qnil  # NativeArray doesn't have a VALUE representation, return nil
+        qnil  # NativeArray doesn't have a VALUE representation, return nil
       end
 
       # Generate NativeArray reduce: arr.reduce(init) { |acc, x| ... }
@@ -10137,7 +10254,7 @@ module Konpeito
         @builder.store(LLVM::Int64.from_i(0), idx_alloca)
         elem_alloca = @builder.alloca(llvm_elem_type, "na_find_elem")
         result_alloca = @builder.alloca(value_type, "na_find_result")
-        @builder.store(@qnil, result_alloca)
+        @builder.store(qnil, result_alloca)
 
         # Create loop blocks
         func = @builder.insert_block.parent
@@ -10292,9 +10409,9 @@ module Konpeito
         # Early exit block
         @builder.position_at_end(early_exit)
         early_result = case predicate_type
-        when :any then @qtrue
-        when :all then @qfalse
-        when :none then @qfalse
+        when :any then qtrue
+        when :all then qfalse
+        when :none then qfalse
         end
         @builder.br(loop_end)
 
@@ -10307,9 +10424,9 @@ module Konpeito
         # Loop end: phi node for result
         @builder.position_at_end(loop_end)
         default_result = case predicate_type
-        when :any then @qfalse   # any? returns false if none match
-        when :all then @qtrue    # all? returns true if all match
-        when :none then @qtrue   # none? returns true if none match
+        when :any then qfalse   # any? returns false if none match
+        when :all then qtrue    # all? returns true if all match
+        when :none then qtrue   # none? returns true if none match
         end
         result = @builder.phi(value_type, { early_exit => early_result, loop_cond => default_result }, "pred_result")
 
@@ -10403,7 +10520,7 @@ module Konpeito
 
         # Allocate VALUE result (will hold nil or boxed value)
         final_result_alloca = @builder.alloca(value_type, "na_minmax_final")
-        @builder.store(@qnil, final_result_alloca)
+        @builder.store(qnil, final_result_alloca)
 
         # Create blocks
         func = @builder.insert_block.parent
@@ -10500,7 +10617,7 @@ module Konpeito
           @builder.call(@rb_float_new, val)
         elsif val.type == LLVM::Int1
           # Boolean
-          @builder.select(val, @qtrue, @qfalse)
+          @builder.select(val, qtrue, qfalse)
         else
           val
         end
@@ -11135,7 +11252,7 @@ module Konpeito
 
         # Select nil or boxed index
         boxed_index = @builder.call(@rb_int2inum, index, "boxed_index")
-        final_result = @builder.select(is_null, @qnil, boxed_index, "result")
+        final_result = @builder.select(is_null, qnil, boxed_index, "result")
 
         if inst.result_var
           @variables[inst.result_var] = final_result
@@ -11992,7 +12109,7 @@ module Konpeito
 
         # Done: phi node for result
         @builder.position_at_end(done_bb)
-        result = @builder.phi(LLVM::Int64, { found_bb => boxed_index, not_found_bb => @qnil }, "index_result")
+        result = @builder.phi(LLVM::Int64, { found_bb => boxed_index, not_found_bb => qnil }, "index_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12213,7 +12330,7 @@ module Konpeito
 
         # Done
         @builder.position_at_end(done_bb)
-        result = @builder.phi(LLVM::Int64, { found_bb => boxed_index, not_found_bb => @qnil }, "char_index_result")
+        result = @builder.phi(LLVM::Int64, { found_bb => boxed_index, not_found_bb => qnil }, "char_index_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12340,7 +12457,7 @@ module Konpeito
         is_ascii_bool = @builder.icmp(:ne, is_ascii, LLVM::Int64.from_i(0), "is_ascii")
 
         # Convert to Ruby boolean
-        result = @builder.select(is_ascii_bool, @qtrue, @qfalse, "ascii_result")
+        result = @builder.select(is_ascii_bool, qtrue, qfalse, "ascii_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12384,7 +12501,7 @@ module Konpeito
         @builder.position_at_end(check_bb)
         cmp_result = @builder.call(@memcmp, data_ptr, prefix_cstr, prefix_len, "cmp_result")
         is_match = @builder.icmp(:eq, cmp_result, LLVM::Int32.from_i(0), "is_match")
-        match_result = @builder.select(is_match, @qtrue, @qfalse, "match_result")
+        match_result = @builder.select(is_match, qtrue, qfalse, "match_result")
         @builder.br(done_bb)
 
         # Too short
@@ -12393,7 +12510,7 @@ module Konpeito
 
         # Done
         @builder.position_at_end(done_bb)
-        result = @builder.phi(LLVM::Int64, { check_bb => match_result, too_short_bb => @qfalse }, "starts_with_result")
+        result = @builder.phi(LLVM::Int64, { check_bb => match_result, too_short_bb => qfalse }, "starts_with_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12439,7 +12556,7 @@ module Konpeito
         end_ptr = @builder.gep2(LLVM::Int8, data_ptr, [offset], "end_ptr")
         cmp_result = @builder.call(@memcmp, end_ptr, suffix_cstr, suffix_len, "cmp_result")
         is_match = @builder.icmp(:eq, cmp_result, LLVM::Int32.from_i(0), "is_match")
-        match_result = @builder.select(is_match, @qtrue, @qfalse, "match_result")
+        match_result = @builder.select(is_match, qtrue, qfalse, "match_result")
         @builder.br(done_bb)
 
         # Too short
@@ -12448,7 +12565,7 @@ module Konpeito
 
         # Done
         @builder.position_at_end(done_bb)
-        result = @builder.phi(LLVM::Int64, { check_bb => match_result, too_short_bb => @qfalse }, "ends_with_result")
+        result = @builder.phi(LLVM::Int64, { check_bb => match_result, too_short_bb => qfalse }, "ends_with_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12539,7 +12656,7 @@ module Konpeito
         @builder.position_at_end(compare_bb)
         cmp_result = @builder.call(@memcmp, data1, data2, len1, "cmp_result")
         is_equal = @builder.icmp(:eq, cmp_result, LLVM::Int32.from_i(0), "is_equal")
-        equal_result = @builder.select(is_equal, @qtrue, @qfalse, "equal_result")
+        equal_result = @builder.select(is_equal, qtrue, qfalse, "equal_result")
         @builder.br(done_bb)
 
         # Different lengths
@@ -12548,7 +12665,7 @@ module Konpeito
 
         # Done
         @builder.position_at_end(done_bb)
-        result = @builder.phi(LLVM::Int64, { compare_bb => equal_result, diff_len_bb => @qfalse }, "compare_result")
+        result = @builder.phi(LLVM::Int64, { compare_bb => equal_result, diff_len_bb => qfalse }, "compare_result")
 
         if inst.result_var
           @variables[inst.result_var] = result
@@ -12644,7 +12761,7 @@ module Konpeito
           else
             # Other VALUE types: need more complex handling
             # For now, store Qnil
-            @builder.store(@qnil, field_ptr)
+            @builder.store(qnil, field_ptr)
           end
           @builder.br(cont_bb)
 
@@ -12766,7 +12883,7 @@ module Konpeito
             ruby_str = @builder.call(@rb_utf8_str_new, cstr, len, "arr_#{field_name}_str")
             @builder.store(ruby_str, field_ptr)
           else
-            @builder.store(@qnil, field_ptr)
+            @builder.store(qnil, field_ptr)
           end
           @builder.br(cont_bb_f)
 
@@ -12861,7 +12978,7 @@ module Konpeito
             @builder.store(LLVM::Int8.from_i(0), field_ptr)
           when :String, :Object, :Array, :Hash
             # Initialize VALUE fields to Qnil for GC safety
-            @builder.store(@qnil, field_ptr)
+            @builder.store(qnil, field_ptr)
           else
             # Embedded NativeClass - initialize each sub-field to zero
             embedded_class = @native_class_type_registry[field_type]
@@ -13129,7 +13246,7 @@ module Konpeito
         # Call the C function
         result = if cfunc_type.return_type == :void
           @builder.call(func, *call_args)
-          @qnil
+          qnil
         else
           raw_result = @builder.call(func, *call_args, "cfunc_result")
           convert_from_cfunc_result(raw_result, cfunc_type.return_type)
@@ -13217,8 +13334,8 @@ module Konpeito
           else
             value
           end
-          is_truthy = @builder.icmp(:ne, boxed, @qfalse)
-          is_not_nil = @builder.icmp(:ne, boxed, @qnil)
+          is_truthy = @builder.icmp(:ne, boxed, qfalse)
+          is_not_nil = @builder.icmp(:ne, boxed, qnil)
           @builder.and(is_truthy, is_not_nil)
         else
           # Pass as-is (ensure it's boxed)
@@ -13246,7 +13363,7 @@ module Konpeito
           value
         when :Bool
           # i1 -> VALUE (Qtrue/Qfalse)
-          @builder.select(value, @qtrue, @qfalse)
+          @builder.select(value, qtrue, qfalse)
         else
           value
         end
@@ -13320,7 +13437,7 @@ module Konpeito
         # Call the C function
         result = if method_sig.return_type == :void
           @builder.call(func, *call_args)
-          @qnil
+          qnil
         else
           raw_result = @builder.call(func, *call_args, "extern_result")
           convert_from_cfunc_result(raw_result, method_sig.return_type)
@@ -13556,7 +13673,7 @@ module Konpeito
 
         else
           # Unknown method, return nil
-          @qnil
+          qnil
         end
 
         result
@@ -13949,7 +14066,7 @@ module Konpeito
           @rb_str_equal ||= @mod.functions["rb_str_equal"] || @mod.functions.add("rb_str_equal", [LLVM::Int64, LLVM::Int64], LLVM::Int64)
           eq_result = @builder.call(@rb_str_equal, key1, key2, "str_eq")
           # rb_str_equal returns Qtrue/Qfalse, compare with Qtrue
-          @builder.icmp(:eq, eq_result, @qtrue, "key_eq")
+          @builder.icmp(:eq, eq_result, qtrue, "key_eq")
         when :Symbol, :Integer
           @builder.icmp(:eq, key1, key2, "key_eq")
         else
@@ -14015,7 +14132,7 @@ module Konpeito
                       when :Integer then LLVM::Int64.from_i(0)
                       when :Float then LLVM::Double.from_f(0.0)
                       when :Bool then LLVM::Int8.from_i(0)
-                      else @qnil
+                      else qnil
                       end
         @builder.store(default_val, result_alloca)
 
@@ -14576,7 +14693,7 @@ module Konpeito
                       when :Integer then LLVM::Int64.from_i(0)
                       when :Float then LLVM::Double.from_f(0.0)
                       when :Bool then LLVM::Int8.from_i(0)
-                      else @qnil
+                      else qnil
                       end
         @builder.store(default_val, result_alloca)
 
@@ -14824,7 +14941,7 @@ module Konpeito
                       @builder.position_at_end(false_bb)
                       @builder.br(join_bb)
                       @builder.position_at_end(join_bb)
-                      @builder.phi(LLVM::Int64, { true_bb => @qtrue, false_bb => @qfalse })
+                      @builder.phi(LLVM::Int64, { true_bb => qtrue, false_bb => qfalse })
                     else val  # String/Object are already VALUE
                     end
         @builder.call(@rb_ary_push, result_array, boxed_val)

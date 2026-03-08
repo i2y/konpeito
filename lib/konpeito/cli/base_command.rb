@@ -171,6 +171,8 @@ module Konpeito
 
         if target == :jvm
           "#{base}.jar"
+        elsif target == :mruby
+          Platform.windows? ? "#{base}.exe" : base
         else
           case format
           when :cruby_ext

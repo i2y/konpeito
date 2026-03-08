@@ -86,6 +86,65 @@ module Konpeito
       end
     end
 
+    def self.mruby_install_hint
+      if macos? then "brew install mruby"
+      elsif windows? then "Build from source: https://github.com/mruby/mruby"
+      else "sudo apt install mruby libmruby-dev (Ubuntu) / Build from source"
+      end
+    end
+
+    # Find mruby-config tool for cflags/ldflags
+    def self.find_mruby_config
+      ENV["MRUBY_CONFIG"] || find_executable("mruby-config")
+    end
+
+    # Get mruby compiler flags
+    def self.mruby_cflags
+      config = find_mruby_config
+      if config
+        `#{config} --cflags`.strip
+      elsif ENV["MRUBY_DIR"]
+        "-I#{ENV['MRUBY_DIR']}/include"
+      else
+        # Try common install locations
+        candidates = if macos?
+          ["/opt/homebrew/include", "/usr/local/include"]
+        else
+          ["/usr/include"]
+        end
+        inc_dir = candidates.find { |d| File.exist?(File.join(d, "mruby.h")) }
+        inc_dir ? "-I#{inc_dir}" : "-I/usr/include"
+      end
+    end
+
+    # Get mruby linker flags
+    def self.mruby_ldflags
+      config = find_mruby_config
+      if config
+        `#{config} --ldflags --libs`.strip
+      elsif ENV["MRUBY_DIR"]
+        "-L#{ENV['MRUBY_DIR']}/lib -lmruby -lm"
+      else
+        candidates = if macos?
+          ["/opt/homebrew/lib", "/usr/local/lib"]
+        else
+          ["/usr/lib", "/usr/lib/x86_64-linux-gnu"]
+        end
+        lib_dir = candidates.find { |d| File.exist?(File.join(d, "libmruby.a")) || File.exist?(File.join(d, "libmruby.so")) }
+        lib_dir ? "-L#{lib_dir} -lmruby -lm" : "-lmruby -lm"
+      end
+    end
+
+    # Check if mruby is available
+    def self.mruby_available?
+      config = find_mruby_config
+      return true if config
+
+      cflags = mruby_cflags
+      inc_dir = cflags.sub(/^-I/, "")
+      File.exist?(File.join(inc_dir, "mruby.h"))
+    end
+
     def self.debugger_tune
       macos? ? "lldb" : "gdb"
     end

@@ -22,6 +22,7 @@ module Konpeito
         checks.concat(core_checks)
         checks.concat(native_checks) if check_native?
         checks.concat(jvm_checks) if check_jvm?
+        checks.concat(mruby_checks) if check_mruby?
         checks.concat(ui_checks) if check_ui?
         checks.concat(optional_checks)
 
@@ -56,7 +57,7 @@ module Konpeito
       end
 
       def setup_option_parser(opts)
-        opts.on("--target TARGET", %i[native jvm ui], "Check only native, jvm, or ui dependencies") do |target|
+        opts.on("--target TARGET", %i[native jvm mruby ui], "Check only native, jvm, mruby, or ui dependencies") do |target|
           options[:target] = target
         end
 
@@ -75,6 +76,10 @@ module Konpeito
 
       def check_jvm?
         options[:target].nil? || options[:target] == :jvm
+      end
+
+      def check_mruby?
+        options[:target] == :mruby
       end
 
       def check_ui?
@@ -167,6 +172,56 @@ module Konpeito
           detail: asm_exists ? asm_jar : "not found (built automatically on first JVM compile)",
           status: asm_exists ? :ok : :warning,
           hint: asm_exists ? nil : "Run: konpeito build --target jvm hello.rb"
+        }
+
+        checks
+      end
+
+      def mruby_checks
+        checks = []
+
+        # mruby-config
+        mruby_config = Platform.find_mruby_config
+        checks << {
+          name: "mruby-config",
+          detail: mruby_config || "not found",
+          status: mruby_config ? :ok : :warning,
+          hint: "Install: #{Platform.mruby_install_hint}"
+        }
+
+        # mruby headers
+        cflags = Platform.mruby_cflags
+        inc_dir = cflags.split.find { |f| f.start_with?("-I") }&.sub(/^-I/, "")
+        header_found = inc_dir && File.exist?(File.join(inc_dir, "mruby.h"))
+        checks << {
+          name: "mruby.h",
+          detail: header_found ? inc_dir : "not found",
+          status: header_found ? :ok : :missing,
+          hint: "Install mruby development headers. #{Platform.mruby_install_hint}"
+        }
+
+        # libmruby
+        ldflags = Platform.mruby_ldflags
+        lib_dir = ldflags.split.find { |f| f.start_with?("-L") }&.sub(/^-L/, "")
+        lib_found = if lib_dir
+          File.exist?(File.join(lib_dir, "libmruby.a")) || File.exist?(File.join(lib_dir, "libmruby.so"))
+        else
+          false
+        end
+        checks << {
+          name: "libmruby",
+          detail: lib_found ? lib_dir : "not found (will try system default)",
+          status: lib_found ? :ok : :warning,
+          hint: "Install: #{Platform.mruby_install_hint}"
+        }
+
+        # clang (also needed for mruby backend)
+        clang_path = Platform.find_llvm_tool("clang")
+        checks << {
+          name: "clang",
+          detail: clang_path || "not found",
+          status: clang_path ? :ok : :missing,
+          hint: "Install: #{Platform.llvm_install_hint}"
         }
 
         checks

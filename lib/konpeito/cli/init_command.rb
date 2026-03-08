@@ -58,7 +58,7 @@ module Konpeito
           options[:with_git] = false
         end
 
-        opts.on("--target TARGET", %i[native jvm], "Target platform (native, jvm)") do |target|
+        opts.on("--target TARGET", %i[native jvm mruby], "Target platform (native, jvm, mruby)") do |target|
           options[:target] = target
         end
 

@@ -63,14 +63,16 @@ def main
   key_left = 263
   key_right = 262
 
-  while !Raylib.window_should_close
+  # window_should_close / key_down? return Integer (0 or 1)
+  # Ruby treats 0 as truthy, so use == 0 / != 0 comparisons
+  while Raylib.window_should_close == 0
     dt = Raylib.get_frame_time
 
     # Move paddle
-    if Raylib.key_down?(key_left)
+    if Raylib.key_down?(key_left) != 0
       paddle_x = paddle_x - (paddle_speed * dt).to_i
     end
-    if Raylib.key_down?(key_right)
+    if Raylib.key_down?(key_right) != 0
       paddle_x = paddle_x + (paddle_speed * dt).to_i
     end
 

@@ -2968,10 +2968,10 @@ module Konpeito
         when [:value, :double]
           @builder.call(@rb_num2dbl, value)
         when [:value, :i8]
-          # RTEST: (value & ~Qnil) != 0
-          not_qnil = @builder.xor(qnil, LLVM::Int64.from_i(-1))
-          masked = @builder.and(value, not_qnil)
-          is_truthy = @builder.icmp(:ne, masked, LLVM::Int64.from_i(0))
+          # Truthiness: value is not nil and not false
+          not_nil = @builder.icmp(:ne, value, qnil)
+          not_false = @builder.icmp(:ne, value, qfalse)
+          is_truthy = @builder.and(not_nil, not_false)
           @builder.zext(is_truthy, LLVM::Int8)
         when [:i64, :value]
           @builder.call(@rb_int2inum, value)
@@ -9603,10 +9603,10 @@ module Konpeito
             # For i8 (Bool field), non-zero is truthy
             @builder.icmp(:ne, condition, LLVM::Int8.from_i(0))
           else
-            # For VALUE, use RTEST: (condition & ~Qnil) != 0
-            not_qnil = @builder.xor(qnil, LLVM::Int64.from_i(-1))
-            masked = @builder.and(condition, not_qnil)
-            @builder.icmp(:ne, masked, LLVM::Int64.from_i(0))
+            # For VALUE: not nil and not false
+            not_nil = @builder.icmp(:ne, condition, qnil)
+            not_false = @builder.icmp(:ne, condition, qfalse)
+            @builder.and(not_nil, not_false)
           end
 
           then_block = @blocks[term.then_block]

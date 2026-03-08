@@ -1,29 +1,29 @@
 # Raylib bindings for Konpeito mruby backend
-# Uses C wrapper functions that convert packed RGBA integers to Color structs
+# ALL functions go through C wrappers to avoid float/double and bool/int ABI mismatches.
 
 %a{ffi: "raylib"}
 module Raylib
-  # Window management (direct raylib calls — no Color struct involved)
-  %a{cfunc: "InitWindow"}
+  # Window management
+  %a{cfunc: "konpeito_init_window"}
   def self.init_window: (Integer width, Integer height, String title) -> void
 
-  %a{cfunc: "CloseWindow"}
+  %a{cfunc: "konpeito_close_window"}
   def self.close_window: () -> void
 
-  %a{cfunc: "WindowShouldClose"}
-  def self.window_should_close: () -> bool
+  %a{cfunc: "konpeito_window_should_close"}
+  def self.window_should_close: () -> Integer
 
-  %a{cfunc: "SetTargetFPS"}
+  %a{cfunc: "konpeito_set_target_fps"}
   def self.set_target_fps: (Integer fps) -> void
 
-  %a{cfunc: "GetFrameTime"}
+  %a{cfunc: "konpeito_get_frame_time"}
   def self.get_frame_time: () -> Float
 
   # Drawing
-  %a{cfunc: "BeginDrawing"}
+  %a{cfunc: "konpeito_begin_drawing"}
   def self.begin_drawing: () -> void
 
-  %a{cfunc: "EndDrawing"}
+  %a{cfunc: "konpeito_end_drawing"}
   def self.end_drawing: () -> void
 
   # Wrapped functions (Color as packed RGBA integer)
@@ -39,12 +39,12 @@ module Raylib
   %a{cfunc: "konpeito_draw_text"}
   def self.draw_text: (String text, Integer x, Integer y, Integer font_size, Integer color) -> void
 
-  # Input (no Color struct)
-  %a{cfunc: "IsKeyDown"}
-  def self.key_down?: (Integer key) -> bool
+  # Input
+  %a{cfunc: "konpeito_is_key_down"}
+  def self.key_down?: (Integer key) -> Integer
 
-  %a{cfunc: "IsKeyPressed"}
-  def self.key_pressed?: (Integer key) -> bool
+  %a{cfunc: "konpeito_is_key_pressed"}
+  def self.key_pressed?: (Integer key) -> Integer
 
   # Color constants (packed RGBA)
   %a{cfunc: "konpeito_raylib_color_raywhite"}

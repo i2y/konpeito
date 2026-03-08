@@ -5,6 +5,41 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-08
+
+### Added
+- **mruby backend**: standalone executable generation (`konpeito build --target mruby`)
+  - CRuby-compatible C wrappers (`mruby_helpers.c`) — same LLVM IR for both runtimes
+  - Block/yield, Proc, Fiber, exception handling support
+  - Static linking for FFI libraries
+  - Compilation caching for `konpeito run --target mruby`
+- **Cross-compilation**: `--cross` + `--cross-mruby` + zig cc for targeting other platforms
+- **raylib stdlib**: zero-boilerplate game development for mruby backend
+  - 87 cfunc bindings (window, drawing, text, keyboard, mouse, colors, keys, random)
+  - Auto-detected when `module Raylib` is referenced — no manual setup needed
+- **Game examples**: Breakout and catch game demos (`examples/mruby_breakout/`, `examples/mruby_stdlib_demo/`)
+- Documentation: mruby backend, raylib stdlib, and cross-compilation guides
+
+### Fixed
+- MergedAST handling in stdlib auto-detection
+- Float/double ABI mismatch in mruby runtime
+- mruby truthiness check compatibility
+- Skip stdlib tests when native extension build fails on CI
+
+## [0.3.1] - 2026-03-07
+
+### Added
+- Compilation caching for `konpeito run` — cached artifacts in `.konpeito_cache/run/`
+- Jekyll/GitHub Pages documentation site with just-the-docs theme
+
+### Fixed
+- GitHub Pages baseurl resolution for step IDs
+
+### Changed
+- Documentation restructured: Getting Started now leads with CRuby backend
+- Removed speculative performance claims and inaccurate benchmark numbers from docs
+- Language specification: removed benchmark numbers, fixed Known Limitations
+
 ## [0.3.0] - 2026-03-05
 
 ### Added
@@ -212,6 +247,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.4.0]: https://github.com/i2y/konpeito/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/i2y/konpeito/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/i2y/konpeito/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/i2y/konpeito/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/i2y/konpeito/compare/v0.2.2...v0.2.3

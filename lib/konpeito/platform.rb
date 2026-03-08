@@ -145,6 +145,64 @@ module Konpeito
       File.exist?(File.join(inc_dir, "mruby.h"))
     end
 
+    # Find zig compiler (used for cross-compilation)
+    def self.find_zig
+      find_executable("zig")
+    end
+
+    # Check if zig is available
+    def self.zig_available?
+      !!find_zig
+    end
+
+    # Convert a cross-compilation target to a zig target triple
+    def self.zig_target(cross_target)
+      case cross_target
+      when /^x86_64.*linux/   then "x86_64-linux-gnu"
+      when /^aarch64.*linux|^arm64.*linux/ then "aarch64-linux-gnu"
+      when /^x86_64.*windows|^x86_64.*mingw/ then "x86_64-windows-gnu"
+      when /^aarch64.*windows|^arm64.*windows/ then "aarch64-windows-gnu"
+      when /^x86_64.*darwin|^x86_64.*macos/ then "x86_64-macos"
+      when /^aarch64.*darwin|^arm64.*darwin/ then "aarch64-macos"
+      else cross_target
+      end
+    end
+
+    # Convert a cross-compilation target to an LLVM target triple
+    def self.llvm_triple(cross_target)
+      return cross_target if cross_target.count("-") >= 2
+
+      case cross_target
+      when /^x86_64.*linux/  then "x86_64-unknown-linux-gnu"
+      when /^aarch64.*linux/ then "aarch64-unknown-linux-gnu"
+      when /^arm64.*linux/   then "aarch64-unknown-linux-gnu"
+      when /^x86_64.*windows|^x86_64.*mingw/ then "x86_64-w64-windows-gnu"
+      when /^x86_64.*darwin/ then "x86_64-apple-macosx"
+      when /^arm64.*darwin|^aarch64.*darwin/ then "arm64-apple-macosx"
+      else cross_target
+      end
+    end
+
+    # Get mruby cflags for cross-compilation (using a cross-compiled mruby directory)
+    def self.cross_mruby_cflags(cross_mruby_dir)
+      inc_dir = File.join(cross_mruby_dir, "include")
+      if File.exist?(File.join(inc_dir, "mruby.h"))
+        "-I#{inc_dir}"
+      else
+        raise "mruby.h not found in #{inc_dir}"
+      end
+    end
+
+    # Get mruby ldflags for cross-compilation
+    def self.cross_mruby_ldflags(cross_mruby_dir)
+      lib_dir = File.join(cross_mruby_dir, "lib")
+      if File.exist?(File.join(lib_dir, "libmruby.a"))
+        "-L#{lib_dir} -lmruby -lm"
+      else
+        raise "libmruby.a not found in #{lib_dir}"
+      end
+    end
+
     def self.debugger_tune
       macos? ? "lldb" : "gdb"
     end

@@ -224,6 +224,15 @@ module Konpeito
           hint: "Install: #{Platform.llvm_install_hint}"
         }
 
+        # zig (optional, for cross-compilation)
+        zig_path = Platform.find_zig
+        checks << {
+          name: "zig (cross-compile)",
+          detail: zig_path || "not found (optional)",
+          status: zig_path ? :ok : :info,
+          hint: "Install for cross-compilation: https://ziglang.org/download/"
+        }
+
         checks
       end
 

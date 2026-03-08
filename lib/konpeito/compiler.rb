@@ -19,7 +19,7 @@ module Konpeito
   class Compiler
     attr_reader :source_file, :output_file, :format, :verbose, :rbs_paths, :require_paths, :diagnostics, :debug, :profile, :incremental, :compile_stats
 
-    def initialize(source_file:, output_file:, format: :cruby_ext, verbose: false, rbs_paths: [], optimize: true, require_paths: [], debug: false, profile: false, incremental: false, clean_cache: false, inline_rbs: false, target: :native, run_after: false, emit_ir: false, classpath: nil, library: false)
+    def initialize(source_file:, output_file:, format: :cruby_ext, verbose: false, rbs_paths: [], optimize: true, require_paths: [], debug: false, profile: false, incremental: false, clean_cache: false, inline_rbs: false, target: :native, run_after: false, emit_ir: false, classpath: nil, library: false, cross_target: nil, cross_mruby_dir: nil, cross_libs_dir: nil)
       @source_file = source_file
       @format = format
       @verbose = verbose
@@ -41,6 +41,9 @@ module Konpeito
       @emit_ir = emit_ir
       @classpath = classpath
       @library = library
+      @cross_target = cross_target
+      @cross_mruby_dir = cross_mruby_dir
+      @cross_libs_dir = cross_libs_dir
       @output_file = output_file || default_output_file(target: target)
       @compile_stats = nil
       @_resolved_file_count = 0
@@ -425,11 +428,13 @@ module Konpeito
         rbs_loader: @rbs_loader,
         debug: @debug,
         source_file: source_file,
-        runtime: :mruby
+        runtime: :mruby,
+        target_triple: @cross_target
       )
       llvm_gen.generate(hir)
 
-      log "Compiling to standalone executable (mruby)..."
+      target_label = @cross_target ? "mruby, cross: #{@cross_target}" : "mruby"
+      log "Compiling to standalone executable (#{target_label})..."
 
       # Auto-detect extra C source files in the same directory as the source
       source_dir = File.dirname(source_file)
@@ -441,7 +446,10 @@ module Konpeito
         module_name: module_name,
         rbs_loader: @rbs_loader,
         debug: @debug,
-        extra_c_files: extra_c_files
+        extra_c_files: extra_c_files,
+        cross_target: @cross_target,
+        cross_mruby_dir: @cross_mruby_dir,
+        cross_libs_dir: @cross_libs_dir
       )
       backend.generate
 

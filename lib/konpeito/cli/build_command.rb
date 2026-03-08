@@ -114,6 +114,18 @@ module Konpeito
           options[:library] = true
         end
 
+        opts.on("--cross TARGET", "Cross-compile for target triple (e.g., x86_64-linux-gnu)") do |target|
+          options[:cross_target] = target
+        end
+
+        opts.on("--cross-mruby DIR", "Path to cross-compiled mruby (include/ and lib/)") do |dir|
+          options[:cross_mruby_dir] = dir
+        end
+
+        opts.on("--cross-libs DIR", "Additional library search path for cross-compilation") do |dir|
+          options[:cross_libs_dir] = dir
+        end
+
         opts.on("--stats", "Show optimization statistics") do
           options[:stats] = true
         end
@@ -177,7 +189,10 @@ module Konpeito
           run_after: options[:run_after],
           emit_ir: options[:emit_ir],
           classpath: classpath,
-          library: options[:library]
+          library: options[:library],
+          cross_target: options[:cross_target],
+          cross_mruby_dir: options[:cross_mruby_dir],
+          cross_libs_dir: options[:cross_libs_dir]
         )
 
         compiler.compile

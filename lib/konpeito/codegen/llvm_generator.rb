@@ -12,7 +12,7 @@ module Konpeito
       BLOCK_SELF_CAPTURE = "__blk_self__"
       attr_reader :mod, :builder, :hir_program
 
-      def initialize(module_name: "konpeito", monomorphizer: nil, rbs_loader: nil, debug: false, profile: false, source_file: nil, runtime: :cruby)
+      def initialize(module_name: "konpeito", monomorphizer: nil, rbs_loader: nil, debug: false, profile: false, source_file: nil, runtime: :cruby, target_triple: nil)
         begin
           require "llvm/core"
           require "llvm/execution_engine"
@@ -27,6 +27,10 @@ module Konpeito
         LLVM.init_jit
 
         @mod = LLVM::Module.new(module_name)
+        @target_triple = target_triple
+        if target_triple
+          @mod.triple = Platform.llvm_triple(target_triple)
+        end
         @builder = LLVM::Builder.new
         @functions = {}
         @blocks = {}
@@ -15057,6 +15061,11 @@ module Konpeito
 
         display_name = format_function_display_name(@current_hir_func)
         @profiler.insert_exit_probe(display_name)
+      end
+
+      # Resolve a cross-compilation target to full LLVM triple (delegates to Platform)
+      def resolve_llvm_triple(target)
+        Platform.llvm_triple(target)
       end
     end
   end

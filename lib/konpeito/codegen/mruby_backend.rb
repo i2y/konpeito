@@ -10,13 +10,21 @@ module Konpeito
     class MRubyBackend
       attr_reader :llvm_generator, :output_file, :module_name, :rbs_loader, :debug
 
-      def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false, extra_c_files: [])
+      def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false, extra_c_files: [],
+                     cross_target: nil, cross_mruby_dir: nil, cross_libs_dir: nil)
         @llvm_generator = llvm_generator
         @output_file = output_file
         @module_name = module_name || derive_module_name(output_file)
         @rbs_loader = rbs_loader
         @debug = debug
         @extra_c_files = extra_c_files
+        @cross_target = cross_target
+        @cross_mruby_dir = cross_mruby_dir
+        @cross_libs_dir = cross_libs_dir
+      end
+
+      def cross_compiling?
+        !!@cross_target
       end
 
       def generate
@@ -824,8 +832,15 @@ module Konpeito
           llc, opt_level,
           "-filetype=obj",
           "-relocation-model=static",  # Static for standalone executable (not PIC)
-          "-o", obj_file, ir_file
         ]
+
+        # Add target triple for cross-compilation
+        if cross_compiling?
+          triple = Platform.llvm_triple(@cross_target)
+          cmd += ["--mtriple=#{triple}"]
+        end
+
+        cmd += ["-o", obj_file, ir_file]
 
         system(*cmd) or raise CodegenError, "Failed to compile LLVM IR to object file"
       ensure
@@ -833,10 +848,11 @@ module Konpeito
       end
 
       def compile_c_to_object(c_file, obj_file)
-        cc = find_llvm_tool("clang") || "cc"
-        cflags = Platform.mruby_cflags
+        cc, cc_flags = cross_cc_with_flags
+        cflags = cross_compiling? ? Platform.cross_mruby_cflags(@cross_mruby_dir) : Platform.mruby_cflags
 
-        cmd = [cc, "-c"]
+        cmd = [*cc, "-c"]
+        cmd.concat(cc_flags)
         cmd.concat(cflags.split)
         cmd += ["-o", obj_file, c_file]
 
@@ -844,11 +860,12 @@ module Konpeito
       end
 
       def compile_helpers_to_object(obj_file)
-        cc = find_llvm_tool("clang") || "cc"
+        cc, cc_flags = cross_cc_with_flags
         helpers_c = File.expand_path("mruby_helpers.c", __dir__)
-        cflags = Platform.mruby_cflags
+        cflags = cross_compiling? ? Platform.cross_mruby_cflags(@cross_mruby_dir) : Platform.mruby_cflags
 
-        cmd = [cc, "-c"]
+        cmd = [*cc, "-c"]
+        cmd.concat(cc_flags)
         cmd.concat(cflags.split)
         cmd += ["-o", obj_file, helpers_c]
 
@@ -856,13 +873,14 @@ module Konpeito
       end
 
       def compile_extra_c_to_object(c_file, obj_file)
-        cc = find_llvm_tool("clang") || "cc"
-        cflags = Platform.mruby_cflags
+        cc, cc_flags = cross_cc_with_flags
+        cflags = cross_compiling? ? Platform.cross_mruby_cflags(@cross_mruby_dir) : Platform.mruby_cflags
 
         # Add include paths for FFI libraries (e.g., raylib)
         extra_includes = ffi_include_flags
 
-        cmd = [cc, "-c"]
+        cmd = [*cc, "-c"]
+        cmd.concat(cc_flags)
         cmd.concat(cflags.split)
         cmd.concat(extra_includes)
         cmd += ["-o", obj_file, c_file]
@@ -871,6 +889,14 @@ module Konpeito
       end
 
       def link_to_executable(obj_files, output_file)
+        if cross_compiling?
+          link_cross(obj_files, output_file)
+        else
+          link_native(obj_files, output_file)
+        end
+      end
+
+      def link_native(obj_files, output_file)
         cc = find_llvm_tool("clang") || "cc"
         ldflags = Platform.mruby_ldflags
         ffi_libs = ffi_link_flags
@@ -901,6 +927,38 @@ module Konpeito
         system(*cmd) or raise CodegenError, "Failed to link standalone executable"
       end
 
+      def link_cross(obj_files, output_file)
+        cc, cc_flags = cross_cc_with_flags
+        ldflags = Platform.cross_mruby_ldflags(@cross_mruby_dir)
+        ffi_libs = ffi_link_flags
+
+        cmd = [*cc, "-o", output_file, *obj_files]
+        cmd.concat(cc_flags)
+        cmd.concat(ldflags.split)
+
+        # Add cross library search path if specified
+        if @cross_libs_dir && Dir.exist?(@cross_libs_dir)
+          cmd << "-L#{@cross_libs_dir}"
+        end
+
+        cmd.concat(ffi_libs)
+
+        if @debug
+          cmd << "-g"
+        end
+
+        # Platform-specific flags for target
+        if @cross_target =~ /linux/
+          cmd << "-lpthread" unless ldflags.include?("-lpthread")
+          cmd << "-ldl" unless ldflags.include?("-ldl")
+        end
+
+        # Static linking preferred for cross-compiled executables
+        cmd << "-static" if @cross_target =~ /linux/
+
+        system(*cmd) or raise CodegenError, "Failed to cross-link standalone executable for #{@cross_target}"
+      end
+
       def ffi_link_flags
         flags = []
         if @rbs_loader
@@ -922,8 +980,15 @@ module Konpeito
 
       def find_static_library(lib_name)
         search_paths = []
-        search_paths << "/opt/homebrew/lib" if Dir.exist?("/opt/homebrew/lib")
-        search_paths << "/usr/local/lib" if Dir.exist?("/usr/local/lib")
+
+        if cross_compiling?
+          # When cross-compiling, search cross paths first
+          search_paths << @cross_libs_dir if @cross_libs_dir && Dir.exist?(@cross_libs_dir)
+          search_paths << File.join(@cross_mruby_dir, "lib") if @cross_mruby_dir
+        else
+          search_paths << "/opt/homebrew/lib" if Dir.exist?("/opt/homebrew/lib")
+          search_paths << "/usr/local/lib" if Dir.exist?("/usr/local/lib")
+        end
 
         search_paths.each do |dir|
           path = File.join(dir, "lib#{lib_name}.a")
@@ -950,16 +1015,40 @@ module Konpeito
       end
 
       def darwin?
-        RbConfig::CONFIG["host_os"] =~ /darwin/
+        if cross_compiling?
+          @cross_target =~ /darwin|macos/
+        else
+          RbConfig::CONFIG["host_os"] =~ /darwin/
+        end
       end
 
       def ffi_include_flags
         flags = []
-        # Add homebrew include paths for common libraries
-        if Dir.exist?("/opt/homebrew/include")
-          flags << "-I/opt/homebrew/include"
+        if cross_compiling?
+          # When cross-compiling, use cross library include paths
+          flags << "-I#{@cross_libs_dir}/../include" if @cross_libs_dir && Dir.exist?("#{@cross_libs_dir}/../include")
+        else
+          # Add homebrew include paths for common libraries
+          if Dir.exist?("/opt/homebrew/include")
+            flags << "-I/opt/homebrew/include"
+          end
         end
         flags
+      end
+
+      # Returns [cc_command_array, extra_flags_array] for compilation
+      # When cross-compiling, uses `zig cc` with target; otherwise uses clang/cc
+      def cross_cc_with_flags
+        if cross_compiling?
+          zig = Platform.find_zig
+          raise CodegenError, "zig not found. Install zig for cross-compilation: https://ziglang.org/download/" unless zig
+
+          zig_target = Platform.zig_target(@cross_target)
+          [[zig, "cc"], ["-target", zig_target]]
+        else
+          cc = find_llvm_tool("clang") || "cc"
+          [[cc], []]
+        end
       end
 
       def find_llvm_tool(name)

@@ -5,7 +5,10 @@ require "tempfile"
 require "fileutils"
 
 class JSONParseAsTest < Minitest::Test
+  YYJSON_AVAILABLE = File.exist?(File.expand_path("../../vendor/yyjson/yyjson.c", __dir__))
+
   def setup
+    skip "yyjson source not available" unless YYJSON_AVAILABLE
     @tmp_dir = Dir.mktmpdir
     @test_count = 0
   end

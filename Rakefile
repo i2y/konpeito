@@ -39,4 +39,9 @@ task "conformance:jvm" do
   ruby "spec/conformance/runner.rb", "--jvm-only"
 end
 
+desc "Run CI compilation diagnostics"
+task "test:diagnose" do
+  ruby "test/ci_diagnostic.rb"
+end
+
 task default: :test

@@ -26,3 +26,15 @@ rescue LoadError, StandardError
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exist?(dir)
 end
+
+# Skip codegen tests gracefully when native compilation is unavailable
+# (e.g. missing LLVM tools or CRuby dev headers on CI).
+module CodegenSkipPlugin
+  def before_setup
+    super
+    if self.class.instance_method(name).source_location&.first&.include?("test/codegen/")
+      skip "Native compilation not available" unless NATIVE_COMPILE_AVAILABLE
+    end
+  end
+end
+Minitest::Test.prepend(CodegenSkipPlugin)

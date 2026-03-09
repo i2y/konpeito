@@ -8,10 +8,21 @@ Rake::TestTask.new(:test) do |t|
   t.test_files = FileList["test/**/*_test.rb"].exclude("test/codegen/**/*_test.rb")
 end
 
-Rake::TestTask.new("test:codegen") do |t|
-  t.libs << "test"
-  t.libs << "lib"
-  t.test_files = FileList["test/codegen/**/*_test.rb"]
+desc "Run codegen tests (each file in a separate process to avoid .so accumulation crashes)"
+task "test:codegen" do
+  test_files = FileList["test/codegen/**/*_test.rb"].sort
+  failed = []
+  test_files.each do |f|
+    print "#{File.basename(f, '.rb')} "
+    unless system("bundle", "exec", "ruby", "-Ilib:test", f)
+      failed << f
+    end
+  end
+  puts
+  unless failed.empty?
+    abort "#{failed.size}/#{test_files.size} codegen test files failed:\n  #{failed.join("\n  ")}"
+  end
+  puts "All #{test_files.size} codegen test files passed."
 end
 
 desc "Run all tests (non-codegen + codegen in separate processes)"

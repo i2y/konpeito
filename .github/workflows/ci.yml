@@ -74,6 +74,7 @@ jobs:
         run: |
           brew install llvm@20
           echo "/opt/homebrew/opt/llvm@20/bin" >> $GITHUB_PATH
+          ln -sf /opt/homebrew/opt/llvm@20/lib/libLLVM-20.dylib /opt/homebrew/lib/
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -100,6 +101,7 @@ jobs:
         run: |
           brew install llvm@20 mruby
           echo "/opt/homebrew/opt/llvm@20/bin" >> $GITHUB_PATH
+          ln -sf /opt/homebrew/opt/llvm@20/lib/libLLVM-20.dylib /opt/homebrew/lib/
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1

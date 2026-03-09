@@ -47,6 +47,7 @@ class CRubyBackendTest < Minitest::Test
     output = compile_to_bundle(source, "test_valid")
 
     # Check file type using file command
+    skip "`file` command not available" unless system("which file > /dev/null 2>&1")
     file_output = `file #{output}`.strip
 
     case RbConfig::CONFIG["host_os"]

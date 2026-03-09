@@ -2985,6 +2985,9 @@ module Konpeito
           # Convert bool to Ruby true/false
           is_true = @builder.icmp(:ne, value, LLVM::Int8.from_i(0))
           @builder.select(is_true, qtrue, qfalse)
+        when [:native_class, :value]
+          # NativeClass struct pointer to VALUE (i64)
+          @builder.ptr2int(value, LLVM::Int64)
         when [:i64, :double]
           @builder.si2fp(value, LLVM::Double)
         when [:double, :i64]
@@ -4826,6 +4829,7 @@ module Konpeito
         callback_func = @mod.functions.add(callback_name,
           [value_type, value_type, LLVM::Int32, LLVM::Pointer(value_type), value_type],
           value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block = @builder.insert_block
@@ -5221,6 +5225,7 @@ module Konpeito
         # --- Shared lambda_true helper (created once per module) ---
         @lambda_true_func ||= begin
           f = @mod.functions.add("__konpeito_lambda_true", [value_type], value_type)
+          f.linkage = :internal
           bb = f.basic_blocks.append("entry")
           @builder.position_at_end(bb)
           @builder.ret(qtrue)
@@ -5231,6 +5236,7 @@ module Konpeito
         arity_func_name = "__konpeito_proc_arity_#{param_count}"
         arity_func = @mod.functions[arity_func_name] || begin
           f = @mod.functions.add(arity_func_name, [value_type], value_type)
+          f.linkage = :internal
           bb = f.basic_blocks.append("entry")
           @builder.position_at_end(bb)
           arity_ruby = @builder.call(@rb_int2inum, LLVM::Int64.from_i(param_count), "arity_val")
@@ -5560,6 +5566,7 @@ module Konpeito
         callback_func = @mod.functions.add(callback_name,
           [LLVM::Pointer(LLVM::Int8)],
           value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block = @builder.insert_block
@@ -5893,6 +5900,7 @@ module Konpeito
         # VALUE callback(VALUE data) - data is pointer to captures array
         callback_type = LLVM::Type.function([value_type], value_type)
         callback_func = @mod.functions.add(callback_name, [value_type], value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block = @builder.insert_block
@@ -5988,6 +5996,7 @@ module Konpeito
 
         # VALUE callback(VALUE mutex) - mutex is passed as data2
         callback_func = @mod.functions.add(callback_name, [value_type], value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block = @builder.insert_block
@@ -8108,6 +8117,7 @@ module Konpeito
 
         # VALUE func(VALUE data)  — data (params[0]) = self or escape array
         callback_func = @mod.functions.add(callback_name, [value_type], value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block    = @builder.insert_block
@@ -8227,6 +8237,7 @@ module Konpeito
 
         # VALUE func(VALUE data2, VALUE exception)
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
+        callback_func.linkage = :internal
 
         # Save current builder state
         saved_block = @builder.insert_block
@@ -8387,6 +8398,7 @@ module Konpeito
         callback_name = "rescue_handler_gflag_#{counter}"
         # VALUE func(VALUE data2, VALUE exception) — data2 (params[0]) = self or escape array
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
+        callback_func.linkage = :internal
 
         saved_block = @builder.insert_block
         saved_vars = @variables.dup
@@ -8524,6 +8536,7 @@ module Konpeito
       def generate_rescue_handler_with_flag_callback(rescue_clauses, counter)
         callback_name = "rescue_handler_flag_#{counter}"
         callback_func = @mod.functions.add(callback_name, [value_type, value_type], value_type)
+        callback_func.linkage = :internal
 
         saved_block = @builder.insert_block
         saved_vars = @variables.dup

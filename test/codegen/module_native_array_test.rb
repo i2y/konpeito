@@ -160,9 +160,13 @@ class ModuleNativeArrayTest < Minitest::Test
   private
 
   def compile_and_run(source, call_expr, rbs_content)
-    source_file = File.join(@tmp_dir, "test.rb")
-    rbs_file = File.join(@tmp_dir, "test.rbs")
-    output_file = File.join(@tmp_dir, "test#{SHARED_EXT}")
+    @test_counter ||= 0
+    @test_counter += 1
+    basename = "mna_test_#{Process.pid}_#{@test_counter}"
+
+    source_file = File.join(@tmp_dir, "#{basename}.rb")
+    rbs_file = File.join(@tmp_dir, "#{basename}.rbs")
+    output_file = File.join(@tmp_dir, "#{basename}#{SHARED_EXT}")
 
     File.write(source_file, source)
     File.write(rbs_file, rbs_content)

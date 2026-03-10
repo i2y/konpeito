@@ -140,8 +140,8 @@ module Konpeito
       end
 
       # Iterate over all native modules
-      def each_native_module(&block)
-        @native_modules.each(&block)
+      def each_native_module(&)
+        @native_modules.each(&)
       end
 
       # Check if a class is explicitly boxed (VALUE-based, for CRuby interop)

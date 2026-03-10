@@ -2,8 +2,6 @@
 # rbs_inline: enabled
 #
 # Demonstrates: Tilemap, Camera scrolling, Player movement, Signs, HUD
-# All drawing is inlined in the main loop (no helper function calls for draw)
-# to work around a known mruby backend inliner issue with parameter passing.
 #
 # Build:
 #   konpeito build --target mruby --inline -o examples/mruby_rpg_demo/rpg_demo examples/mruby_rpg_demo/rpg_demo.rb
@@ -18,7 +16,7 @@
 # gs: 0=px, 1=py, 2=dir, 3=anim, 4=anim_timer, 5=cooldown,
 #     6=msg_timer, 7=cam_x*100, 8=cam_y*100, 9=state, 10=msg_id, 11=steps
 
-# ── Color helpers (integer math, no cfunc call) ──
+# ── Color helpers ──
 
 #: (Integer r, Integer g, Integer b, Integer a) -> Integer
 def rgba(r, g, b, a)
@@ -37,18 +35,197 @@ def prand(seed)
   return seed
 end
 
+# ── Tile Drawing ──
+
+#: (Integer px, Integer py, Integer w, Integer h, Integer color) -> Integer
+def fill_rect(px, py, w, h, color)
+  Raylib.draw_rectangle(px, py, w, h, color)
+  return 0
+end
+
+#: (Integer px, Integer py, Integer r, Integer color) -> Integer
+def fill_circle(px, py, r, color)
+  Raylib.draw_circle(px, py, r, color)
+  return 0
+end
+
+#: (Integer px, Integer py, Integer tile, Integer anim_frame, Integer c_grass, Integer c_grass2, Integer c_water, Integer c_water2, Integer c_trunk, Integer c_leaves, Integer c_path, Integer c_wall, Integer c_roof, Integer c_signpost, Integer c_signboard, Integer c_flowerr, Integer c_flowery, Integer c_rock, Integer c_rock2, Integer tx, Integer ty) -> Integer
+def draw_tile(px, py, tile, anim_frame, c_grass, c_grass2, c_water, c_water2, c_trunk, c_leaves, c_path, c_wall, c_roof, c_signpost, c_signboard, c_flowerr, c_flowery, c_rock, c_rock2, tx, ty)
+  if tile == 0
+    fill_rect(px, py, 32, 32, c_grass)
+    if (tx + ty) % 2 == 0
+      fill_rect(px + 12, py + 8, 2, 6, c_grass2)
+    end
+  end
+  if tile == 1
+    fill_rect(px, py, 32, 32, c_water)
+    if anim_frame % 2 == 0
+      fill_rect(px + 4, py + 10, 10, 2, c_water2)
+      fill_rect(px + 18, py + 20, 8, 2, c_water2)
+    else
+      fill_rect(px + 8, py + 14, 10, 2, c_water2)
+      fill_rect(px + 14, py + 24, 8, 2, c_water2)
+    end
+  end
+  if tile == 2
+    fill_rect(px, py, 32, 32, c_grass)
+    fill_rect(px + 13, py + 16, 6, 14, c_trunk)
+    Raylib.draw_circle(px + 16, py + 12, 10.0, c_leaves)
+  end
+  if tile == 3
+    fill_rect(px, py, 32, 32, c_path)
+  end
+  if tile == 4
+    fill_rect(px, py, 32, 32, c_grass)
+    fill_rect(px + 2, py + 12, 28, 18, c_wall)
+    fill_rect(px + 2, py + 4, 28, 10, c_roof)
+    fill_rect(px + 12, py + 20, 8, 10, c_trunk)
+  end
+  if tile == 5
+    fill_rect(px, py, 32, 32, c_grass)
+    fill_rect(px + 14, py + 16, 4, 14, c_signpost)
+    fill_rect(px + 6, py + 8, 20, 12, c_signboard)
+    fill_rect(px + 8, py + 12, 16, 2, c_signpost)
+  end
+  if tile == 6
+    fill_rect(px, py, 32, 32, c_grass)
+    if (tx + ty) % 2 == 0
+      Raylib.draw_circle(px + 10, py + 14, 3.0, c_flowerr)
+      Raylib.draw_circle(px + 22, py + 20, 3.0, c_flowery)
+    else
+      Raylib.draw_circle(px + 14, py + 10, 3.0, c_flowery)
+      Raylib.draw_circle(px + 20, py + 24, 3.0, c_flowerr)
+    end
+  end
+  if tile == 7
+    fill_rect(px, py, 32, 32, c_grass)
+    Raylib.draw_circle(px + 16, py + 18, 10.0, c_rock)
+    Raylib.draw_circle(px + 14, py + 16, 8.0, c_rock2)
+  end
+  return 0
+end
+
+#: (Integer ppx, Integer ppy, Integer pdir, Integer pwalk, Integer c_body, Integer c_skin, Integer c_hair) -> Integer
+def draw_player(ppx, ppy, pdir, pwalk, c_body, c_skin, c_hair)
+  fill_rect(ppx + 8, ppy + 10, 16, 18, c_body)
+  Raylib.draw_circle(ppx + 16, ppy + 8, 7.0, c_skin)
+  Raylib.draw_circle(ppx + 16, ppy + 5, 7.0, c_hair)
+
+  if pdir == 0
+    fill_rect(ppx + 13, ppy + 8, 2, 2, c_hair)
+    fill_rect(ppx + 17, ppy + 8, 2, 2, c_hair)
+  end
+  if pdir == 1
+    fill_rect(ppx + 8, ppy + 2, 16, 6, c_hair)
+  end
+  if pdir == 2
+    fill_rect(ppx + 11, ppy + 7, 2, 2, c_hair)
+  end
+  if pdir == 3
+    fill_rect(ppx + 19, ppy + 7, 2, 2, c_hair)
+  end
+
+  if pwalk == 0
+    fill_rect(ppx + 10, ppy + 28, 5, 4, c_hair)
+    fill_rect(ppx + 17, ppy + 28, 5, 4, c_hair)
+  end
+  if pwalk == 1
+    fill_rect(ppx + 9, ppy + 28, 5, 4, c_hair)
+    fill_rect(ppx + 18, ppy + 28, 5, 4, c_hair)
+  end
+  if pwalk == 2
+    fill_rect(ppx + 10, ppy + 28, 5, 4, c_hair)
+    fill_rect(ppx + 17, ppy + 28, 5, 4, c_hair)
+  end
+  if pwalk == 3
+    fill_rect(ppx + 11, ppy + 28, 5, 4, c_hair)
+    fill_rect(ppx + 16, ppy + 28, 5, 4, c_hair)
+  end
+  return 0
+end
+
+#: (Integer steps, Integer c_hud) -> Integer
+def draw_hud(steps, c_hud)
+  fill_rect(0, 0, 640, 32, c_hud)
+  Raylib.draw_text("Konpeito RPG Demo", 8, 6, 20, Raylib.color_gold)
+
+  Raylib.draw_text("Steps:", 500, 8, 16, Raylib.color_lightgray)
+  d3 = steps / 100
+  d2 = (steps % 100) / 10
+  d1 = steps % 10
+  xp = 570
+  if d3 > 0
+    Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d3 == 1
+    Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d3 == 2
+    Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d3 == 3
+    Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d3 == 4
+    Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d3 == 5
+    Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d3 == 6
+    Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d3 == 7
+    Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d3 == 8
+    Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d3 == 9
+    xp = xp + 10
+  end
+  if d3 > 0
+    Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d2 == 0
+  end
+  if d2 > 0
+    Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d2 == 1
+    Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d2 == 2
+    Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d2 == 3
+    Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d2 == 4
+    Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d2 == 5
+    Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d2 == 6
+    Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d2 == 7
+    Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d2 == 8
+    Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d2 == 9
+    xp = xp + 10
+  end
+  Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d1 == 0
+  Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d1 == 1
+  Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d1 == 2
+  Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d1 == 3
+  Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d1 == 4
+  Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d1 == 5
+  Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d1 == 6
+  Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d1 == 7
+  Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d1 == 8
+  Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d1 == 9
+
+  Raylib.draw_text("[SPACE] Interact", 8, 462, 14, Raylib.color_gray)
+  return 0
+end
+
+#: (Integer mid, Integer c_msgbg, Integer c_msgbdr) -> Integer
+def draw_message_box(mid, c_msgbg, c_msgbdr)
+  fill_rect(38, 348, 564, 104, c_msgbdr)
+  fill_rect(40, 350, 560, 100, c_msgbg)
+  if mid == 0
+    Raylib.draw_text("Welcome to Konpeito Village!", 56, 366, 20, Raylib.color_white)
+    Raylib.draw_text("A peaceful place for Ruby devs.", 56, 394, 16, Raylib.color_lightgray)
+  end
+  if mid == 1
+    Raylib.draw_text("Lake Prism ahead!", 56, 366, 20, Raylib.color_skyblue)
+    Raylib.draw_text("Watch out, the water is deep.", 56, 394, 16, Raylib.color_lightgray)
+  end
+  if mid == 2
+    Raylib.draw_text("Crossroads of Crystal Path.", 56, 366, 20, Raylib.color_gold)
+    Raylib.draw_text("North: Forest  South: Plains", 56, 394, 16, Raylib.color_lightgray)
+  end
+  Raylib.draw_text("[SPACE] close", 460, 430, 14, Raylib.color_gray)
+  return 0
+end
+
 # ── Map Generation ──
 
 #: () -> Integer
 def generate_map
-  # Fill grass (0)
   i = 0
   while i < 1600
     World.tilemap[i] = 0
     i = i + 1
   end
 
-  # Paths (horizontal + vertical cross)
   x = 0
   while x < 40
     World.tilemap[20 * 40 + x] = 3
@@ -62,7 +239,6 @@ def generate_map
     y = y + 1
   end
 
-  # Water (lake top-right)
   wy = 3
   while wy < 10
     wx = 28
@@ -73,7 +249,6 @@ def generate_map
     wy = wy + 1
   end
 
-  # Trees
   seed = 12345
   i = 0
   while i < 80
@@ -87,17 +262,14 @@ def generate_map
     i = i + 1
   end
 
-  # Houses
   World.tilemap[18 * 40 + 10] = 4
   World.tilemap[18 * 40 + 14] = 4
   World.tilemap[18 * 40 + 24] = 4
 
-  # Signs
   World.tilemap[20 * 40 + 12] = 5
   World.tilemap[20 * 40 + 26] = 5
   World.tilemap[22 * 40 + 20] = 5
 
-  # Flowers
   seed = 777
   i = 0
   while i < 40
@@ -111,7 +283,6 @@ def generate_map
     i = i + 1
   end
 
-  # Rocks
   seed = 999
   i = 0
   while i < 25
@@ -125,7 +296,6 @@ def generate_map
     i = i + 1
   end
 
-  # Clear spawn
   World.tilemap[20 * 40 + 20] = 3
   World.tilemap[20 * 40 + 19] = 3
   World.tilemap[19 * 40 + 20] = 3
@@ -191,7 +361,6 @@ def main
 
   generate_map
 
-  # Init player
   World.gs[0] = 20
   World.gs[1] = 20
   World.gs[2] = 0
@@ -204,7 +373,6 @@ def main
   World.gs[10] = 0
   World.gs[11] = 0
 
-  # Precompute colors (integer RGBA)
   c_grass     = rgba(34, 139, 34, 255)
   c_grass2    = rgba(50, 160, 50, 255)
   c_water     = rgba(30, 100, 200, 255)
@@ -233,7 +401,6 @@ def main
   while Raylib.window_should_close == 0
     # ── Input ──
     if World.gs[9] == 1
-      # Message mode
       if Raylib.key_pressed?(Raylib.key_space) != 0
         World.gs[9] = 0
       end
@@ -298,7 +465,6 @@ def main
           end
         end
 
-        # Interact
         if Raylib.key_pressed?(Raylib.key_space) != 0
           fx = World.gs[0]
           fy = World.gs[1]
@@ -362,7 +528,6 @@ def main
     Raylib.begin_drawing
     Raylib.clear_background(Raylib.color_black)
 
-    # Visible tile range
     start_tx = (cam_x - 320) / 32 - 1
     start_ty = (cam_y - 240) / 32 - 1
     end_tx = (cam_x + 320) / 32 + 2
@@ -380,7 +545,6 @@ def main
       end_ty = 40
     end
 
-    # Draw tiles (all inline)
     ty = start_ty
     while ty < end_ty
       tx = start_tx
@@ -388,59 +552,7 @@ def main
         tile = World.tilemap[ty * 40 + tx]
         px = tx * 32 + scroll_x
         py = ty * 32 + scroll_y
-
-        if tile == 0
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          if (tx + ty) % 2 == 0
-            Raylib.draw_rectangle(px + 12, py + 8, 2, 6, c_grass2)
-          end
-        end
-        if tile == 1
-          Raylib.draw_rectangle(px, py, 32, 32, c_water)
-          if anim_frame % 2 == 0
-            Raylib.draw_rectangle(px + 4, py + 10, 10, 2, c_water2)
-            Raylib.draw_rectangle(px + 18, py + 20, 8, 2, c_water2)
-          else
-            Raylib.draw_rectangle(px + 8, py + 14, 10, 2, c_water2)
-            Raylib.draw_rectangle(px + 14, py + 24, 8, 2, c_water2)
-          end
-        end
-        if tile == 2
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          Raylib.draw_rectangle(px + 13, py + 16, 6, 14, c_trunk)
-          Raylib.draw_circle(px + 16, py + 12, 10.0, c_leaves)
-        end
-        if tile == 3
-          Raylib.draw_rectangle(px, py, 32, 32, c_path)
-        end
-        if tile == 4
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          Raylib.draw_rectangle(px + 2, py + 12, 28, 18, c_wall)
-          Raylib.draw_rectangle(px + 2, py + 4, 28, 10, c_roof)
-          Raylib.draw_rectangle(px + 12, py + 20, 8, 10, c_trunk)
-        end
-        if tile == 5
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          Raylib.draw_rectangle(px + 14, py + 16, 4, 14, c_signpost)
-          Raylib.draw_rectangle(px + 6, py + 8, 20, 12, c_signboard)
-          Raylib.draw_rectangle(px + 8, py + 12, 16, 2, c_signpost)
-        end
-        if tile == 6
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          if (tx + ty) % 2 == 0
-            Raylib.draw_circle(px + 10, py + 14, 3.0, c_flowerr)
-            Raylib.draw_circle(px + 22, py + 20, 3.0, c_flowery)
-          else
-            Raylib.draw_circle(px + 14, py + 10, 3.0, c_flowery)
-            Raylib.draw_circle(px + 20, py + 24, 3.0, c_flowerr)
-          end
-        end
-        if tile == 7
-          Raylib.draw_rectangle(px, py, 32, 32, c_grass)
-          Raylib.draw_circle(px + 16, py + 18, 10.0, c_rock)
-          Raylib.draw_circle(px + 14, py + 16, 8.0, c_rock2)
-        end
-
+        draw_tile(px, py, tile, anim_frame, c_grass, c_grass2, c_water, c_water2, c_trunk, c_leaves, c_path, c_wall, c_roof, c_signpost, c_signboard, c_flowerr, c_flowery, c_rock, c_rock2, tx, ty)
         tx = tx + 1
       end
       ty = ty + 1
@@ -449,113 +561,14 @@ def main
     # ── Player ──
     ppx = World.gs[0] * 32 + scroll_x
     ppy = World.gs[1] * 32 + scroll_y
-    pdir = World.gs[2]
-    pwalk = World.gs[3] % 4
-
-    Raylib.draw_rectangle(ppx + 8, ppy + 10, 16, 18, c_body)
-    Raylib.draw_circle(ppx + 16, ppy + 8, 7.0, c_skin)
-    Raylib.draw_circle(ppx + 16, ppy + 5, 7.0, c_hair)
-
-    if pdir == 0
-      Raylib.draw_rectangle(ppx + 13, ppy + 8, 2, 2, c_hair)
-      Raylib.draw_rectangle(ppx + 17, ppy + 8, 2, 2, c_hair)
-    end
-    if pdir == 1
-      Raylib.draw_rectangle(ppx + 8, ppy + 2, 16, 6, c_hair)
-    end
-    if pdir == 2
-      Raylib.draw_rectangle(ppx + 11, ppy + 7, 2, 2, c_hair)
-    end
-    if pdir == 3
-      Raylib.draw_rectangle(ppx + 19, ppy + 7, 2, 2, c_hair)
-    end
-
-    if pwalk == 0
-      Raylib.draw_rectangle(ppx + 10, ppy + 28, 5, 4, c_hair)
-      Raylib.draw_rectangle(ppx + 17, ppy + 28, 5, 4, c_hair)
-    end
-    if pwalk == 1
-      Raylib.draw_rectangle(ppx + 9, ppy + 28, 5, 4, c_hair)
-      Raylib.draw_rectangle(ppx + 18, ppy + 28, 5, 4, c_hair)
-    end
-    if pwalk == 2
-      Raylib.draw_rectangle(ppx + 10, ppy + 28, 5, 4, c_hair)
-      Raylib.draw_rectangle(ppx + 17, ppy + 28, 5, 4, c_hair)
-    end
-    if pwalk == 3
-      Raylib.draw_rectangle(ppx + 11, ppy + 28, 5, 4, c_hair)
-      Raylib.draw_rectangle(ppx + 16, ppy + 28, 5, 4, c_hair)
-    end
+    draw_player(ppx, ppy, World.gs[2], World.gs[3] % 4, c_body, c_skin, c_hair)
 
     # ── HUD ──
-    Raylib.draw_rectangle(0, 0, 640, 32, c_hud)
-    Raylib.draw_text("Konpeito RPG Demo", 8, 6, 20, Raylib.color_gold)
-
-    steps = World.gs[11]
-    Raylib.draw_text("Steps:", 500, 8, 16, Raylib.color_lightgray)
-    # Digit display
-    d3 = steps / 100
-    d2 = (steps % 100) / 10
-    d1 = steps % 10
-    xp = 570
-    if d3 > 0
-      Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d3 == 1
-      Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d3 == 2
-      Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d3 == 3
-      Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d3 == 4
-      Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d3 == 5
-      Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d3 == 6
-      Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d3 == 7
-      Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d3 == 8
-      Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d3 == 9
-      xp = xp + 10
-    end
-    if d3 > 0
-      Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d2 == 0
-    end
-    if d2 > 0
-      Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d2 == 1
-      Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d2 == 2
-      Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d2 == 3
-      Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d2 == 4
-      Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d2 == 5
-      Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d2 == 6
-      Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d2 == 7
-      Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d2 == 8
-      Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d2 == 9
-      xp = xp + 10
-    end
-    Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d1 == 0
-    Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d1 == 1
-    Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d1 == 2
-    Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d1 == 3
-    Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d1 == 4
-    Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d1 == 5
-    Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d1 == 6
-    Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d1 == 7
-    Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d1 == 8
-    Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d1 == 9
-
-    Raylib.draw_text("[SPACE] Interact", 8, 462, 14, Raylib.color_gray)
+    draw_hud(World.gs[11], c_hud)
 
     # ── Message Box ──
     if World.gs[9] == 1
-      Raylib.draw_rectangle(38, 348, 564, 104, c_msgbdr)
-      Raylib.draw_rectangle(40, 350, 560, 100, c_msgbg)
-      mid = World.gs[10]
-      if mid == 0
-        Raylib.draw_text("Welcome to Konpeito Village!", 56, 366, 20, Raylib.color_white)
-        Raylib.draw_text("A peaceful place for Ruby devs.", 56, 394, 16, Raylib.color_lightgray)
-      end
-      if mid == 1
-        Raylib.draw_text("Lake Prism ahead!", 56, 366, 20, Raylib.color_skyblue)
-        Raylib.draw_text("Watch out, the water is deep.", 56, 394, 16, Raylib.color_lightgray)
-      end
-      if mid == 2
-        Raylib.draw_text("Crossroads of Crystal Path.", 56, 366, 20, Raylib.color_gold)
-        Raylib.draw_text("North: Forest  South: Plains", 56, 394, 16, Raylib.color_lightgray)
-      end
-      Raylib.draw_text("[SPACE] close", 460, 430, 14, Raylib.color_gray)
+      draw_message_box(World.gs[10], c_msgbg, c_msgbdr)
     end
 
     Raylib.end_drawing

@@ -67,18 +67,6 @@ examples/**/META-INF/
 tools/konpeito-asm/build/
 tools/konpeito-asm/konpeito-asm.jar
 
-# External dependencies (mruby experiment)
-/vendor/*
-!/vendor/yyjson/
-/vendor/yyjson/*
-!/vendor/yyjson/LICENSE
-!/vendor/clay/
-/vendor/clay/*
-!/vendor/clay/LICENSE
-!/vendor/clay/clay.h
-!/vendor/clay/clay_impl.c
-!/vendor/clay/clay_renderer_raylib.c
-
 # Native extension build artifacts
 lib/konpeito/stdlib/*/Makefile
 lib/konpeito/stdlib/*/mkmf.log

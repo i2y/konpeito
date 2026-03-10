@@ -5,6 +5,22 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-03-10
+
+### Fixed
+- **Linux symbol collision**: use `internal` linkage for LLVM callback functions to prevent flat namespace collisions on Linux
+- **NativeClass ptr→VALUE**: add missing `ptr2int` conversion for NativeClass objects passed to CRuby APIs
+- **JSON codegen tests**: skip when vendored yyjson source is unavailable (CI environments)
+- **CI stabilization**: run codegen tests per-file in separate processes to prevent `.so` accumulation crashes
+
+### Added
+- **macOS ARM CI job**: unit tests and codegen tests on `macos-latest` (ARM)
+- **mruby CI job**: build and run verification with `konpeito run --target mruby`
+- **Japanese tutorial**: add mruby backend section (5.5) matching English tutorial
+
+### Changed
+- Update `actions/checkout` v4 → v6, `actions/setup-java` v4 → v5
+
 ## [0.4.1] - 2026-03-09
 
 ### Added

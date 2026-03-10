@@ -1350,3 +1350,90 @@ Colors are packed RGBA integers. Use `color_new(255, 0, 0, 255)` for red with fu
 | Method | Signature | Description |
 |---|---|---|
 | `get_random_value` | `(Integer min, Integer max) -> Integer` | Random integer in range |
+
+---
+
+## F. Clay (UI Layout — mruby Backend)
+
+Clay is a Flexbox-style UI layout library for the mruby backend. It computes layouts from a tree of containers and outputs renderer-agnostic draw commands. Konpeito integrates the official raylib renderer for one-call rendering.
+
+Reference `module Clay` in your code for auto-detection (same as Raylib).
+
+### F1. Lifecycle
+
+| Method | Signature | Description |
+|---|---|---|
+| `init` | `(Float w, Float h) -> void` | Initialize Clay arena and context |
+| `destroy` | `() -> void` | Free Clay arena memory |
+| `begin_layout` | `() -> void` | Begin a new layout frame |
+| `end_layout` | `() -> Integer` | End layout, returns command count |
+| `set_dimensions` | `(Float w, Float h) -> void` | Update layout dimensions (on resize) |
+
+### F2. Input
+
+| Method | Signature | Description |
+|---|---|---|
+| `set_pointer` | `(Float x, Float y, Integer down) -> void` | Update pointer position and state |
+| `pointer_over` | `(String id) -> Integer` | Check if pointer is over element (1=yes) |
+| `pointer_over_i` | `(String id, Integer index) -> Integer` | Check pointer over indexed element |
+
+### F3. Element Construction
+
+| Method | Signature | Description |
+|---|---|---|
+| `open` | `(String id) -> void` | Open a new element container |
+| `open_i` | `(String id, Integer index) -> void` | Open element with index (for loops) |
+| `close` | `() -> void` | Close current element |
+
+### F4. Layout Configuration
+
+```
+Clay.layout(dir, pl, pr, pt, pb, gap, swt, swv, sht, shv, ax, ay)
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `dir` | Integer | Direction: 0=LEFT_TO_RIGHT, 1=TOP_TO_BOTTOM |
+| `pl, pr, pt, pb` | Integer | Padding: left, right, top, bottom |
+| `gap` | Integer | Gap between children (pixels) |
+| `swt` | Integer | Width sizing type: 0=FIT, 1=GROW, 2=FIXED, 3=PERCENT |
+| `swv` | Float | Width sizing value (for FIXED/PERCENT) |
+| `sht` | Integer | Height sizing type: 0=FIT, 1=GROW, 2=FIXED, 3=PERCENT |
+| `shv` | Float | Height sizing value (for FIXED/PERCENT) |
+| `ax` | Integer | Horizontal alignment: 0=LEFT, 1=RIGHT, 2=CENTER |
+| `ay` | Integer | Vertical alignment: 0=TOP, 1=BOTTOM, 2=CENTER |
+
+### F5. Styling
+
+| Method | Signature | Description |
+|---|---|---|
+| `bg` | `(Float r, Float g, Float b, Float a, Float corner_radius) -> void` | Background color (0-255) + corner radius |
+| `border` | `(Float r, Float g, Float b, Float a, Integer top, Integer right, Integer bottom, Integer left, Float corner_radius) -> void` | Border with per-side widths |
+| `scroll` | `(Integer horizontal, Integer vertical) -> void` | Enable scrolling (1=enabled) |
+| `floating` | `(Float ox, Float oy, Integer z, Integer att_elem, Integer att_parent) -> void` | Floating element with offset and z-index |
+
+### F6. Text
+
+| Method | Signature | Description |
+|---|---|---|
+| `text` | `(String text, Integer font_id, Integer font_size, Float r, Float g, Float b, Float a, Integer wrap) -> void` | Add text element |
+| `set_measure_text_raylib` | `() -> void` | Register raylib text measurement callback |
+| `load_font` | `(String path, Integer size) -> Integer` | Load TTF font, returns font_id |
+
+### F7. Rendering
+
+| Method | Signature | Description |
+|---|---|---|
+| `render_raylib` | `() -> void` | Render all layout commands via raylib |
+| `update_scroll` | `(Float dx, Float dy, Float dt) -> void` | Update scroll containers |
+
+### F8. Constants
+
+| Method | Returns | Description |
+|---|---|---|
+| `sizing_fit` | 0 | FIT sizing — shrink to content |
+| `sizing_grow` | 1 | GROW sizing — expand to fill |
+| `sizing_fixed` | 2 | FIXED sizing — exact pixel value |
+| `sizing_percent` | 3 | PERCENT sizing — percentage of parent |
+| `left_to_right` | 0 | Horizontal layout direction |
+| `top_to_bottom` | 1 | Vertical layout direction |

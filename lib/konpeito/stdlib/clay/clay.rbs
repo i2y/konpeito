@@ -1,0 +1,169 @@
+# Konpeito stdlib: Clay UI layout bindings
+#
+# Clay is a single-header C UI layout library that computes Flexbox-style
+# layouts and outputs renderer-agnostic draw commands.
+#
+# Usage:
+#   konpeito build --target mruby ui.rb
+#   konpeito run --target mruby ui.rb
+#
+# Requires raylib for rendering and text measurement.
+
+module Clay
+  # ── Lifecycle ──
+
+  %a{cfunc: "konpeito_clay_init"}
+  def self.init: (Float w, Float h) -> void
+
+  %a{cfunc: "konpeito_clay_destroy"}
+  def self.destroy: () -> void
+
+  %a{cfunc: "konpeito_clay_begin_layout"}
+  def self.begin_layout: () -> void
+
+  %a{cfunc: "konpeito_clay_end_layout"}
+  def self.end_layout: () -> Integer
+
+  %a{cfunc: "konpeito_clay_set_dimensions"}
+  def self.set_dimensions: (Float w, Float h) -> void
+
+  # ── Input ──
+
+  %a{cfunc: "konpeito_clay_set_pointer"}
+  def self.set_pointer: (Float x, Float y, Integer down) -> void
+
+  %a{cfunc: "konpeito_clay_pointer_over"}
+  def self.pointer_over: (String id) -> Integer
+
+  %a{cfunc: "konpeito_clay_pointer_over_i"}
+  def self.pointer_over_i: (String id, Integer index) -> Integer
+
+  # ── Element Construction ──
+
+  %a{cfunc: "konpeito_clay_open"}
+  def self.open: (String id) -> void
+
+  %a{cfunc: "konpeito_clay_open_i"}
+  def self.open_i: (String id, Integer index) -> void
+
+  %a{cfunc: "konpeito_clay_close"}
+  def self.close: () -> void
+
+  # Layout configuration:
+  #   dir: 0=LEFT_TO_RIGHT, 1=TOP_TO_BOTTOM
+  #   pl,pr,pt,pb: padding left, right, top, bottom
+  #   gap: child gap pixels
+  #   swt: sizing width type (0=FIT, 1=GROW, 2=FIXED, 3=PERCENT)
+  #   swv: sizing width value
+  #   sht: sizing height type
+  #   shv: sizing height value
+  #   ax: align X (0=LEFT, 1=RIGHT, 2=CENTER)
+  #   ay: align Y (0=TOP, 1=BOTTOM, 2=CENTER)
+  %a{cfunc: "konpeito_clay_layout"}
+  def self.layout: (Integer dir, Integer pl, Integer pr, Integer pt, Integer pb, Integer gap, Integer swt, Float swv, Integer sht, Float shv, Integer ax, Integer ay) -> void
+
+  # Background color (r,g,b,a: 0-255) + corner radius
+  %a{cfunc: "konpeito_clay_bg"}
+  def self.bg: (Float r, Float g, Float b, Float a, Float corner_radius) -> void
+
+  # Border: color (r,g,b,a), widths (top, right, bottom, left), corner radius
+  %a{cfunc: "konpeito_clay_border"}
+  def self.border: (Float r, Float g, Float b, Float a, Integer top, Integer right, Integer bottom, Integer left, Float corner_radius) -> void
+
+  # Scroll/clip configuration
+  %a{cfunc: "konpeito_clay_scroll"}
+  def self.scroll: (Integer horizontal, Integer vertical) -> void
+
+  # Floating element: offset (ox, oy), z-index, attach points (element, parent)
+  %a{cfunc: "konpeito_clay_floating"}
+  def self.floating: (Float ox, Float oy, Integer z, Integer att_elem, Integer att_parent) -> void
+
+  # ── Text ──
+
+  # Add text element: text, font_id, font_size, color (r,g,b,a), wrap mode
+  %a{cfunc: "konpeito_clay_text"}
+  def self.text: (String text, Integer font_id, Integer font_size, Float r, Float g, Float b, Float a, Integer wrap) -> void
+
+  # Register raylib text measurement callback
+  %a{cfunc: "konpeito_clay_set_measure_text_raylib"}
+  def self.set_measure_text_raylib: () -> void
+
+  # Load a font file and return its font_id
+  %a{cfunc: "konpeito_clay_load_font"}
+  def self.load_font: (String path, Integer size) -> Integer
+
+  # ── Render Command Access ──
+
+  %a{cfunc: "konpeito_clay_cmd_type"}
+  def self.cmd_type: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_x"}
+  def self.cmd_x: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_y"}
+  def self.cmd_y: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_width"}
+  def self.cmd_width: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_height"}
+  def self.cmd_height: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_color_r"}
+  def self.cmd_color_r: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_color_g"}
+  def self.cmd_color_g: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_color_b"}
+  def self.cmd_color_b: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_color_a"}
+  def self.cmd_color_a: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_text"}
+  def self.cmd_text: (Integer index) -> String
+
+  %a{cfunc: "konpeito_clay_cmd_font_id"}
+  def self.cmd_font_id: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_font_size"}
+  def self.cmd_font_size: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_corner_radius"}
+  def self.cmd_corner_radius: (Integer index) -> Float
+
+  %a{cfunc: "konpeito_clay_cmd_border_width_top"}
+  def self.cmd_border_width_top: (Integer index) -> Integer
+
+  # ── Bulk Rendering ──
+
+  # Render all commands using the official raylib renderer
+  %a{cfunc: "konpeito_clay_render_raylib"}
+  def self.render_raylib: () -> void
+
+  # ── Scroll Update ──
+
+  %a{cfunc: "konpeito_clay_update_scroll"}
+  def self.update_scroll: (Float dx, Float dy, Float dt) -> void
+
+  # ── Constants ──
+
+  %a{cfunc: "konpeito_clay_sizing_fit"}
+  def self.sizing_fit: () -> Integer
+
+  %a{cfunc: "konpeito_clay_sizing_grow"}
+  def self.sizing_grow: () -> Integer
+
+  %a{cfunc: "konpeito_clay_sizing_fixed"}
+  def self.sizing_fixed: () -> Integer
+
+  %a{cfunc: "konpeito_clay_sizing_percent"}
+  def self.sizing_percent: () -> Integer
+
+  %a{cfunc: "konpeito_clay_left_to_right"}
+  def self.left_to_right: () -> Integer
+
+  %a{cfunc: "konpeito_clay_top_to_bottom"}
+  def self.top_to_bottom: () -> Integer
+end

@@ -624,6 +624,41 @@ main
 konpeito run --target mruby catch_game.rb
 ```
 
+### UI Layout with Clay stdlib
+
+Konpeito includes a Clay UI stdlib for building Flexbox-style layouts. Clay computes layout from a tree of containers and outputs draw commands rendered via raylib. Reference `module Clay` in your code for auto-detection.
+
+```ruby
+# Clay layout: open/close containers, set layout/bg, add text
+Clay.begin_layout
+
+Clay.open("root")
+Clay.layout(1, 16, 16, 16, 16, 8, 1, 0.0, 1, 0.0, 2, 0)  # vertical, grow, center-x
+Clay.bg(40.0, 40.0, 60.0, 255.0, 0.0)
+
+  Clay.open("card")
+  Clay.layout(1, 12, 12, 12, 12, 4, 1, 0.0, 0, 0.0, 0, 0)  # vertical, grow-w, fit-h
+  Clay.bg(255.0, 255.0, 255.0, 255.0, 8.0)                  # white, rounded
+  Clay.border(200.0, 200.0, 200.0, 255.0, 1, 1, 1, 1, 8.0)  # gray border
+    Clay.text("Hello!", font, 24, 40.0, 40.0, 40.0, 255.0, 0)
+  Clay.close
+
+Clay.close
+
+Clay.end_layout
+Clay.render_raylib  # render all commands via raylib
+```
+
+Key concepts:
+- `Clay.open(id)` / `Clay.close` — define nested containers
+- `Clay.layout(dir, pl, pr, pt, pb, gap, sw_type, sw_val, sh_type, sh_val, ax, ay)` — Flexbox layout
+- `Clay.bg(r, g, b, a, corner_radius)` — background color with rounded corners
+- `Clay.border(r, g, b, a, top, right, bottom, left, corner_radius)` — border
+- `Clay.text(str, font_id, size, r, g, b, a, wrap)` — text element
+- `Clay.pointer_over(id)` / `Clay.pointer_over_i(id, index)` — hit testing
+
+See `examples/mruby_clay_ui/` for a full sidebar layout demo and a Memory Match card game.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc`:
@@ -649,6 +684,7 @@ konpeito build --target mruby \
 | Runtime dependency | CRuby 4.0+ | None |
 | Use case | Library/app acceleration | Distribution, games |
 | raylib stdlib | Not available | Auto-detected |
+| Clay UI stdlib | Not available | Auto-detected |
 | Thread/Mutex | Supported | Not supported |
 | Keyword arguments | Supported | Not supported |
 | Compilation caching | `.konpeito_cache/run/` | `.konpeito_cache/run/` |

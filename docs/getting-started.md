@@ -489,6 +489,69 @@ konpeito run --target mruby bouncing_ball.rb
 
 The raylib stdlib provides 87 functions covering window management, shape/text drawing, keyboard/mouse input, 27 color constants, key constants, and random number generation. See the [API Reference](api-reference.md) for the full list.
 
+### UI layout with Clay stdlib
+
+Konpeito includes a Clay UI stdlib for the mruby backend. Clay is a Flexbox-style layout engine — you define containers, configure layout/styling via scalar API calls, and Clay computes the layout. Rendering is done via the built-in raylib renderer.
+
+Reference `module Clay` in your code and the compiler auto-detects it (same as raylib).
+
+```ruby
+# simple_ui.rb
+module Raylib
+end
+module Clay
+end
+
+FIT = 0
+GROW = 1
+LTR = 0
+TTB = 1
+
+def main
+  Raylib.set_config_flags(Raylib.flag_window_resizable)
+  Raylib.init_window(640, 480, "Clay UI")
+  Raylib.set_target_fps(60)
+
+  Clay.init(640.0, 480.0)
+  font = Clay.load_font("/System/Library/Fonts/Supplemental/Arial.ttf", 32)
+  Clay.set_measure_text_raylib
+
+  while Raylib.window_should_close == 0
+    w = Raylib.get_screen_width
+    h = Raylib.get_screen_height
+    Clay.set_dimensions(w * 1.0, h * 1.0)
+
+    mx = Raylib.get_mouse_x
+    my = Raylib.get_mouse_y
+    Clay.set_pointer(mx * 1.0, my * 1.0, 0)
+
+    Clay.begin_layout
+    Clay.open("root")
+    Clay.layout(TTB, 24, 24, 24, 24, 16, GROW, 0.0, GROW, 0.0, 2, 2)
+    Clay.bg(40.0, 40.0, 60.0, 255.0, 0.0)
+      Clay.text("Hello, Clay!", font, 32, 255.0, 255.0, 255.0, 255.0, 0)
+    Clay.close
+    Clay.end_layout
+
+    Raylib.begin_drawing
+    Raylib.clear_background(Raylib.color_black)
+    Clay.render_raylib
+    Raylib.end_drawing
+  end
+
+  Clay.destroy
+  Raylib.close_window
+end
+
+main
+```
+
+```bash
+konpeito run --target mruby simple_ui.rb
+```
+
+Clay provides 40+ functions covering element construction (`open`/`close`/`layout`/`bg`/`border`), text rendering with TTF fonts, scrolling, floating elements, pointer hit-testing, and bulk rendering. See the [API Reference](api-reference.md) for the full list.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc` as the cross-compiler:

@@ -58,6 +58,10 @@ module Konpeito
             extra_obj_files << extra_obj
           end
 
+          # Compile vendored Clay library if used
+          clay_objs = ensure_clay_compiled
+          extra_obj_files.concat(clay_objs)
+
           obj_files = [obj_file, init_obj_file, helpers_obj_file] + extra_obj_files
 
           # Link into standalone executable
@@ -901,6 +905,34 @@ module Konpeito
           )
         end
 
+        # Include Clay if used
+        clay_used = @extra_c_files.any? { |f| File.basename(f).include?("clay") }
+        if clay_used
+          sections << license_section(
+            "Clay",
+            "zlib/libpng",
+            "Copyright (c) 2024 Nic Barker",
+            "https://github.com/nicbarker/clay",
+            <<~ZLIB
+              This software is provided 'as-is', without any express or implied warranty.
+              In no event will the authors be held liable for any damages arising from the
+              use of this software.
+
+              Permission is granted to anyone to use this software for any purpose,
+              including commercial applications, and to alter it and redistribute it freely,
+              subject to the following restrictions:
+
+              1. The origin of this software must not be misrepresented; you must not claim
+                 that you wrote the original software. If you use this software in a product,
+                 an acknowledgment in the product documentation would be appreciated but is
+                 not required.
+              2. Altered source versions must be plainly marked as such, and must not be
+                 misrepresented as being the original software.
+              3. This notice may not be removed or altered from any source distribution.
+            ZLIB
+          )
+        end
+
         # Include raylib if linked
         ffi_libs = @rbs_loader&.all_ffi_libraries || []
         if ffi_libs.any? { |lib| lib.to_s.include?("raylib") }
@@ -1160,8 +1192,41 @@ module Konpeito
         end
       end
 
+      # Compile vendored clay.h implementation if Clay stdlib is used
+      # Returns array of object file paths
+      def ensure_clay_compiled
+        clay_used = @extra_c_files.any? { |f| File.basename(f).include?("clay") }
+        return [] unless clay_used
+
+        clay_dir = File.expand_path("../../../vendor/clay", __dir__)
+        clay_impl_c = File.join(clay_dir, "clay_impl.c")
+        clay_impl_obj = File.join(clay_dir, "clay_impl.o")
+
+        return [] unless File.exist?(clay_impl_c)
+
+        cc, cc_flags = cross_cc_with_flags
+        cflags = cross_compiling? ? Platform.cross_mruby_cflags(@cross_mruby_dir) : (Platform.mruby_cflags rescue "-O2")
+
+        # Compile clay_impl.c (only if stale)
+        unless File.exist?(clay_impl_obj) && File.mtime(clay_impl_obj) > File.mtime(clay_impl_c)
+          cmd = [*cc, "-c", "-O2"]
+          cmd.concat(cc_flags)
+          cmd += ["-o", clay_impl_obj, clay_impl_c]
+          system(*cmd) or return []
+        end
+
+        [clay_impl_obj]
+      end
+
       def ffi_include_flags
         flags = []
+
+        # Always add vendored Clay include path if Clay stdlib is used
+        clay_dir = File.expand_path("../../../vendor/clay", __dir__)
+        if @extra_c_files.any? { |f| File.basename(f).include?("clay") } && Dir.exist?(clay_dir)
+          flags << "-I#{clay_dir}"
+        end
+
         if cross_compiling?
           # When cross-compiling, use cross library include paths
           flags << "-I#{@cross_libs_dir}/../include" if @cross_libs_dir && Dir.exist?("#{@cross_libs_dir}/../include")

@@ -8,6 +8,7 @@
 
 module Raylib
   # Window
+  def self.set_config_flags(flags) end
   def self.init_window(w, h, title) end
   def self.close_window() end
   def self.window_should_close() end
@@ -138,4 +139,9 @@ module Raylib
 
   # Random
   def self.get_random_value(min, max) end
+
+  # Window Flag Constants
+  def self.flag_window_resizable() end
+  def self.flag_window_highdpi() end
+  def self.flag_msaa_4x_hint() end
 end

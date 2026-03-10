@@ -652,7 +652,8 @@ module Konpeito
 
     # Map of stdlib modules: module name pattern => stdlib directory name
     STDLIB_MODULE_MAP = {
-      "Raylib" => "raylib"
+      "Raylib" => "raylib",
+      "Clay" => "clay"
     }.freeze
 
     # Scan AST for known stdlib module references and auto-add their RBS paths
@@ -694,6 +695,7 @@ module Konpeito
     end
 
     # Auto-include stdlib C files based on FFI libraries detected by RBS loader
+    # and vendored stdlibs detected by module reference
     def inject_stdlib_c_files(extra_c_files)
       return extra_c_files unless @rbs_loader
 
@@ -713,6 +715,21 @@ module Konpeito
         if File.exist?(stdlib_c) && !extra_c_files.include?(stdlib_c)
           extra_c_files << stdlib_c
           log "Auto-including stdlib C wrapper: #{stdlib_name}" if verbose
+        end
+      end
+
+      # Also include vendored stdlib C files detected by module reference
+      # (for stdlibs without %a{ffi} that use vendored C libraries)
+      @rbs_paths.each do |rbs_path|
+        STDLIB_MODULE_MAP.each_value do |stdlib_name|
+          stdlib_rbs = File.expand_path("stdlib/#{stdlib_name}/#{stdlib_name}.rbs", __dir__)
+          next unless rbs_path == stdlib_rbs
+
+          stdlib_c = File.expand_path("stdlib/#{stdlib_name}/#{stdlib_name}_native.c", __dir__)
+          if File.exist?(stdlib_c) && !extra_c_files.include?(stdlib_c)
+            extra_c_files << stdlib_c
+            log "Auto-including stdlib C wrapper: #{stdlib_name}" if verbose
+          end
         end
       end
 

@@ -620,6 +620,41 @@ main
 konpeito run --target mruby catch_game.rb
 ```
 
+### Clay stdlib で UI レイアウト
+
+Konpeito は mruby バックエンド向けに Clay UI stdlib を内蔵しています。Clay は Flexbox スタイルのレイアウトエンジンで、コンテナのツリーからレイアウトを計算し、raylib 経由で描画コマンドをレンダリングします。コード内で `module Clay` を参照すると自動検出されます。
+
+```ruby
+# Clay レイアウト: open/close でコンテナを定義、layout/bg で設定、text でテキスト追加
+Clay.begin_layout
+
+Clay.open("root")
+Clay.layout(1, 16, 16, 16, 16, 8, 1, 0.0, 1, 0.0, 2, 0)  # 縦方向、GROW、中央揃え
+Clay.bg(40.0, 40.0, 60.0, 255.0, 0.0)
+
+  Clay.open("card")
+  Clay.layout(1, 12, 12, 12, 12, 4, 1, 0.0, 0, 0.0, 0, 0)  # 縦方向、幅GROW、高さFIT
+  Clay.bg(255.0, 255.0, 255.0, 255.0, 8.0)                  # 白、角丸
+  Clay.border(200.0, 200.0, 200.0, 255.0, 1, 1, 1, 1, 8.0)  # グレーのボーダー
+    Clay.text("Hello!", font, 24, 40.0, 40.0, 40.0, 255.0, 0)
+  Clay.close
+
+Clay.close
+
+Clay.end_layout
+Clay.render_raylib  # raylib で全コマンドをレンダリング
+```
+
+主要概念:
+- `Clay.open(id)` / `Clay.close` — ネストされたコンテナの定義
+- `Clay.layout(dir, pl, pr, pt, pb, gap, sw_type, sw_val, sh_type, sh_val, ax, ay)` — Flexbox レイアウト
+- `Clay.bg(r, g, b, a, corner_radius)` — 背景色と角丸
+- `Clay.border(r, g, b, a, top, right, bottom, left, corner_radius)` — ボーダー
+- `Clay.text(str, font_id, size, r, g, b, a, wrap)` — テキスト要素
+- `Clay.pointer_over(id)` / `Clay.pointer_over_i(id, index)` — ヒットテスト
+
+`examples/mruby_clay_ui/` にサイドバーレイアウトのデモと Memory Match カードゲームがあります。
+
 ### クロスコンパイル
 
 `zig cc` を使って他のプラットフォーム向けにクロスコンパイルできます:
@@ -645,6 +680,7 @@ konpeito build --target mruby \
 | 実行時依存 | CRuby 4.0+ | なし |
 | 用途 | ライブラリ/アプリの高速化 | 配布、ゲーム |
 | raylib stdlib | 非対応 | 自動検出 |
+| Clay UI stdlib | 非対応 | 自動検出 |
 | Thread/Mutex | 対応 | 非対応 |
 | キーワード引数 | 対応 | 非対応 |
 | コンパイルキャッシュ | `.konpeito_cache/run/` | `.konpeito_cache/run/` |

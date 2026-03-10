@@ -72,6 +72,12 @@ tools/konpeito-asm/konpeito-asm.jar
 !/vendor/yyjson/
 /vendor/yyjson/*
 !/vendor/yyjson/LICENSE
+!/vendor/clay/
+/vendor/clay/*
+!/vendor/clay/LICENSE
+!/vendor/clay/clay.h
+!/vendor/clay/clay_impl.c
+!/vendor/clay/clay_renderer_raylib.c
 
 # Native extension build artifacts
 lib/konpeito/stdlib/*/Makefile

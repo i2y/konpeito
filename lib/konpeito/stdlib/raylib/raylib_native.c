@@ -50,6 +50,8 @@ static int color_to_int(Color c) {
  *  Window Management
  * ═══════════════════════════════════════════ */
 
+void konpeito_set_config_flags(int flags) { SetConfigFlags((unsigned int)flags); }
+
 void konpeito_init_window(int w, int h, const char *title) {
     InitWindow(w, h, title);
 #ifdef __APPLE__
@@ -251,3 +253,8 @@ int konpeito_mouse_middle(void)  { return MOUSE_BUTTON_MIDDLE; }
 int konpeito_get_random_value(int min, int max) {
     return GetRandomValue(min, max);
 }
+
+/* Window flag constants */
+int konpeito_flag_window_resizable(void) { return FLAG_WINDOW_RESIZABLE; }
+int konpeito_flag_window_highdpi(void)   { return FLAG_WINDOW_HIGHDPI; }
+int konpeito_flag_msaa_4x_hint(void)     { return FLAG_MSAA_4X_HINT; }

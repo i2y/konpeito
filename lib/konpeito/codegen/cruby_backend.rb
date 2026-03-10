@@ -996,6 +996,13 @@ module Konpeito
           flags.concat(yyjson_objs)
         end
 
+        # Add clay object files if Clay stdlib is used
+        clay_used = @rbs_loader&.cfunc_methods&.any? { |k, _| k.start_with?("Clay.") }
+        if clay_used
+          clay_objs = ensure_clay_compiled
+          flags.concat(clay_objs)
+        end
+
         if @rbs_loader
           stdlib_ui_dir = File.expand_path("../stdlib/ui", __dir__)
 
@@ -1049,6 +1056,25 @@ module Konpeito
         end
 
         [yyjson_obj, wrapper_obj]
+      end
+
+      # Compile vendored clay.h implementation if Clay stdlib is used
+      # Returns array of object file paths
+      def ensure_clay_compiled
+        clay_dir = File.expand_path("../../../vendor/clay", __dir__)
+        clay_impl_c = File.join(clay_dir, "clay_impl.c")
+        clay_impl_obj = File.join(clay_dir, "clay_impl.o")
+
+        return [] unless File.exist?(clay_impl_c)
+
+        cc = find_llvm_tool("clang") || "cc"
+
+        unless File.exist?(clay_impl_obj) && File.mtime(clay_impl_obj) > File.mtime(clay_impl_c)
+          cmd = [cc, "-c", "-O2", "-fPIC", "-o", clay_impl_obj, clay_impl_c]
+          system(*cmd) or return []
+        end
+
+        [clay_impl_obj]
       end
 
       def ruby_link_flags

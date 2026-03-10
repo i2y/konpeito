@@ -1,0 +1,29 @@
+# Memory Match game — NativeArray state + TopLevel functions
+
+module G
+  # cards[i] = card value (1-6), 6 pairs = 12 cards
+  @cards: NativeArray[Integer, 12]
+  # state[i]: 0=face-down, 1=face-up, 2=matched
+  @state: NativeArray[Integer, 12]
+  # first/second picks (-1 = none)
+  @pick1: NativeArray[Integer, 1]
+  @pick2: NativeArray[Integer, 1]
+  # turn count
+  @turns: NativeArray[Integer, 1]
+  # matched pair count (win at 6)
+  @matched: NativeArray[Integer, 1]
+  # timer for reveal delay (seconds, stored as int * 1000)
+  @timer: NativeArray[Integer, 1]
+  # card colors: R,G,B for 6 card types (index 0-17)
+  @colors: NativeArray[Float, 18]
+end
+
+module TopLevel
+  def main: () -> void
+  def init_game: () -> void
+  def shuffle_cards: () -> void
+  def update_game: (Float dt) -> void
+  def handle_click: () -> void
+  def draw_ui: (Integer font_body, Integer font_heading) -> void
+  def draw_card: (Integer i, Integer font_body) -> void
+end

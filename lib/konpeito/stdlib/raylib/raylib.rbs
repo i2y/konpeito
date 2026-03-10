@@ -13,6 +13,9 @@
 module Raylib
   # ── Window Management ──
 
+  %a{cfunc: "konpeito_set_config_flags"}
+  def self.set_config_flags: (Integer flags) -> void
+
   %a{cfunc: "konpeito_init_window"}
   def self.init_window: (Integer w, Integer h, String title) -> void
 
@@ -372,4 +375,15 @@ module Raylib
 
   %a{cfunc: "konpeito_get_random_value"}
   def self.get_random_value: (Integer min, Integer max) -> Integer
+
+  # ── Window Flag Constants ──
+
+  %a{cfunc: "konpeito_flag_window_resizable"}
+  def self.flag_window_resizable: () -> Integer
+
+  %a{cfunc: "konpeito_flag_window_highdpi"}
+  def self.flag_window_highdpi: () -> Integer
+
+  %a{cfunc: "konpeito_flag_msaa_4x_hint"}
+  def self.flag_msaa_4x_hint: () -> Integer
 end

@@ -542,6 +542,40 @@ module Konpeito
             result_var: new_result
           )
 
+        when HIR::CFuncCall
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::CFuncCall.new(
+            c_func_name: inst.c_func_name,
+            args: new_args,
+            cfunc_type: inst.cfunc_type,
+            result_var: new_result
+          )
+
+        when HIR::ExternConstructorCall
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::ExternConstructorCall.new(
+            extern_type: inst.extern_type,
+            c_func_name: inst.c_func_name,
+            args: new_args,
+            method_sig: inst.method_sig,
+            result_var: new_result
+          )
+
+        when HIR::ExternMethodCall
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          new_receiver = transform_value(inst.receiver, prefix, param_map)
+          new_args = inst.args.map { |a| transform_value(a, prefix, param_map) }
+          HIR::ExternMethodCall.new(
+            receiver: new_receiver,
+            c_func_name: inst.c_func_name,
+            args: new_args,
+            extern_type: inst.extern_type,
+            method_sig: inst.method_sig,
+            result_var: new_result
+          )
+
         else
           # For other instructions, just return as-is with renamed result
           inst

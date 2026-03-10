@@ -1171,7 +1171,9 @@ module Konpeito
         # Known framework dependencies for popular libraries
         case lib_name
         when "raylib"
-          ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "OpenGL"]
+          ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "OpenGL",
+           "-framework", "CoreAudio", "-framework", "AudioToolbox",
+           "-framework", "CoreFoundation"]
         when "SDL2", "sdl2"
           ["-framework", "IOKit", "-framework", "Cocoa", "-framework", "Carbon",
            "-framework", "CoreAudio", "-framework", "AudioToolbox",

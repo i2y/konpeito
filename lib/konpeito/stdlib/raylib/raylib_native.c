@@ -12,6 +12,7 @@
 #include <raylib.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 
 /* ── macOS app activation ── */
 #ifdef __APPLE__
@@ -258,3 +259,512 @@ int konpeito_get_random_value(int min, int max) {
 int konpeito_flag_window_resizable(void) { return FLAG_WINDOW_RESIZABLE; }
 int konpeito_flag_window_highdpi(void)   { return FLAG_WINDOW_HIGHDPI; }
 int konpeito_flag_msaa_4x_hint(void)     { return FLAG_MSAA_4X_HINT; }
+
+/* ═══════════════════════════════════════════
+ *  Texture Management (ID-based table)
+ * ═══════════════════════════════════════════ */
+
+#define MAX_TEXTURES 256
+
+static Texture2D g_textures[MAX_TEXTURES];
+static int       g_texture_used[MAX_TEXTURES];
+static int       g_textures_initialized = 0;
+
+static void ensure_textures_init(void) {
+    if (g_textures_initialized) return;
+    memset(g_texture_used, 0, sizeof(g_texture_used));
+    g_textures_initialized = 1;
+}
+
+static int alloc_texture_slot(void) {
+    ensure_textures_init();
+    for (int i = 0; i < MAX_TEXTURES; i++) {
+        if (!g_texture_used[i]) {
+            g_texture_used[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+int konpeito_load_texture(const char *path) {
+    int slot = alloc_texture_slot();
+    if (slot < 0) return -1;
+    g_textures[slot] = LoadTexture(path);
+    if (g_textures[slot].id == 0) {
+        g_texture_used[slot] = 0;
+        return -1;
+    }
+    return slot;
+}
+
+void konpeito_unload_texture(int id) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return;
+    UnloadTexture(g_textures[id]);
+    g_texture_used[id] = 0;
+}
+
+void konpeito_draw_texture(int id, int x, int y, int tint) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return;
+    DrawTexture(g_textures[id], x, y, int_to_color(tint));
+}
+
+void konpeito_draw_texture_rec(int id, double sx, double sy, double sw, double sh,
+                                int dx, int dy, int tint) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return;
+    Rectangle source = { (float)sx, (float)sy, (float)sw, (float)sh };
+    Vector2 pos = { (float)dx, (float)dy };
+    DrawTextureRec(g_textures[id], source, pos, int_to_color(tint));
+}
+
+void konpeito_draw_texture_pro(int id,
+                                double sx, double sy, double sw, double sh,
+                                double dx, double dy, double dw, double dh,
+                                double ox, double oy, double rotation, int tint) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return;
+    Rectangle source = { (float)sx, (float)sy, (float)sw, (float)sh };
+    Rectangle dest   = { (float)dx, (float)dy, (float)dw, (float)dh };
+    Vector2 origin   = { (float)ox, (float)oy };
+    DrawTexturePro(g_textures[id], source, dest, origin, (float)rotation, int_to_color(tint));
+}
+
+int konpeito_get_texture_width(int id) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return 0;
+    return g_textures[id].width;
+}
+
+int konpeito_get_texture_height(int id) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return 0;
+    return g_textures[id].height;
+}
+
+int konpeito_is_texture_valid(int id) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return 0;
+    return (int)IsTextureValid(g_textures[id]);
+}
+
+void konpeito_draw_texture_scaled(int id, int x, int y, double scale, int tint) {
+    if (id < 0 || id >= MAX_TEXTURES || !g_texture_used[id]) return;
+    DrawTextureEx(g_textures[id], (Vector2){(float)x, (float)y},
+                  0.0f, (float)scale, int_to_color(tint));
+}
+
+/* ═══════════════════════════════════════════
+ *  Audio Management (ID-based tables)
+ * ═══════════════════════════════════════════ */
+
+#define MAX_SOUNDS 128
+#define MAX_MUSIC  32
+
+static Sound  g_sounds[MAX_SOUNDS];
+static int    g_sound_used[MAX_SOUNDS];
+static int    g_sounds_initialized = 0;
+
+static Music  g_music[MAX_MUSIC];
+static int    g_music_used[MAX_MUSIC];
+static int    g_music_initialized = 0;
+
+static void ensure_sounds_init(void) {
+    if (g_sounds_initialized) return;
+    memset(g_sound_used, 0, sizeof(g_sound_used));
+    g_sounds_initialized = 1;
+}
+
+static void ensure_music_init(void) {
+    if (g_music_initialized) return;
+    memset(g_music_used, 0, sizeof(g_music_used));
+    g_music_initialized = 1;
+}
+
+/* Audio device */
+void konpeito_init_audio_device(void)  { InitAudioDevice(); }
+void konpeito_close_audio_device(void) { CloseAudioDevice(); }
+int  konpeito_is_audio_device_ready(void) { return (int)IsAudioDeviceReady(); }
+void konpeito_set_master_volume(double vol) { SetMasterVolume((float)vol); }
+double konpeito_get_master_volume(void) { return (double)GetMasterVolume(); }
+
+/* Sound */
+int konpeito_load_sound(const char *path) {
+    ensure_sounds_init();
+    for (int i = 0; i < MAX_SOUNDS; i++) {
+        if (!g_sound_used[i]) {
+            g_sounds[i] = LoadSound(path);
+            if (g_sounds[i].frameCount == 0) return -1;
+            g_sound_used[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void konpeito_unload_sound(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    UnloadSound(g_sounds[id]);
+    g_sound_used[id] = 0;
+}
+
+void konpeito_play_sound(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    PlaySound(g_sounds[id]);
+}
+
+void konpeito_stop_sound(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    StopSound(g_sounds[id]);
+}
+
+void konpeito_pause_sound(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    PauseSound(g_sounds[id]);
+}
+
+void konpeito_resume_sound(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    ResumeSound(g_sounds[id]);
+}
+
+int konpeito_is_sound_playing(int id) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return 0;
+    return (int)IsSoundPlaying(g_sounds[id]);
+}
+
+void konpeito_set_sound_volume(int id, double vol) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    SetSoundVolume(g_sounds[id], (float)vol);
+}
+
+void konpeito_set_sound_pitch(int id, double pitch) {
+    if (id < 0 || id >= MAX_SOUNDS || !g_sound_used[id]) return;
+    SetSoundPitch(g_sounds[id], (float)pitch);
+}
+
+/* Music stream */
+int konpeito_load_music(const char *path) {
+    ensure_music_init();
+    for (int i = 0; i < MAX_MUSIC; i++) {
+        if (!g_music_used[i]) {
+            g_music[i] = LoadMusicStream(path);
+            if (g_music[i].frameCount == 0) return -1;
+            g_music_used[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void konpeito_unload_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    UnloadMusicStream(g_music[id]);
+    g_music_used[id] = 0;
+}
+
+void konpeito_play_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    PlayMusicStream(g_music[id]);
+}
+
+void konpeito_stop_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    StopMusicStream(g_music[id]);
+}
+
+void konpeito_pause_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    PauseMusicStream(g_music[id]);
+}
+
+void konpeito_resume_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    ResumeMusicStream(g_music[id]);
+}
+
+void konpeito_update_music(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    UpdateMusicStream(g_music[id]);
+}
+
+int konpeito_is_music_playing(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return 0;
+    return (int)IsMusicStreamPlaying(g_music[id]);
+}
+
+void konpeito_set_music_volume(int id, double vol) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    SetMusicVolume(g_music[id], (float)vol);
+}
+
+void konpeito_set_music_pitch(int id, double pitch) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    SetMusicPitch(g_music[id], (float)pitch);
+}
+
+double konpeito_get_music_time_length(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return 0.0;
+    return (double)GetMusicTimeLength(g_music[id]);
+}
+
+double konpeito_get_music_time_played(int id) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return 0.0;
+    return (double)GetMusicTimePlayed(g_music[id]);
+}
+
+void konpeito_seek_music(int id, double position) {
+    if (id < 0 || id >= MAX_MUSIC || !g_music_used[id]) return;
+    SeekMusicStream(g_music[id], (float)position);
+}
+
+/* ═══════════════════════════════════════════
+ *  Camera2D
+ * ═══════════════════════════════════════════ */
+
+void konpeito_begin_mode_2d(double offset_x, double offset_y,
+                             double target_x, double target_y,
+                             double rotation, double zoom) {
+    Camera2D cam = {0};
+    cam.offset   = (Vector2){ (float)offset_x, (float)offset_y };
+    cam.target   = (Vector2){ (float)target_x, (float)target_y };
+    cam.rotation = (float)rotation;
+    cam.zoom     = (float)zoom;
+    BeginMode2D(cam);
+}
+
+void konpeito_end_mode_2d(void) {
+    EndMode2D();
+}
+
+/* World ↔ screen coordinate conversion */
+int konpeito_get_world_to_screen_2d_x(double world_x, double world_y,
+                                       double offset_x, double offset_y,
+                                       double target_x, double target_y,
+                                       double rotation, double zoom) {
+    Camera2D cam = {0};
+    cam.offset   = (Vector2){ (float)offset_x, (float)offset_y };
+    cam.target   = (Vector2){ (float)target_x, (float)target_y };
+    cam.rotation = (float)rotation;
+    cam.zoom     = (float)zoom;
+    Vector2 result = GetWorldToScreen2D((Vector2){(float)world_x, (float)world_y}, cam);
+    return (int)result.x;
+}
+
+int konpeito_get_world_to_screen_2d_y(double world_x, double world_y,
+                                       double offset_x, double offset_y,
+                                       double target_x, double target_y,
+                                       double rotation, double zoom) {
+    Camera2D cam = {0};
+    cam.offset   = (Vector2){ (float)offset_x, (float)offset_y };
+    cam.target   = (Vector2){ (float)target_x, (float)target_y };
+    cam.rotation = (float)rotation;
+    cam.zoom     = (float)zoom;
+    Vector2 result = GetWorldToScreen2D((Vector2){(float)world_x, (float)world_y}, cam);
+    return (int)result.y;
+}
+
+/* ═══════════════════════════════════════════
+ *  File I/O (Save / Load)
+ * ═══════════════════════════════════════════ */
+
+int konpeito_save_file_text(const char *path, const char *text) {
+    return (int)SaveFileText(path, (char *)text);
+}
+
+const char *konpeito_load_file_text(const char *path) {
+    return LoadFileText(path);
+}
+
+int konpeito_file_exists(const char *path) {
+    return (int)FileExists(path);
+}
+
+int konpeito_directory_exists(const char *path) {
+    return (int)DirectoryExists(path);
+}
+
+/* ═══════════════════════════════════════════
+ *  Font Management (ID-based table)
+ * ═══════════════════════════════════════════ */
+
+#define MAX_FONTS 32
+
+static Font g_raylib_fonts[MAX_FONTS];
+static int  g_raylib_font_used[MAX_FONTS];
+static int  g_raylib_fonts_initialized = 0;
+
+static void ensure_fonts_init(void) {
+    if (g_raylib_fonts_initialized) return;
+    memset(g_raylib_font_used, 0, sizeof(g_raylib_font_used));
+    g_raylib_fonts_initialized = 1;
+}
+
+int konpeito_load_font(const char *path) {
+    ensure_fonts_init();
+    for (int i = 0; i < MAX_FONTS; i++) {
+        if (!g_raylib_font_used[i]) {
+            g_raylib_fonts[i] = LoadFont(path);
+            if (g_raylib_fonts[i].baseSize == 0) return -1;
+            g_raylib_font_used[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+int konpeito_load_font_ex(const char *path, int size) {
+    ensure_fonts_init();
+    for (int i = 0; i < MAX_FONTS; i++) {
+        if (!g_raylib_font_used[i]) {
+            g_raylib_fonts[i] = LoadFontEx(path, size, NULL, 0);
+            if (g_raylib_fonts[i].baseSize == 0) return -1;
+            g_raylib_font_used[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void konpeito_unload_font(int id) {
+    if (id < 0 || id >= MAX_FONTS || !g_raylib_font_used[id]) return;
+    UnloadFont(g_raylib_fonts[id]);
+    g_raylib_font_used[id] = 0;
+}
+
+void konpeito_draw_text_ex(int font_id, const char *text,
+                            double x, double y, double size,
+                            double spacing, int tint) {
+    Font font;
+    if (font_id < 0 || font_id >= MAX_FONTS || !g_raylib_font_used[font_id]) {
+        font = GetFontDefault();
+    } else {
+        font = g_raylib_fonts[font_id];
+    }
+    DrawTextEx(font, text, (Vector2){(float)x, (float)y},
+               (float)size, (float)spacing, int_to_color(tint));
+}
+
+int konpeito_measure_text_ex_x(int font_id, const char *text,
+                                double size, double spacing) {
+    Font font;
+    if (font_id < 0 || font_id >= MAX_FONTS || !g_raylib_font_used[font_id]) {
+        font = GetFontDefault();
+    } else {
+        font = g_raylib_fonts[font_id];
+    }
+    Vector2 v = MeasureTextEx(font, text, (float)size, (float)spacing);
+    return (int)v.x;
+}
+
+int konpeito_measure_text_ex_y(int font_id, const char *text,
+                                double size, double spacing) {
+    Font font;
+    if (font_id < 0 || font_id >= MAX_FONTS || !g_raylib_font_used[font_id]) {
+        font = GetFontDefault();
+    } else {
+        font = g_raylib_fonts[font_id];
+    }
+    Vector2 v = MeasureTextEx(font, text, (float)size, (float)spacing);
+    return (int)v.y;
+}
+
+/* ═══════════════════════════════════════════
+ *  Gamepad Input
+ * ═══════════════════════════════════════════ */
+
+int konpeito_is_gamepad_available(int gamepad)          { return (int)IsGamepadAvailable(gamepad); }
+int konpeito_is_gamepad_button_pressed(int gp, int btn) { return (int)IsGamepadButtonPressed(gp, btn); }
+int konpeito_is_gamepad_button_down(int gp, int btn)    { return (int)IsGamepadButtonDown(gp, btn); }
+int konpeito_is_gamepad_button_released(int gp, int btn){ return (int)IsGamepadButtonReleased(gp, btn); }
+int konpeito_is_gamepad_button_up(int gp, int btn)      { return (int)IsGamepadButtonUp(gp, btn); }
+double konpeito_get_gamepad_axis_movement(int gp, int axis) {
+    return (double)GetGamepadAxisMovement(gp, axis);
+}
+int konpeito_get_gamepad_axis_count(int gp) { return GetGamepadAxisCount(gp); }
+
+/* Gamepad button constants */
+int konpeito_gamepad_button_left_face_up(void)    { return GAMEPAD_BUTTON_LEFT_FACE_UP; }
+int konpeito_gamepad_button_left_face_right(void) { return GAMEPAD_BUTTON_LEFT_FACE_RIGHT; }
+int konpeito_gamepad_button_left_face_down(void)  { return GAMEPAD_BUTTON_LEFT_FACE_DOWN; }
+int konpeito_gamepad_button_left_face_left(void)  { return GAMEPAD_BUTTON_LEFT_FACE_LEFT; }
+int konpeito_gamepad_button_right_face_up(void)   { return GAMEPAD_BUTTON_RIGHT_FACE_UP; }
+int konpeito_gamepad_button_right_face_right(void){ return GAMEPAD_BUTTON_RIGHT_FACE_RIGHT; }
+int konpeito_gamepad_button_right_face_down(void) { return GAMEPAD_BUTTON_RIGHT_FACE_DOWN; }
+int konpeito_gamepad_button_right_face_left(void) { return GAMEPAD_BUTTON_RIGHT_FACE_LEFT; }
+int konpeito_gamepad_button_left_trigger_1(void)  { return GAMEPAD_BUTTON_LEFT_TRIGGER_1; }
+int konpeito_gamepad_button_left_trigger_2(void)  { return GAMEPAD_BUTTON_LEFT_TRIGGER_2; }
+int konpeito_gamepad_button_right_trigger_1(void) { return GAMEPAD_BUTTON_RIGHT_TRIGGER_1; }
+int konpeito_gamepad_button_right_trigger_2(void) { return GAMEPAD_BUTTON_RIGHT_TRIGGER_2; }
+int konpeito_gamepad_button_middle_left(void)     { return GAMEPAD_BUTTON_MIDDLE_LEFT; }
+int konpeito_gamepad_button_middle(void)          { return GAMEPAD_BUTTON_MIDDLE; }
+int konpeito_gamepad_button_middle_right(void)    { return GAMEPAD_BUTTON_MIDDLE_RIGHT; }
+
+/* Gamepad axis constants */
+int konpeito_gamepad_axis_left_x(void)       { return GAMEPAD_AXIS_LEFT_X; }
+int konpeito_gamepad_axis_left_y(void)       { return GAMEPAD_AXIS_LEFT_Y; }
+int konpeito_gamepad_axis_right_x(void)      { return GAMEPAD_AXIS_RIGHT_X; }
+int konpeito_gamepad_axis_right_y(void)      { return GAMEPAD_AXIS_RIGHT_Y; }
+int konpeito_gamepad_axis_left_trigger(void) { return GAMEPAD_AXIS_LEFT_TRIGGER; }
+int konpeito_gamepad_axis_right_trigger(void){ return GAMEPAD_AXIS_RIGHT_TRIGGER; }
+
+/* ═══════════════════════════════════════════
+ *  Drawing — Extended Shapes
+ * ═══════════════════════════════════════════ */
+
+void konpeito_draw_rectangle_pro(double x, double y, double w, double h,
+                                  double ox, double oy, double rotation, int color) {
+    DrawRectanglePro((Rectangle){(float)x, (float)y, (float)w, (float)h},
+                     (Vector2){(float)ox, (float)oy}, (float)rotation, int_to_color(color));
+}
+
+void konpeito_draw_rectangle_rounded(double x, double y, double w, double h,
+                                      double roundness, int segments, int color) {
+    DrawRectangleRounded((Rectangle){(float)x, (float)y, (float)w, (float)h},
+                         (float)roundness, segments, int_to_color(color));
+}
+
+void konpeito_draw_rectangle_gradient_v(int x, int y, int w, int h, int color1, int color2) {
+    DrawRectangleGradientV(x, y, w, h, int_to_color(color1), int_to_color(color2));
+}
+
+void konpeito_draw_rectangle_gradient_h(int x, int y, int w, int h, int color1, int color2) {
+    DrawRectangleGradientH(x, y, w, h, int_to_color(color1), int_to_color(color2));
+}
+
+void konpeito_draw_circle_sector(int cx, int cy, double radius,
+                                  double start_angle, double end_angle,
+                                  int segments, int color) {
+    DrawCircleSector((Vector2){(float)cx, (float)cy}, (float)radius,
+                     (float)start_angle, (float)end_angle, segments, int_to_color(color));
+}
+
+/* ═══════════════════════════════════════════
+ *  Collision Detection Helpers
+ * ═══════════════════════════════════════════ */
+
+int konpeito_check_collision_recs(double x1, double y1, double w1, double h1,
+                                   double x2, double y2, double w2, double h2) {
+    Rectangle r1 = { (float)x1, (float)y1, (float)w1, (float)h1 };
+    Rectangle r2 = { (float)x2, (float)y2, (float)w2, (float)h2 };
+    return (int)CheckCollisionRecs(r1, r2);
+}
+
+int konpeito_check_collision_circles(double cx1, double cy1, double r1,
+                                      double cx2, double cy2, double r2) {
+    return (int)CheckCollisionCircles((Vector2){(float)cx1, (float)cy1}, (float)r1,
+                                      (Vector2){(float)cx2, (float)cy2}, (float)r2);
+}
+
+int konpeito_check_collision_circle_rec(double cx, double cy, double radius,
+                                         double rx, double ry, double rw, double rh) {
+    return (int)CheckCollisionCircleRec((Vector2){(float)cx, (float)cy}, (float)radius,
+                                        (Rectangle){(float)rx, (float)ry, (float)rw, (float)rh});
+}
+
+int konpeito_check_collision_point_rec(double px, double py,
+                                        double rx, double ry, double rw, double rh) {
+    return (int)CheckCollisionPointRec((Vector2){(float)px, (float)py},
+                                       (Rectangle){(float)rx, (float)ry, (float)rw, (float)rh});
+}
+
+int konpeito_check_collision_point_circle(double px, double py,
+                                           double cx, double cy, double radius) {
+    return (int)CheckCollisionPointCircle((Vector2){(float)px, (float)py},
+                                          (Vector2){(float)cx, (float)cy}, (float)radius);
+}

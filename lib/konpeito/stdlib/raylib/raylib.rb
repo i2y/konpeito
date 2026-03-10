@@ -144,4 +144,116 @@ module Raylib
   def self.flag_window_resizable() end
   def self.flag_window_highdpi() end
   def self.flag_msaa_4x_hint() end
+
+  # Texture Management
+  def self.load_texture(path) end
+  def self.unload_texture(id) end
+  def self.draw_texture(id, x, y, tint) end
+  def self.draw_texture_rec(id, sx, sy, sw, sh, dx, dy, tint) end
+  def self.draw_texture_pro(id, sx, sy, sw, sh, dx, dy, dw, dh, ox, oy, rotation, tint) end
+  def self.get_texture_width(id) end
+  def self.get_texture_height(id) end
+  def self.texture_valid?(id) end
+  def self.draw_texture_scaled(id, x, y, scale, tint) end
+
+  # Audio — Device
+  def self.init_audio_device() end
+  def self.close_audio_device() end
+  def self.audio_device_ready?() end
+  def self.set_master_volume(vol) end
+  def self.get_master_volume() end
+
+  # Audio — Sound
+  def self.load_sound(path) end
+  def self.unload_sound(id) end
+  def self.play_sound(id) end
+  def self.stop_sound(id) end
+  def self.pause_sound(id) end
+  def self.resume_sound(id) end
+  def self.sound_playing?(id) end
+  def self.set_sound_volume(id, vol) end
+  def self.set_sound_pitch(id, pitch) end
+
+  # Audio — Music
+  def self.load_music(path) end
+  def self.unload_music(id) end
+  def self.play_music(id) end
+  def self.stop_music(id) end
+  def self.pause_music(id) end
+  def self.resume_music(id) end
+  def self.update_music(id) end
+  def self.music_playing?(id) end
+  def self.set_music_volume(id, vol) end
+  def self.set_music_pitch(id, pitch) end
+  def self.get_music_time_length(id) end
+  def self.get_music_time_played(id) end
+  def self.seek_music(id, position) end
+
+  # Camera2D
+  def self.begin_mode_2d(offset_x, offset_y, target_x, target_y, rotation, zoom) end
+  def self.end_mode_2d() end
+  def self.get_world_to_screen_2d_x(world_x, world_y, offset_x, offset_y, target_x, target_y, rotation, zoom) end
+  def self.get_world_to_screen_2d_y(world_x, world_y, offset_x, offset_y, target_x, target_y, rotation, zoom) end
+
+  # File I/O
+  def self.save_file_text(path, text) end
+  def self.load_file_text(path) end
+  def self.file_exists?(path) end
+  def self.directory_exists?(path) end
+
+  # Font Management
+  def self.load_font(path) end
+  def self.load_font_ex(path, size) end
+  def self.unload_font(id) end
+  def self.draw_text_ex(font_id, text, x, y, size, spacing, tint) end
+  def self.measure_text_ex_x(font_id, text, size, spacing) end
+  def self.measure_text_ex_y(font_id, text, size, spacing) end
+
+  # Gamepad Input
+  def self.gamepad_available?(gamepad) end
+  def self.gamepad_button_pressed?(gamepad, button) end
+  def self.gamepad_button_down?(gamepad, button) end
+  def self.gamepad_button_released?(gamepad, button) end
+  def self.gamepad_button_up?(gamepad, button) end
+  def self.get_gamepad_axis_movement(gamepad, axis) end
+  def self.get_gamepad_axis_count(gamepad) end
+
+  # Gamepad Button Constants
+  def self.gamepad_button_left_face_up() end
+  def self.gamepad_button_left_face_right() end
+  def self.gamepad_button_left_face_down() end
+  def self.gamepad_button_left_face_left() end
+  def self.gamepad_button_right_face_up() end
+  def self.gamepad_button_right_face_right() end
+  def self.gamepad_button_right_face_down() end
+  def self.gamepad_button_right_face_left() end
+  def self.gamepad_button_left_trigger_1() end
+  def self.gamepad_button_left_trigger_2() end
+  def self.gamepad_button_right_trigger_1() end
+  def self.gamepad_button_right_trigger_2() end
+  def self.gamepad_button_middle_left() end
+  def self.gamepad_button_middle() end
+  def self.gamepad_button_middle_right() end
+
+  # Gamepad Axis Constants
+  def self.gamepad_axis_left_x() end
+  def self.gamepad_axis_left_y() end
+  def self.gamepad_axis_right_x() end
+  def self.gamepad_axis_right_y() end
+  def self.gamepad_axis_left_trigger() end
+  def self.gamepad_axis_right_trigger() end
+
+  # Drawing — Extended Shapes
+  def self.draw_rectangle_pro(x, y, w, h, ox, oy, rotation, color) end
+  def self.draw_rectangle_rounded(x, y, w, h, roundness, segments, color) end
+  def self.draw_rectangle_gradient_v(x, y, w, h, color1, color2) end
+  def self.draw_rectangle_gradient_h(x, y, w, h, color1, color2) end
+  def self.draw_circle_sector(cx, cy, radius, start_angle, end_angle, segments, color) end
+
+  # Collision Detection
+  def self.check_collision_recs(x1, y1, w1, h1, x2, y2, w2, h2) end
+  def self.check_collision_circles(cx1, cy1, r1, cx2, cy2, r2) end
+  def self.check_collision_circle_rec(cx, cy, radius, rx, ry, rw, rh) end
+  def self.check_collision_point_rec(px, py, rx, ry, rw, rh) end
+  def self.check_collision_point_circle(px, py, cx, cy, radius) end
 end

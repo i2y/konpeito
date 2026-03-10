@@ -386,4 +386,292 @@ module Raylib
 
   %a{cfunc: "konpeito_flag_msaa_4x_hint"}
   def self.flag_msaa_4x_hint: () -> Integer
+
+  # ── Texture Management ──
+
+  %a{cfunc: "konpeito_load_texture"}
+  def self.load_texture: (String path) -> Integer
+
+  %a{cfunc: "konpeito_unload_texture"}
+  def self.unload_texture: (Integer id) -> void
+
+  %a{cfunc: "konpeito_draw_texture"}
+  def self.draw_texture: (Integer id, Integer x, Integer y, Integer tint) -> void
+
+  %a{cfunc: "konpeito_draw_texture_rec"}
+  def self.draw_texture_rec: (Integer id, Float sx, Float sy, Float sw, Float sh, Integer dx, Integer dy, Integer tint) -> void
+
+  %a{cfunc: "konpeito_draw_texture_pro"}
+  def self.draw_texture_pro: (Integer id, Float sx, Float sy, Float sw, Float sh, Float dx, Float dy, Float dw, Float dh, Float ox, Float oy, Float rotation, Integer tint) -> void
+
+  %a{cfunc: "konpeito_get_texture_width"}
+  def self.get_texture_width: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_get_texture_height"}
+  def self.get_texture_height: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_is_texture_valid"}
+  def self.texture_valid?: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_draw_texture_scaled"}
+  def self.draw_texture_scaled: (Integer id, Integer x, Integer y, Float scale, Integer tint) -> void
+
+  # ── Audio — Device ──
+
+  %a{cfunc: "konpeito_init_audio_device"}
+  def self.init_audio_device: () -> void
+
+  %a{cfunc: "konpeito_close_audio_device"}
+  def self.close_audio_device: () -> void
+
+  %a{cfunc: "konpeito_is_audio_device_ready"}
+  def self.audio_device_ready?: () -> Integer
+
+  %a{cfunc: "konpeito_set_master_volume"}
+  def self.set_master_volume: (Float vol) -> void
+
+  %a{cfunc: "konpeito_get_master_volume"}
+  def self.get_master_volume: () -> Float
+
+  # ── Audio — Sound ──
+
+  %a{cfunc: "konpeito_load_sound"}
+  def self.load_sound: (String path) -> Integer
+
+  %a{cfunc: "konpeito_unload_sound"}
+  def self.unload_sound: (Integer id) -> void
+
+  %a{cfunc: "konpeito_play_sound"}
+  def self.play_sound: (Integer id) -> void
+
+  %a{cfunc: "konpeito_stop_sound"}
+  def self.stop_sound: (Integer id) -> void
+
+  %a{cfunc: "konpeito_pause_sound"}
+  def self.pause_sound: (Integer id) -> void
+
+  %a{cfunc: "konpeito_resume_sound"}
+  def self.resume_sound: (Integer id) -> void
+
+  %a{cfunc: "konpeito_is_sound_playing"}
+  def self.sound_playing?: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_set_sound_volume"}
+  def self.set_sound_volume: (Integer id, Float vol) -> void
+
+  %a{cfunc: "konpeito_set_sound_pitch"}
+  def self.set_sound_pitch: (Integer id, Float pitch) -> void
+
+  # ── Audio — Music ──
+
+  %a{cfunc: "konpeito_load_music"}
+  def self.load_music: (String path) -> Integer
+
+  %a{cfunc: "konpeito_unload_music"}
+  def self.unload_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_play_music"}
+  def self.play_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_stop_music"}
+  def self.stop_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_pause_music"}
+  def self.pause_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_resume_music"}
+  def self.resume_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_update_music"}
+  def self.update_music: (Integer id) -> void
+
+  %a{cfunc: "konpeito_is_music_playing"}
+  def self.music_playing?: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_set_music_volume"}
+  def self.set_music_volume: (Integer id, Float vol) -> void
+
+  %a{cfunc: "konpeito_set_music_pitch"}
+  def self.set_music_pitch: (Integer id, Float pitch) -> void
+
+  %a{cfunc: "konpeito_get_music_time_length"}
+  def self.get_music_time_length: (Integer id) -> Float
+
+  %a{cfunc: "konpeito_get_music_time_played"}
+  def self.get_music_time_played: (Integer id) -> Float
+
+  %a{cfunc: "konpeito_seek_music"}
+  def self.seek_music: (Integer id, Float position) -> void
+
+  # ── Camera2D ──
+
+  %a{cfunc: "konpeito_begin_mode_2d"}
+  def self.begin_mode_2d: (Float offset_x, Float offset_y, Float target_x, Float target_y, Float rotation, Float zoom) -> void
+
+  %a{cfunc: "konpeito_end_mode_2d"}
+  def self.end_mode_2d: () -> void
+
+  %a{cfunc: "konpeito_get_world_to_screen_2d_x"}
+  def self.get_world_to_screen_2d_x: (Float world_x, Float world_y, Float offset_x, Float offset_y, Float target_x, Float target_y, Float rotation, Float zoom) -> Integer
+
+  %a{cfunc: "konpeito_get_world_to_screen_2d_y"}
+  def self.get_world_to_screen_2d_y: (Float world_x, Float world_y, Float offset_x, Float offset_y, Float target_x, Float target_y, Float rotation, Float zoom) -> Integer
+
+  # ── File I/O ──
+
+  %a{cfunc: "konpeito_save_file_text"}
+  def self.save_file_text: (String path, String text) -> Integer
+
+  %a{cfunc: "konpeito_load_file_text"}
+  def self.load_file_text: (String path) -> String
+
+  %a{cfunc: "konpeito_file_exists"}
+  def self.file_exists?: (String path) -> Integer
+
+  %a{cfunc: "konpeito_directory_exists"}
+  def self.directory_exists?: (String path) -> Integer
+
+  # ── Font Management ──
+
+  %a{cfunc: "konpeito_load_font"}
+  def self.load_font: (String path) -> Integer
+
+  %a{cfunc: "konpeito_load_font_ex"}
+  def self.load_font_ex: (String path, Integer size) -> Integer
+
+  %a{cfunc: "konpeito_unload_font"}
+  def self.unload_font: (Integer id) -> void
+
+  %a{cfunc: "konpeito_draw_text_ex"}
+  def self.draw_text_ex: (Integer font_id, String text, Float x, Float y, Float size, Float spacing, Integer tint) -> void
+
+  %a{cfunc: "konpeito_measure_text_ex_x"}
+  def self.measure_text_ex_x: (Integer font_id, String text, Float size, Float spacing) -> Integer
+
+  %a{cfunc: "konpeito_measure_text_ex_y"}
+  def self.measure_text_ex_y: (Integer font_id, String text, Float size, Float spacing) -> Integer
+
+  # ── Gamepad Input ──
+
+  %a{cfunc: "konpeito_is_gamepad_available"}
+  def self.gamepad_available?: (Integer gamepad) -> Integer
+
+  %a{cfunc: "konpeito_is_gamepad_button_pressed"}
+  def self.gamepad_button_pressed?: (Integer gamepad, Integer button) -> Integer
+
+  %a{cfunc: "konpeito_is_gamepad_button_down"}
+  def self.gamepad_button_down?: (Integer gamepad, Integer button) -> Integer
+
+  %a{cfunc: "konpeito_is_gamepad_button_released"}
+  def self.gamepad_button_released?: (Integer gamepad, Integer button) -> Integer
+
+  %a{cfunc: "konpeito_is_gamepad_button_up"}
+  def self.gamepad_button_up?: (Integer gamepad, Integer button) -> Integer
+
+  %a{cfunc: "konpeito_get_gamepad_axis_movement"}
+  def self.get_gamepad_axis_movement: (Integer gamepad, Integer axis) -> Float
+
+  %a{cfunc: "konpeito_get_gamepad_axis_count"}
+  def self.get_gamepad_axis_count: (Integer gamepad) -> Integer
+
+  # ── Gamepad Button Constants ──
+
+  %a{cfunc: "konpeito_gamepad_button_left_face_up"}
+  def self.gamepad_button_left_face_up: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_left_face_right"}
+  def self.gamepad_button_left_face_right: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_left_face_down"}
+  def self.gamepad_button_left_face_down: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_left_face_left"}
+  def self.gamepad_button_left_face_left: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_face_up"}
+  def self.gamepad_button_right_face_up: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_face_right"}
+  def self.gamepad_button_right_face_right: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_face_down"}
+  def self.gamepad_button_right_face_down: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_face_left"}
+  def self.gamepad_button_right_face_left: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_left_trigger_1"}
+  def self.gamepad_button_left_trigger_1: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_left_trigger_2"}
+  def self.gamepad_button_left_trigger_2: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_trigger_1"}
+  def self.gamepad_button_right_trigger_1: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_right_trigger_2"}
+  def self.gamepad_button_right_trigger_2: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_middle_left"}
+  def self.gamepad_button_middle_left: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_middle"}
+  def self.gamepad_button_middle: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_button_middle_right"}
+  def self.gamepad_button_middle_right: () -> Integer
+
+  # ── Gamepad Axis Constants ──
+
+  %a{cfunc: "konpeito_gamepad_axis_left_x"}
+  def self.gamepad_axis_left_x: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_axis_left_y"}
+  def self.gamepad_axis_left_y: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_axis_right_x"}
+  def self.gamepad_axis_right_x: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_axis_right_y"}
+  def self.gamepad_axis_right_y: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_axis_left_trigger"}
+  def self.gamepad_axis_left_trigger: () -> Integer
+
+  %a{cfunc: "konpeito_gamepad_axis_right_trigger"}
+  def self.gamepad_axis_right_trigger: () -> Integer
+
+  # ── Drawing — Extended Shapes ──
+
+  %a{cfunc: "konpeito_draw_rectangle_pro"}
+  def self.draw_rectangle_pro: (Float x, Float y, Float w, Float h, Float ox, Float oy, Float rotation, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_rectangle_rounded"}
+  def self.draw_rectangle_rounded: (Float x, Float y, Float w, Float h, Float roundness, Integer segments, Integer color) -> void
+
+  %a{cfunc: "konpeito_draw_rectangle_gradient_v"}
+  def self.draw_rectangle_gradient_v: (Integer x, Integer y, Integer w, Integer h, Integer color1, Integer color2) -> void
+
+  %a{cfunc: "konpeito_draw_rectangle_gradient_h"}
+  def self.draw_rectangle_gradient_h: (Integer x, Integer y, Integer w, Integer h, Integer color1, Integer color2) -> void
+
+  %a{cfunc: "konpeito_draw_circle_sector"}
+  def self.draw_circle_sector: (Integer cx, Integer cy, Float radius, Float start_angle, Float end_angle, Integer segments, Integer color) -> void
+
+  # ── Collision Detection ──
+
+  %a{cfunc: "konpeito_check_collision_recs"}
+  def self.check_collision_recs: (Float x1, Float y1, Float w1, Float h1, Float x2, Float y2, Float w2, Float h2) -> Integer
+
+  %a{cfunc: "konpeito_check_collision_circles"}
+  def self.check_collision_circles: (Float cx1, Float cy1, Float r1, Float cx2, Float cy2, Float r2) -> Integer
+
+  %a{cfunc: "konpeito_check_collision_circle_rec"}
+  def self.check_collision_circle_rec: (Float cx, Float cy, Float radius, Float rx, Float ry, Float rw, Float rh) -> Integer
+
+  %a{cfunc: "konpeito_check_collision_point_rec"}
+  def self.check_collision_point_rec: (Float px, Float py, Float rx, Float ry, Float rw, Float rh) -> Integer
+
+  %a{cfunc: "konpeito_check_collision_point_circle"}
+  def self.check_collision_point_circle: (Float px, Float py, Float cx, Float cy, Float radius) -> Integer
 end

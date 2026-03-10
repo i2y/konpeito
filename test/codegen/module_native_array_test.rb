@@ -15,25 +15,25 @@ class ModuleNativeArrayTest < Minitest::Test
 
   def test_module_native_array_basic_get_set
     source = <<~RUBY
-      module Storage
+      module MnaStorage1
       end
 
-      def main
-        Storage.data[0] = 10
-        Storage.data[1] = 20
-        Storage.data[2] = 30
-        Storage.data[3] = 40
-        Storage.data[0] + Storage.data[1] + Storage.data[2] + Storage.data[3]
+      def mna_main1
+        MnaStorage1.data[0] = 10
+        MnaStorage1.data[1] = 20
+        MnaStorage1.data[2] = 30
+        MnaStorage1.data[3] = 40
+        MnaStorage1.data[0] + MnaStorage1.data[1] + MnaStorage1.data[2] + MnaStorage1.data[3]
       end
     RUBY
 
-    result = compile_and_run(source, "main", <<~RBS)
-      module Storage
+    result = compile_and_run(source, "mna_main1", <<~RBS)
+      module MnaStorage1
         @data: NativeArray[Integer, 4]
       end
 
       module TopLevel
-        def main: () -> Integer
+        def mna_main1: () -> Integer
       end
     RBS
 
@@ -42,33 +42,33 @@ class ModuleNativeArrayTest < Minitest::Test
 
   def test_module_native_array_persistence_across_functions
     source = <<~RUBY
-      module State
+      module MnaState2
       end
 
-      def store_value
-        State.counter[0] = 42
+      def mna_store2
+        MnaState2.counter[0] = 42
         0
       end
 
-      def load_value
-        State.counter[0]
+      def mna_load2
+        MnaState2.counter[0]
       end
 
-      def main
-        store_value
-        load_value
+      def mna_main2
+        mna_store2
+        mna_load2
       end
     RUBY
 
-    result = compile_and_run(source, "main", <<~RBS)
-      module State
+    result = compile_and_run(source, "mna_main2", <<~RBS)
+      module MnaState2
         @counter: NativeArray[Integer, 1]
       end
 
       module TopLevel
-        def store_value: () -> Integer
-        def load_value: () -> Integer
-        def main: () -> Integer
+        def mna_store2: () -> Integer
+        def mna_load2: () -> Integer
+        def mna_main2: () -> Integer
       end
     RBS
 
@@ -77,24 +77,24 @@ class ModuleNativeArrayTest < Minitest::Test
 
   def test_module_native_array_float
     source = <<~RUBY
-      module Buf
+      module MnaBuf3
       end
 
-      def main
-        Buf.vals[0] = 1.5
-        Buf.vals[1] = 2.5
-        Buf.vals[2] = 3.0
-        Buf.vals[0] + Buf.vals[1] + Buf.vals[2]
+      def mna_main3
+        MnaBuf3.vals[0] = 1.5
+        MnaBuf3.vals[1] = 2.5
+        MnaBuf3.vals[2] = 3.0
+        MnaBuf3.vals[0] + MnaBuf3.vals[1] + MnaBuf3.vals[2]
       end
     RUBY
 
-    result = compile_and_run(source, "main", <<~RBS)
-      module Buf
+    result = compile_and_run(source, "mna_main3", <<~RBS)
+      module MnaBuf3
         @vals: NativeArray[Float, 3]
       end
 
       module TopLevel
-        def main: () -> Float
+        def mna_main3: () -> Float
       end
     RBS
 
@@ -103,26 +103,26 @@ class ModuleNativeArrayTest < Minitest::Test
 
   def test_module_native_array_multiple_fields
     source = <<~RUBY
-      module Game
+      module MnaGame4
       end
 
-      def main
-        Game.x[0] = 10
-        Game.x[1] = 20
-        Game.y[0] = 100
-        Game.y[1] = 200
-        Game.x[0] + Game.x[1] + Game.y[0] + Game.y[1]
+      def mna_main4
+        MnaGame4.x[0] = 10
+        MnaGame4.x[1] = 20
+        MnaGame4.y[0] = 100
+        MnaGame4.y[1] = 200
+        MnaGame4.x[0] + MnaGame4.x[1] + MnaGame4.y[0] + MnaGame4.y[1]
       end
     RUBY
 
-    result = compile_and_run(source, "main", <<~RBS)
-      module Game
+    result = compile_and_run(source, "mna_main4", <<~RBS)
+      module MnaGame4
         @x: NativeArray[Integer, 3]
         @y: NativeArray[Integer, 3]
       end
 
       module TopLevel
-        def main: () -> Integer
+        def mna_main4: () -> Integer
       end
     RBS
 
@@ -131,26 +131,26 @@ class ModuleNativeArrayTest < Minitest::Test
 
   def test_module_native_array_loop_access
     source = <<~RUBY
-      module Arr
+      module MnaArr5
       end
 
-      def main
+      def mna_main5
         i = 0
         while i < 10
-          Arr.data[i] = i * i
+          MnaArr5.data[i] = i * i
           i = i + 1
         end
-        Arr.data[0] + Arr.data[9]
+        MnaArr5.data[0] + MnaArr5.data[9]
       end
     RUBY
 
-    result = compile_and_run(source, "main", <<~RBS)
-      module Arr
+    result = compile_and_run(source, "mna_main5", <<~RBS)
+      module MnaArr5
         @data: NativeArray[Integer, 10]
       end
 
       module TopLevel
-        def main: () -> Integer
+        def mna_main5: () -> Integer
       end
     RBS
 

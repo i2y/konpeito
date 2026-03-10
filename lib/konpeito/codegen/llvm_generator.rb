@@ -100,6 +100,9 @@ module Konpeito
         # Scan HIR to register NativeClassTypes before code generation
         scan_for_native_class_types(hir_program)
 
+        # Declare LLVM globals for module-level NativeArray fields
+        declare_module_native_arrays(hir_program)
+
         # Pre-scan: detect parameters that can receive nil at call sites
         @nil_possible_params = scan_nil_possible_params(hir_program)
 
@@ -2182,6 +2185,8 @@ module Konpeito
           generate_sized_queue_push(inst)
         when HIR::SizedQueuePop
           generate_sized_queue_pop(inst)
+        when HIR::ModuleNativeArrayRef
+          generate_module_native_array_ref(inst)
         when HIR::NativeArrayAlloc
           generate_native_array_alloc(inst)
         when HIR::NativeArrayGet
@@ -9841,8 +9846,8 @@ module Konpeito
         # Normalize negative indices
         index_i64 = normalize_native_index(index_i64, inst.receiver)
 
-        # GEP to get element pointer
-        elem_ptr = @builder.gep(array_ptr, [index_i64], "elem_ptr")
+        # GEP to get element pointer (use gep2 with element type for correct stride)
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [index_i64], "elem_ptr")
 
         # Load element
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
@@ -9872,8 +9877,9 @@ module Konpeito
         target_type = element_type == :Int64 ? :i64 : :double
         converted_value = convert_value(store_value, value_type, target_type)
 
-        # GEP to get element pointer
-        elem_ptr = @builder.gep(array_ptr, [index_i64], "elem_ptr")
+        # GEP to get element pointer (use gep2 with element type for correct stride)
+        llvm_elem_type = native_array_element_llvm_type(element_type)
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [index_i64], "elem_ptr")
 
         # Store element
         @builder.store(converted_value, elem_ptr)
@@ -9893,46 +9899,19 @@ module Konpeito
         len_value = @variables["#{receiver_var}_len"]
         return index_i64 unless len_value
 
-        func = @builder.insert_block.parent
+        # Use branchless select instead of conditional branches to avoid
+        # creating new basic blocks that break surrounding PHI node predecessors.
         is_negative = @builder.icmp(:slt, index_i64, LLVM::Int64.from_i(0))
-
-        neg_bb = func.basic_blocks.append("idx_neg")
-        pos_bb = func.basic_blocks.append("idx_pos")
-        merge_bb = func.basic_blocks.append("idx_merge")
-
-        @builder.cond(is_negative, neg_bb, pos_bb)
-
-        @builder.position_at_end(neg_bb)
         normalized = @builder.add(len_value, index_i64, "neg_idx")
-        @builder.br(merge_bb)
-
-        @builder.position_at_end(pos_bb)
-        @builder.br(merge_bb)
-
-        @builder.position_at_end(merge_bb)
-        @builder.phi(LLVM::Int64, { neg_bb => normalized, pos_bb => index_i64 })
+        @builder.select(is_negative, normalized, index_i64, "norm_idx")
       end
 
       # Normalize negative index for StaticArray (compile-time known size)
       def normalize_static_index(index_i64, size)
-        func = @builder.insert_block.parent
+        # Use branchless select to avoid creating new basic blocks
         is_negative = @builder.icmp(:slt, index_i64, LLVM::Int64.from_i(0))
-
-        neg_bb = func.basic_blocks.append("sidx_neg")
-        pos_bb = func.basic_blocks.append("sidx_pos")
-        merge_bb = func.basic_blocks.append("sidx_merge")
-
-        @builder.cond(is_negative, neg_bb, pos_bb)
-
-        @builder.position_at_end(neg_bb)
         normalized = @builder.add(LLVM::Int64.from_i(size), index_i64, "neg_sidx")
-        @builder.br(merge_bb)
-
-        @builder.position_at_end(pos_bb)
-        @builder.br(merge_bb)
-
-        @builder.position_at_end(merge_bb)
-        @builder.phi(LLVM::Int64, { neg_bb => normalized, pos_bb => index_i64 })
+        @builder.select(is_negative, normalized, index_i64, "norm_sidx")
       end
 
       # Generate NativeArray length access: arr.length
@@ -9990,7 +9969,7 @@ module Konpeito
         @builder.position_at_end(loop_body)
 
         # Get element via GEP + load (no rb_ary_entry!)
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Set up block parameter (unboxed!)
@@ -10040,7 +10019,7 @@ module Konpeito
           convert_value(val, val_type, type_tag)
         else
           # Use first element as initial, start from index 1
-          elem_ptr = @builder.gep(array_ptr, [LLVM::Int64.from_i(0)], "first_ptr")
+          elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [LLVM::Int64.from_i(0)], "first_ptr")
           @builder.load2(llvm_elem_type, elem_ptr, "first_elem")
         end
 
@@ -10072,7 +10051,7 @@ module Konpeito
 
         # Load accumulator and element (both unboxed)
         acc_value = @builder.load2(llvm_elem_type, acc_alloca, "acc")
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Set up block parameters
@@ -10172,7 +10151,7 @@ module Konpeito
         @builder.position_at_end(loop_body)
 
         # Load element (unboxed)
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Set up block parameter
@@ -10255,7 +10234,7 @@ module Konpeito
         @builder.position_at_end(loop_body)
 
         # Load element (unboxed)
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Set up block parameter
@@ -10353,7 +10332,7 @@ module Konpeito
         @builder.position_at_end(loop_body)
 
         # Load element and store to alloca for later use
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
         @builder.store(elem_value, elem_alloca)
 
@@ -10445,7 +10424,7 @@ module Konpeito
         @builder.position_at_end(loop_body)
 
         # Load element
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Set up block parameter
@@ -10553,7 +10532,7 @@ module Konpeito
 
         # Load accumulator and element
         acc_value = @builder.load2(llvm_elem_type, acc_alloca, "acc")
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Add (unboxed)
@@ -10614,7 +10593,7 @@ module Konpeito
         # Non-empty: initialize with first element
         @builder.position_at_end(non_empty_block)
         result_alloca = @builder.alloca(llvm_elem_type, "na_minmax_result")
-        first_ptr = @builder.gep(array_ptr, [LLVM::Int64.from_i(0)], "first_ptr")
+        first_ptr = @builder.gep2(llvm_elem_type, array_ptr, [LLVM::Int64.from_i(0)], "first_ptr")
         first_elem = @builder.load2(llvm_elem_type, first_ptr, "first")
         @builder.store(first_elem, result_alloca)
 
@@ -10634,7 +10613,7 @@ module Konpeito
 
         # Load current result and element
         current_result = @builder.load2(llvm_elem_type, result_alloca, "current")
-        elem_ptr = @builder.gep(array_ptr, [current_idx], "elem_ptr")
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [current_idx], "elem_ptr")
         elem_value = @builder.load2(llvm_elem_type, elem_ptr, "elem")
 
         # Compare and select
@@ -10704,11 +10683,16 @@ module Konpeito
       # Get the array pointer from a receiver HIR value
       def get_native_array_ptr(receiver)
         case receiver
+        when HIR::LoadLocal
+          # LoadLocal may have result_var=nil (e.g., from inliner transform_value).
+          # Use the variable name to look up the array pointer.
+          @variables[receiver.var.name] || (receiver.result_var && @variables[receiver.result_var]) ||
+            raise("NativeArray LoadLocal var '#{receiver.var.name}' not in @variables")
         when HIR::Instruction
           if receiver.result_var
             @variables[receiver.result_var]
           else
-            raise "NativeArray receiver has no result_var"
+            raise "NativeArray receiver has no result_var: #{receiver.class}"
           end
         when String
           @variables[receiver]
@@ -10720,6 +10704,8 @@ module Konpeito
       # Get the variable name from a receiver for length lookup
       def get_receiver_var_name(receiver)
         case receiver
+        when HIR::LoadLocal
+          receiver.var.name
         when HIR::Instruction
           receiver.result_var
         when String
@@ -10727,6 +10713,62 @@ module Konpeito
         else
           nil
         end
+      end
+
+      # ========================================
+      # Module-level NativeArray (LLVM global variables)
+      # ========================================
+
+      # Declare LLVM global arrays for all modules with NativeArray fields
+      def declare_module_native_arrays(hir)
+        @module_native_arrays ||= {}
+
+        hir.modules.each do |module_def|
+          next unless module_def.native_array_fields&.any?
+
+          module_def.native_array_fields.each do |field_name, info|
+            elem_type = info[:element_type]
+            size = info[:size]
+            llvm_elem_type = elem_type == :Int64 ? LLVM::Int64 : LLVM::Double
+
+            global_name = "konpeito_#{module_def.name}_#{field_name}"
+            array_type = LLVM::Type.array(llvm_elem_type, size)
+
+            global = @mod.globals.add(array_type, global_name)
+            global.initializer = LLVM::Constant.null(array_type)
+            global.linkage = :internal
+
+            @module_native_arrays["#{module_def.name}_#{field_name}"] = {
+              global: global,
+              element_type: elem_type,
+              size: size,
+              llvm_elem_type: llvm_elem_type,
+              array_type: array_type
+            }
+          end
+        end
+      end
+
+      # Generate a reference to a module-level NativeArray global
+      def generate_module_native_array_ref(inst)
+        key = "#{inst.module_name}_#{inst.field_name}"
+        info = @module_native_arrays[key]
+        raise "Unknown module NativeArray: #{key}" unless info
+
+        # GEP to get pointer to first element of global array
+        array_ptr = @builder.gep2(
+          info[:array_type], info[:global],
+          [LLVM::Int64.from_i(0), LLVM::Int64.from_i(0)],
+          "#{inst.field_name}_ptr"
+        )
+
+        if inst.result_var
+          @variables[inst.result_var] = array_ptr
+          @variable_types[inst.result_var] = :native_array
+          @variables["#{inst.result_var}_len"] = LLVM::Int64.from_i(inst.size)
+        end
+
+        array_ptr
       end
 
       # Allocate a NativeArray on the stack
@@ -10778,8 +10820,8 @@ module Konpeito
         index_value, index_type = get_value_with_type(inst.index)
         index_i64 = index_type == :i64 ? index_value : @builder.call(@rb_num2long, index_value)
 
-        # GEP to get element pointer
-        elem_ptr = @builder.gep(array_ptr, [index_i64], "elem_ptr")
+        # GEP to get element pointer (use gep2 with element type for correct stride)
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [index_i64], "elem_ptr")
 
         if native_array_has_class_element?(element_type)
           # For NativeClass elements, return pointer to struct (for field access)
@@ -10820,8 +10862,9 @@ module Konpeito
         target_type = element_type == :Int64 ? :i64 : :double
         converted_value = convert_value(store_value, value_type, target_type)
 
-        # GEP to get element pointer
-        elem_ptr = @builder.gep(array_ptr, [index_i64], "elem_ptr")
+        # GEP to get element pointer (use gep2 with element type for correct stride)
+        llvm_elem_type = native_array_element_llvm_type(element_type)
+        elem_ptr = @builder.gep2(llvm_elem_type, array_ptr, [index_i64], "elem_ptr")
 
         # Store element
         @builder.store(converted_value, elem_ptr)
@@ -12919,8 +12962,8 @@ module Konpeito
         # Get JSON element at index
         elem_val = @builder.call(@yyjson_arr_get, root, idx, "json_elem")
 
-        # Get pointer to NativeClass struct in the array
-        struct_ptr = @builder.gep(array_ptr, [idx], "elem_struct_ptr")
+        # Get pointer to NativeClass struct in the array (use gep2 for correct stride)
+        struct_ptr = @builder.gep2(llvm_elem_type, array_ptr, [idx], "elem_struct_ptr")
 
         # Parse fields from JSON object into struct
         fields = element_class.fields

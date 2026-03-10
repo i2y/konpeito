@@ -869,6 +869,17 @@ module Konpeito
           return jvm_result if jvm_result
         end
 
+        # Module-level NativeArray field access (e.g., Inv.gs → NativeArrayType)
+        if @rbs_loader && receiver_type.is_a?(Types::ClassSingleton)
+          mod_type = @rbs_loader.native_module_type(receiver_type.name)
+          if mod_type
+            field_info = mod_type.lookup_native_array_field(method_name)
+            if field_info
+              return Types::NativeArrayType.new(field_info[:element_type], fixed_size: field_info[:size])
+            end
+          end
+        end
+
         # Try RBS lookup for singleton methods (class methods like NativeHash.new)
         # Only for generic types, not for built-in types like NativeArray
         if @rbs_loader&.loaded? && receiver_type.is_a?(Types::ClassSingleton)

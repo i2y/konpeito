@@ -29,17 +29,60 @@ module Konpeito
         @source = source
         @filename = filename
 
-        # Step 1: Extract Konpeito-specific annotations (# @rbs %a{...})
+        # Step 1: Extract RBS-only declaration blocks (# @rbs module Foo ... # @rbs end)
+        rbs_only_blocks = extract_rbs_only_blocks(source)
+
+        # Step 2: Extract Konpeito-specific annotations (# @rbs %a{...})
         konpeito_annotations = extract_konpeito_annotations(source)
 
-        # Step 2: Run rbs-inline to generate base RBS
+        # Step 3: Run rbs-inline to generate base RBS
         base_rbs = run_rbs_inline(source, filename)
 
-        # Step 3: Merge Konpeito annotations into generated RBS
-        merge_annotations(base_rbs, konpeito_annotations)
+        # Step 4: Merge Konpeito annotations into generated RBS
+        merged = merge_annotations(base_rbs, konpeito_annotations)
+
+        # Step 5: Prepend RBS-only blocks
+        if rbs_only_blocks.any?
+          rbs_only_blocks.join("\n\n") + "\n\n" + merged
+        else
+          merged
+        end
       end
 
       private
+
+      # Extract RBS-only declaration blocks from comments.
+      # Matches patterns like:
+      #   # @rbs module Foo
+      #   # @rbs   @x: Integer
+      #   # @rbs end
+      # Strips the "# @rbs " prefix and returns raw RBS blocks.
+      def extract_rbs_only_blocks(source)
+        blocks = []
+        current_block = nil
+
+        source.each_line do |line|
+          stripped = line.strip
+
+          if current_block
+            if stripped.match?(/^#\s*@rbs\s+end\s*$/)
+              current_block << "end\n"
+              blocks << current_block.join
+              current_block = nil
+            elsif stripped.start_with?("# @rbs")
+              content = stripped.sub(/^#\s*@rbs\s?/, "")
+              current_block << content + "\n"
+            else
+              current_block = nil
+            end
+          elsif stripped.match?(/^#\s*@rbs\s+(module|class)\s+\w+/)
+            content = stripped.sub(/^#\s*@rbs\s?/, "")
+            current_block = [content + "\n"]
+          end
+        end
+
+        blocks
+      end
 
       # Extract # @rbs %a{...} annotations and their target declarations
       # Returns a hash of { "ClassName" => [annotations], "ClassName#method" => [annotations] }

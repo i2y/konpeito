@@ -150,6 +150,8 @@ Without RBS, the class is treated as a regular Ruby object (VALUE type), and unb
 
 RBS is required to specify the element type of a NativeArray.
 
+**Local NativeArray** (function-scoped, dynamic size):
+
 ```rbs
 # types.rbs - Required
 class NativeArray[T]
@@ -159,6 +161,18 @@ class NativeArray[T]
   def length: () -> Integer
 end
 ```
+
+**Module NativeArray** (global, fixed size, cross-function):
+
+```rbs
+# types.rbs - Required
+module GameState
+  @positions: NativeArray[Integer, 100]
+  @velocities: NativeArray[Float, 100]
+end
+```
+
+Module NativeArray uses the syntax `NativeArray[T, N]` where `T` is `Integer` or `Float` and `N` is the fixed size. Access via `GameState.positions[i]` / `GameState.positions[i] = v`. Available on LLVM (CRuby) and mruby backends.
 
 ### 3. %a{cfunc}/%a{ffi} (External C Library Integration)
 

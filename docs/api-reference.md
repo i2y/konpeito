@@ -787,6 +787,8 @@ These types provide high-performance data handling by bypassing Ruby's object mo
 
 Contiguous unboxed array. Element types: `Integer`, `Float`, or `NativeClass`.
 
+**Local NativeArray** — dynamically sized, allocated within a function:
+
 ```rbs
 class NativeArray[T]
   def self.new: (Integer size) -> NativeArray[T]
@@ -802,6 +804,39 @@ arr[0] = 3.14
 arr[0]              # => 3.14 (unboxed double)
 arr.length          # => 1000
 ```
+
+**Module NativeArray** — fixed-size, global arrays shared across functions (LLVM/mruby backends):
+
+```rbs
+# Separate RBS file, or inline with rbs_inline
+module GameState
+  @positions: NativeArray[Integer, 100]
+  @velocities: NativeArray[Float, 100]
+end
+```
+
+```ruby
+# rbs_inline: enabled
+# @rbs module GameState
+# @rbs   @positions: NativeArray[Integer, 100]
+# @rbs   @velocities: NativeArray[Float, 100]
+# @rbs end
+
+def init
+  i = 0
+  while i < 100
+    GameState.positions[i] = i * 10
+    GameState.velocities[i] = 0.0
+    i = i + 1
+  end
+end
+
+def update
+  GameState.positions[0] = GameState.positions[0] + 1
+end
+```
+
+Module NativeArray compiles to LLVM global arrays (`internal global [N x T] zeroinitializer`). No C wrapper file is needed — the compiler generates the global storage directly from the RBS declaration. All functions in the compilation unit can read and write these arrays.
 
 Supports negative indexing: `arr[-1]` is the last element.
 

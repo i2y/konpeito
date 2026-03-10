@@ -285,14 +285,16 @@ module Konpeito
       # NativeArray type - contiguous memory array with unboxed elements
       # Supports numeric types (Int64, Float64) and NativeClass types
       class NativeArrayType < Type
-        attr_reader :element_type
+        attr_reader :element_type, :fixed_size
 
         # Allowed primitive element types for NativeArray
         ALLOWED_PRIMITIVES = %i[Int64 Float64].freeze
 
         # @param element_type [Symbol, NativeClassType] Element type
-        def initialize(element_type)
+        # @param fixed_size [Integer, nil] Compile-time known size (for module-level arrays)
+        def initialize(element_type, fixed_size: nil)
           @element_type = element_type
+          @fixed_size = fixed_size
           validate_element_type!
         end
 
@@ -308,7 +310,11 @@ module Konpeito
 
         def to_s
           elem_str = native_class_element? ? element_type.name : element_type
-          "NativeArray[#{elem_str}]"
+          if fixed_size
+            "NativeArray[#{elem_str}, #{fixed_size}]"
+          else
+            "NativeArray[#{elem_str}]"
+          end
         end
 
         def int64?
@@ -1277,18 +1283,25 @@ module Konpeito
       # Marked with @native annotation in RBS
       # Can be included in classes to mix in methods
       class NativeModuleType < Type
-        attr_reader :name, :methods
+        attr_reader :name, :methods, :native_array_fields
 
         # @param name [Symbol] Module name
         # @param methods [Hash{Symbol => NativeMethodType}] Method name -> signature
-        def initialize(name, methods = {})
+        # @param native_array_fields [Hash{Symbol => Hash}] field_name -> { element_type:, size: }
+        def initialize(name, methods = {}, native_array_fields: {})
           @name = name.to_sym
           @methods = methods
+          @native_array_fields = native_array_fields
         end
 
         # Look up a method by name
         def lookup_method(method_name)
           @methods[method_name.to_sym]
+        end
+
+        # Look up a NativeArray field by name
+        def lookup_native_array_field(field_name)
+          @native_array_fields[field_name.to_sym]
         end
 
         def ==(other)

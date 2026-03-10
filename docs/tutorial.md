@@ -263,6 +263,8 @@ ruby app.rb
 
 `NativeArray[Float]` stores unboxed `double` values in contiguous memory. Array element access becomes a direct `getelementptr` + `load` — no method dispatch at all.
 
+##### Local NativeArray (function-scoped)
+
 Since `NativeArray` is a Konpeito-specific type, it must be created and accessed within the same compiled scope. Here we put the NativeArray creation, population, and computation together in one method:
 
 ```ruby
@@ -313,9 +315,76 @@ konpeito run physics_native.rb
 > ruby -r ./build/physics_native -e ""
 > ```
 
-> **Important:** NativeArray values are stack-allocated pointers and cannot be passed as arguments to other methods via CRuby's method dispatch. Always create and use NativeArrays within the same function scope.
+> **Important:** Local NativeArray values are stack-allocated pointers and cannot be passed as arguments to other methods via CRuby's method dispatch. Always create and use local NativeArrays within the same function scope. If you need arrays shared across functions, use module NativeArray instead.
 
 Now `xs[i]` and `ys[i]` are also native — the entire loop runs without touching Ruby's method dispatch.
+
+##### Module NativeArray (global, cross-function)
+
+For game state, simulation data, or any arrays that need to be accessed from multiple functions, you can declare fixed-size NativeArrays as module instance variables in RBS. The compiler generates LLVM global arrays — no C wrapper file needed.
+
+Using inline RBS (`rbs_inline: enabled`), the module declaration and array types live in the same file:
+
+```ruby
+# physics.rb
+# rbs_inline: enabled
+
+# @rbs module PhysicsData
+# @rbs   @xs: NativeArray[Float, 10000]
+# @rbs   @ys: NativeArray[Float, 10000]
+# @rbs end
+
+#: (Float, Float, Float, Float) -> Float
+def distance(x1, y1, x2, y2)
+  dx = x2 - x1
+  dy = y2 - y1
+  dx * dx + dy * dy
+end
+
+def init_data
+  i = 0
+  while i < 10000
+    PhysicsData.xs[i] = i * 0.0001
+    PhysicsData.ys[i] = i * 0.0002
+    i = i + 1
+  end
+end
+
+#: () -> Float
+def compute_total
+  total = 0.0
+  i = 0
+  while i < 9999
+    total = total + distance(PhysicsData.xs[i], PhysicsData.ys[i],
+                             PhysicsData.xs[i + 1], PhysicsData.ys[i + 1])
+    i = i + 1
+  end
+  total
+end
+
+def run_physics
+  init_data
+  compute_total
+end
+```
+
+```bash
+konpeito run --inline physics.rb
+```
+
+Or with a separate RBS file:
+
+```rbs
+# physics.rbs
+module PhysicsData
+  @xs: NativeArray[Float, 10000]
+  @ys: NativeArray[Float, 10000]
+end
+```
+
+The syntax is `NativeArray[T, N]` where `T` is the element type (`Integer` or `Float`) and `N` is the fixed size. Access uses `ModuleName.field_name[index]` and `ModuleName.field_name[index] = value`.
+
+> **Note:** Module NativeArray is available on the LLVM (CRuby) and mruby backends. JVM backend is not yet supported. See `examples/mruby_space_invaders/` for a full game using this pattern.
 
 ### Pattern 2: Whole Application
 
@@ -638,7 +707,7 @@ konpeito build --inline math.rb
 
 ### Native data structures
 
-Typed high-performance data structures are available (CRuby backend):
+Typed high-performance data structures are available (CRuby and mruby backends):
 
 | Type | Use case | Characteristics |
 |---|---|---|

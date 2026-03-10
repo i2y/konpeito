@@ -91,6 +91,7 @@ module Konpeito
       attr_reader :name, :methods, :singleton_methods, :constants
       attr_accessor :module_function_methods  # Array of method names registered via module_function
       attr_accessor :private_methods          # Set of private method names
+      attr_accessor :native_array_fields      # Hash { field_name => { element_type:, size: } }
 
       def initialize(name:, methods: [], singleton_methods: [], constants: {})
         super(type: TypeChecker::Types::NIL)
@@ -100,6 +101,7 @@ module Konpeito
         @constants = constants  # Hash of name -> value
         @module_function_methods = []
         @private_methods = Set.new
+        @native_array_fields = {}
       end
     end
 
@@ -1442,6 +1444,21 @@ module Konpeito
       def initialize(array:, result_var: nil)
         super(type: TypeChecker::Types::INTEGER, result_var: result_var)
         @array = array
+      end
+    end
+
+    # Reference to a module-level NativeArray (LLVM global variable)
+    # e.g., Inv.gs where module Inv has @gs: NativeArray[Integer, 12]
+    class ModuleNativeArrayRef < Instruction
+      attr_reader :module_name, :field_name, :element_type, :size
+
+      def initialize(module_name:, field_name:, element_type:, size:, result_var: nil)
+        array_type = TypeChecker::Types::NativeArrayType.new(element_type, fixed_size: size)
+        super(type: array_type, result_var: result_var)
+        @module_name = module_name
+        @field_name = field_name
+        @element_type = element_type  # :Int64 or :Float64
+        @size = size
       end
     end
 

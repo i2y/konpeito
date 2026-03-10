@@ -532,6 +532,16 @@ module Konpeito
           new_array = transform_value(inst.array, prefix, param_map)
           HIR::MultiWriteExtract.new(array: new_array, index: inst.index, type: inst.type, result_var: new_result)
 
+        when HIR::ModuleNativeArrayRef
+          new_result = inst.result_var ? prefix + inst.result_var : nil
+          HIR::ModuleNativeArrayRef.new(
+            module_name: inst.module_name,
+            field_name: inst.field_name,
+            element_type: inst.element_type,
+            size: inst.size,
+            result_var: new_result
+          )
+
         else
           # For other instructions, just return as-is with renamed result
           inst

@@ -397,13 +397,26 @@ These types have special memory layouts optimized for performance.
 
 ##### NativeArrayType
 
-Contiguous memory array with unboxed elements.
+Contiguous memory array with unboxed elements. Two forms:
+
+**Local NativeArray** — dynamically sized, function-scoped:
 
 ```
 NativeArray[T]   where T ∈ { Int64, Float64, NativeClassType }
 ```
 
 Memory layout: `alloca T, N` (stack-allocated contiguous array)
+
+**Module NativeArray** — fixed-size, global, cross-function:
+
+```
+NativeArray[T, N]   where T ∈ { Int64, Float64 }, N > 0
+```
+
+Declared as module instance variables in RBS (`@field: NativeArray[T, N]`).
+Memory layout: `internal global [N x T] zeroinitializer` (LLVM global array).
+Accessed via `ModuleName.field[i]` / `ModuleName.field[i] = v`.
+Available on LLVM (CRuby) and mruby backends.
 
 | Element Type | LLVM Type | JVM Type |
 |-------------|-----------|----------|

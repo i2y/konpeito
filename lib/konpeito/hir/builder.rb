@@ -43,10 +43,33 @@ module Konpeito
 
       def build(typed_ast)
         visit(typed_ast)
+        ensure_module_native_array_defs
         @program
       end
 
       private
+
+      # Ensure ModuleDefs exist for all modules with NativeArray fields from RBS.
+      # When using inline RBS (rbs_inline), the Ruby source may not contain
+      # `module Foo; end`, so visit_module is never called and no ModuleDef
+      # is created. This method fills in the missing ModuleDefs.
+      def ensure_module_native_array_defs
+        return unless @rbs_loader
+
+        @rbs_loader.each_native_module do |module_name, mod_type|
+          next unless mod_type.native_array_fields&.any?
+          next if @program.modules.any? { |m| m.name == module_name.to_s }
+
+          module_def = ModuleDef.new(
+            name: module_name.to_s,
+            methods: [],
+            singleton_methods: [],
+            constants: {}
+          )
+          module_def.native_array_fields = mod_type.native_array_fields
+          @program.modules << module_def
+        end
+      end
 
       def visit(typed_node)
         return nil unless typed_node
@@ -884,6 +907,13 @@ module Konpeito
 
         @current_module = old_module
 
+        # Get NativeArray fields from RBS if available
+        mod_native_array_fields = {}
+        if @rbs_loader
+          mod_type = @rbs_loader.native_module_type(name)
+          mod_native_array_fields = mod_type.native_array_fields if mod_type
+        end
+
         # Merge into existing ModuleDef if this module was already opened (multi-file projects)
         existing_module_def = @program.modules.find { |m| m.name == name }
         if existing_module_def
@@ -892,6 +922,7 @@ module Konpeito
           existing_module_def.module_function_methods.concat(module_function_method_names)
           existing_module_def.private_methods.merge(module_private_method_names)
           existing_module_def.constants.merge!(module_constants)
+          existing_module_def.native_array_fields.merge!(mod_native_array_fields)
         else
           module_def = ModuleDef.new(
             name: name,
@@ -901,6 +932,7 @@ module Konpeito
           )
           module_def.module_function_methods.concat(module_function_method_names)
           module_def.private_methods.merge(module_private_method_names)
+          module_def.native_array_fields = mod_native_array_fields
           @program.modules << module_def
         end
         NilLit.new
@@ -1798,6 +1830,11 @@ module Konpeito
       def visit_call(typed_node)
         node = typed_node.node
 
+        # Check for module-level NativeArray field access (e.g., Inv.gs)
+        if (mod_arr_info = module_native_array_access?(typed_node))
+          return visit_module_native_array_ref(mod_arr_info)
+        end
+
         # Check for NativeArray.new(size) pattern
         if native_array_new_call?(typed_node)
           return visit_native_array_new(typed_node)
@@ -2364,6 +2401,40 @@ module Konpeito
         return false unless receiver_child.node_type == :constant_read
 
         receiver_child.node.name.to_s == "NativeArray"
+      end
+
+      # Check if this is a module-level NativeArray field access (e.g., Inv.gs)
+      # Returns field info hash or nil
+      def module_native_array_access?(typed_node)
+        return nil unless @rbs_loader
+
+        # Receiver must be a constant read (e.g., Inv)
+        receiver_child = typed_node.children.first
+        return nil unless receiver_child&.node_type == :constant_read
+
+        module_name = receiver_child.node.name.to_s
+        mod_type = @rbs_loader.native_module_type(module_name)
+        return nil unless mod_type
+
+        field_name = typed_node.node.name.to_s.to_sym
+        field_info = mod_type.lookup_native_array_field(field_name)
+        return nil unless field_info
+
+        { module_name: module_name, field_name: field_name, **field_info }
+      end
+
+      # Emit a ModuleNativeArrayRef for module-level NativeArray access
+      def visit_module_native_array_ref(info)
+        result_var = new_temp_var
+        inst = ModuleNativeArrayRef.new(
+          module_name: info[:module_name],
+          field_name: info[:field_name],
+          element_type: info[:element_type],
+          size: info[:size],
+          result_var: result_var
+        )
+        emit(inst)
+        inst
       end
 
       # Check if this is a NativeArray element access: arr[i] where arr is NativeArray[NativeClass]

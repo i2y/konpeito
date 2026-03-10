@@ -261,6 +261,8 @@ ruby app.rb
 
 `NativeArray[Float]` は unboxed の `double` 値を連続メモリに格納します。配列要素アクセスは `getelementptr` + `load` に直接変換され、メソッドディスパッチは一切発生しません。
 
+##### ローカル NativeArray（関数スコープ）
+
 `NativeArray` は Konpeito 固有の型なので、生成・使用するコードも Konpeito でコンパイルする必要があります。NativeArray の作成・アクセスは同じ関数スコープ内にまとめます:
 
 ```ruby
@@ -311,9 +313,76 @@ konpeito run physics_native.rb
 > ruby -r ./build/physics_native -e ""
 > ```
 
-> **重要:** NativeArray はスタック上に確保されるポインタであり、CRuby のメソッドディスパッチ経由で他の関数に引数として渡すことはできません。NativeArray は必ず同じ関数スコープ内で作成・使用してください。
+> **重要:** ローカル NativeArray はスタック上に確保されるポインタであり、CRuby のメソッドディスパッチ経由で他の関数に引数として渡すことはできません。ローカル NativeArray は必ず同じ関数スコープ内で作成・使用してください。関数をまたいで共有したい場合は、モジュール NativeArray を使ってください。
 
 これで `xs[i]` と `ys[i]` もネイティブになり、ループ全体が Ruby のメソッドディスパッチを経由せずに実行されます。
+
+##### モジュール NativeArray（グローバル、関数間共有）
+
+ゲームの状態やシミュレーションデータなど、複数の関数からアクセスする配列は、RBS でモジュールのインスタンス変数として固定サイズの NativeArray を宣言できます。コンパイラが LLVM グローバル配列を直接生成するため、C ラッパーファイルは不要です。
+
+インライン RBS（`rbs_inline: enabled`）を使えば、モジュール宣言と配列型を同じファイルに書けます:
+
+```ruby
+# physics.rb
+# rbs_inline: enabled
+
+# @rbs module PhysicsData
+# @rbs   @xs: NativeArray[Float, 10000]
+# @rbs   @ys: NativeArray[Float, 10000]
+# @rbs end
+
+#: (Float, Float, Float, Float) -> Float
+def distance(x1, y1, x2, y2)
+  dx = x2 - x1
+  dy = y2 - y1
+  dx * dx + dy * dy
+end
+
+def init_data
+  i = 0
+  while i < 10000
+    PhysicsData.xs[i] = i * 0.0001
+    PhysicsData.ys[i] = i * 0.0002
+    i = i + 1
+  end
+end
+
+#: () -> Float
+def compute_total
+  total = 0.0
+  i = 0
+  while i < 9999
+    total = total + distance(PhysicsData.xs[i], PhysicsData.ys[i],
+                             PhysicsData.xs[i + 1], PhysicsData.ys[i + 1])
+    i = i + 1
+  end
+  total
+end
+
+def run_physics
+  init_data
+  compute_total
+end
+```
+
+```bash
+konpeito run --inline physics.rb
+```
+
+または別ファイルの RBS で宣言:
+
+```rbs
+# physics.rbs
+module PhysicsData
+  @xs: NativeArray[Float, 10000]
+  @ys: NativeArray[Float, 10000]
+end
+```
+
+構文は `NativeArray[T, N]` で、`T` は要素型（`Integer` または `Float`）、`N` は固定サイズです。アクセスは `ModuleName.field_name[index]`、代入は `ModuleName.field_name[index] = value` です。
+
+> **注意:** モジュール NativeArray は LLVM（CRuby）と mruby バックエンドで使用できます。JVM バックエンドは未対応です。実際のゲームでの使用例は `examples/mruby_space_invaders/` を参照してください。
 
 ### パターン2: アプリケーション全体のコンパイル
 
@@ -634,7 +703,7 @@ konpeito build --inline math.rb
 
 ### ネイティブデータ構造
 
-型付き高速データ構造が使えます（CRuby バックエンド）:
+型付き高速データ構造が使えます（CRuby・mruby バックエンド）:
 
 | 型 | 用途 | 特徴 |
 |---|---|---|

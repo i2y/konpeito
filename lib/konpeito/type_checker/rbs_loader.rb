@@ -139,6 +139,11 @@ module Konpeito
         @native_modules[module_name.to_sym]
       end
 
+      # Iterate over all native modules
+      def each_native_module(&block)
+        @native_modules.each(&block)
+      end
+
       # Check if a class is explicitly boxed (VALUE-based, for CRuby interop)
       def boxed_class?(class_name)
         @boxed_classes.key?(class_name.to_sym)
@@ -668,6 +673,38 @@ module Konpeito
         if AnnotationParser.has?(annotations, :native)
           parse_native_module(decl)
           return
+        end
+
+        # Check for NativeArray fields (@field: NativeArray[T, N])
+        native_array_fields = {}
+        decl.members.each do |member|
+          case member
+          when RBS::AST::Members::InstanceVariable
+            generic_info = parse_generic_native_type(member.type)
+            if generic_info && generic_info[:type] == :native_array && generic_info[:size]
+              field_name = member.name.to_s.delete_prefix("@").to_sym
+              elem_type = generic_info[:element_type]
+              # Convert :Integer/:Float to :Int64/:Float64
+              native_elem = case elem_type
+                            when :Integer then :Int64
+                            when :Float then :Float64
+                            else elem_type
+                            end
+              native_array_fields[field_name] = { element_type: native_elem, size: generic_info[:size] }
+            end
+          end
+        end
+
+        if native_array_fields.any?
+          # Register as a module with NativeArray fields
+          existing = @native_modules[module_name.to_sym]
+          if existing
+            existing.native_array_fields.merge!(native_array_fields)
+          else
+            @native_modules[module_name.to_sym] = Types::NativeModuleType.new(
+              module_name, {}, native_array_fields: native_array_fields
+            )
+          end
         end
 
         # Parse methods for cfunc annotations
@@ -1514,11 +1551,20 @@ module Konpeito
             value_type: resolve_generic_type_arg(args[1])
           }
         when "NativeArray"
-          return nil unless args.size == 1
-          {
-            type: :native_array,
-            element_type: resolve_generic_type_arg(args[0])
-          }
+          if args.size == 2
+            {
+              type: :native_array,
+              element_type: resolve_generic_type_arg(args[0]),
+              size: resolve_literal_arg(args[1])
+            }
+          elsif args.size == 1
+            {
+              type: :native_array,
+              element_type: resolve_generic_type_arg(args[0])
+            }
+          else
+            return nil
+          end
         when "StaticArray"
           return nil unless args.size == 2
           {

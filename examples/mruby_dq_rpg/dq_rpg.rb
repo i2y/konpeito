@@ -32,6 +32,7 @@ require_relative "./rpg_framework"
 # 19:enc_steps 20:msg_active 21:msg_timer 22:msg_id 23:title_cur
 # 24:shop_cur 25:blink 26:map_w 27:map_h
 # 28-31: reserved by rpg_framework (28:prev_scene 29:rng_seed 30:font_id+1 31:frame_counter)
+# 32: Clay font ID
 # Scenes: 0=title 1=town 2=overworld 3=cave 4=battle 5=menu 6=shop 7=inn 8=gameover 9=victory
 
 # ── hero[] index constants ──
@@ -2515,7 +2516,498 @@ def draw_victory_screen
 end
 
 # ════════════════════════════════════════════════════════════════════
-# Section 18: Main Game Loop
+# Section 18: Clay UI Drawing
+# ════════════════════════════════════════════════════════════════════
+
+# Draw monster name as Clay text
+#: (Integer t, Integer cfont, Integer sz) -> Integer
+def clay_mon_name(t, cfont, sz)
+  if t == 0
+    fw_clay_text("Slime", cfont, sz)
+  end
+  if t == 1
+    fw_clay_text("Bat", cfont, sz)
+  end
+  if t == 2
+    fw_clay_text("Goblin", cfont, sz)
+  end
+  if t == 3
+    fw_clay_text("Skeleton", cfont, sz)
+  end
+  if t == 4
+    fw_clay_text("Dragon", cfont, sz)
+  end
+  return 0
+end
+
+# Draw item name as Clay text
+#: (Integer id, Integer cfont, Integer sz) -> Integer
+def clay_item_name(id, cfont, sz)
+  if id == 1
+    fw_clay_text("Herb", cfont, sz)
+  end
+  if id == 2
+    fw_clay_text("Potion", cfont, sz)
+  end
+  if id == 3
+    fw_clay_text("Antidote", cfont, sz)
+  end
+  if id == 4
+    fw_clay_text("Magic Water", cfont, sz)
+  end
+  if id == 5
+    fw_clay_text("Wood Sword", cfont, sz)
+  end
+  if id == 6
+    fw_clay_text("Iron Sword", cfont, sz)
+  end
+  if id == 7
+    fw_clay_text("Steel Sword", cfont, sz)
+  end
+  if id == 8
+    fw_clay_text("Leather", cfont, sz)
+  end
+  if id == 9
+    fw_clay_text("Chain Mail", cfont, sz)
+  end
+  if id == 10
+    fw_clay_text("Steel Armor", cfont, sz)
+  end
+  if id == 11
+    fw_clay_text("Dragon Key", cfont, sz)
+  end
+  return 0
+end
+
+# Draw item name as Clay text with color
+#: (Integer id, Integer cfont, Integer sz, Integer r, Integer g, Integer b) -> Integer
+def clay_item_name_c(id, cfont, sz, r, g, b)
+  if id == 1
+    fw_clay_text_color("Herb", cfont, sz, r, g, b)
+  end
+  if id == 2
+    fw_clay_text_color("Potion", cfont, sz, r, g, b)
+  end
+  if id == 3
+    fw_clay_text_color("Antidote", cfont, sz, r, g, b)
+  end
+  if id == 4
+    fw_clay_text_color("Magic Water", cfont, sz, r, g, b)
+  end
+  if id == 5
+    fw_clay_text_color("Wood Sword", cfont, sz, r, g, b)
+  end
+  if id == 6
+    fw_clay_text_color("Iron Sword", cfont, sz, r, g, b)
+  end
+  if id == 7
+    fw_clay_text_color("Steel Sword", cfont, sz, r, g, b)
+  end
+  if id == 8
+    fw_clay_text_color("Leather", cfont, sz, r, g, b)
+  end
+  if id == 9
+    fw_clay_text_color("Chain Mail", cfont, sz, r, g, b)
+  end
+  if id == 10
+    fw_clay_text_color("Steel Armor", cfont, sz, r, g, b)
+  end
+  if id == 11
+    fw_clay_text_color("Dragon Key", cfont, sz, r, g, b)
+  end
+  return 0
+end
+
+# Battle background (Raylib only - monster, ground, damage numbers)
+#: () -> Integer
+def draw_battle_bg
+  etype = G.bt[2]
+
+  # Background gradient
+  Raylib.draw_rectangle(0, 0, 640, 240, fw_rgba(10, 10, 30, 255))
+  Raylib.draw_rectangle(0, 240, 640, 8, fw_rgba(40, 60, 40, 255))
+  Raylib.draw_rectangle(0, 248, 640, 232, fw_rgba(30, 50, 30, 255))
+
+  # Monster
+  if G.bt[4] == 1
+    draw_monster(320, 140, etype)
+  end
+
+  # Damage numbers (drawn with Raylib for pixel positioning)
+  if G.bt[12] > 0
+    G.bt[12] = G.bt[12] - 1
+    if G.bt[17] == 1
+      fw_draw_num(290, 120, G.bt[11], 24, Raylib.color_white)
+    end
+    if G.bt[17] == 2
+      fw_draw_num(50, 360, G.bt[11], 24, Raylib.color_red)
+    end
+    if G.bt[0] == 3
+      if G.bt[17] == 0
+        fw_draw_num(50, 360, G.bt[11], 24, Raylib.color_lime)
+      end
+    end
+  end
+
+  return 0
+end
+
+# Battle UI overlay (Clay)
+#: () -> Integer
+def draw_battle_clay
+  phase = G.bt[0]
+  etype = G.bt[2]
+  cfont = G.s[32]
+
+  fw_clay_frame_begin
+
+  # Root: full screen vertical
+  fw_clay_vbox("bt_root", 8, 8)
+
+    # Top spacer (monster area drawn by Raylib behind)
+    fw_clay_spacer("bt_top")
+
+    # Bottom HUD: hero status + commands
+    fw_clay_hbox("bt_bot", 0, 8)
+
+      # Hero status panel
+      fw_clay_rpg_window("bt_hero", 200, 80, 8)
+        fw_clay_text("Hero", cfont, 18)
+        # HP row
+        fw_clay_hbox("bt_hpr", 0, 4)
+          fw_clay_text_color("HP:", cfont, 14, 200, 200, 200)
+          fw_clay_num(0, G.hero[1], cfont, 14, 50, 255, 50)
+          fw_clay_text_color("/", cfont, 14, 140, 140, 140)
+          fw_clay_num(1, G.hero[2], cfont, 14, 255, 255, 255)
+          fw_clay_bar("bt_hb", 0, G.hero[1], G.hero[2], 60, 10, 50, 200, 50)
+        Clay.close
+        # MP row
+        fw_clay_hbox("bt_mpr", 0, 4)
+          fw_clay_text_color("MP:", cfont, 14, 200, 200, 200)
+          fw_clay_num(2, G.hero[3], cfont, 14, 100, 180, 255)
+          fw_clay_text_color("/", cfont, 14, 140, 140, 140)
+          fw_clay_num(3, G.hero[4], cfont, 14, 255, 255, 255)
+          fw_clay_bar("bt_mb", 1, G.hero[3], G.hero[4], 60, 10, 80, 140, 255)
+        Clay.close
+      Clay.close
+
+      # Spacer between hero and commands
+      fw_clay_spacer("bt_mid")
+
+      # Phase 1: Command menu
+      if phase == 1
+        if G.bt[15] == 0
+          fw_clay_rpg_window("bt_cmd", 170, 120, 8)
+            fw_clay_menu_item("bt_ci", 0, "Attack", G.bt[5], cfont, 18)
+            fw_clay_menu_item("bt_ci", 1, "Heal", G.bt[5], cfont, 18)
+            fw_clay_menu_item("bt_ci", 2, "Item", G.bt[5], cfont, 18)
+            fw_clay_menu_item("bt_ci", 3, "Flee", G.bt[5], cfont, 18)
+            # MP cost hint
+            if G.bt[5] == 1
+              fw_clay_text_color("  4 MP", cfont, 12, 100, 180, 255)
+            end
+          Clay.close
+        end
+        if G.bt[15] == 1
+          # Item sub-menu
+          ic = inv_count
+          fw_clay_rpg_window("bt_itm", 200, 130, 8)
+            fw_clay_text_color("Items", cfont, 16, 255, 215, 0)
+            idx = 0
+            while idx < ic
+              if idx < 4
+                slot = inv_slot_at(idx)
+                if slot >= 0
+                  iid = G.inv[slot * 2]
+                  Clay.open_i("bt_ii", idx)
+                  Clay.layout(0, 4, 4, 2, 2, 4, 1, 0.0, 0, 0.0, 0, 2)
+                  if G.bt[5] == idx
+                    Clay.bg(60.0, 60.0, 120.0, 200.0, 4.0)
+                    fw_clay_text_color(">", cfont, 16, 255, 255, 100)
+                  end
+                  clay_item_name(iid, cfont, 16)
+                  fw_clay_text_color(" x", cfont, 14, 140, 140, 140)
+                  fw_clay_num(10 + idx, G.inv[slot * 2 + 1], cfont, 14, 255, 255, 255)
+                  Clay.close
+                end
+              end
+              idx = idx + 1
+            end
+            if ic == 0
+              fw_clay_text_color("No items", cfont, 16, 140, 140, 140)
+            end
+          Clay.close
+        end
+      end
+
+    Clay.close # bt_bot
+
+    # Message window (phases 0, 2, 3, 5, 6)
+    if phase == 0
+      fw_clay_hbox_center("bt_msg", 12, 4)
+        fw_clay_rpg_bg
+        clay_mon_name(etype, cfont, 20)
+        fw_clay_text(" appeared!", cfont, 18)
+      Clay.close
+    end
+
+    if phase == 2
+      fw_clay_hbox_center("bt_msg", 12, 0)
+        fw_clay_rpg_bg
+        fw_clay_text("Hero attacks!", cfont, 18)
+      Clay.close
+    end
+
+    if phase == 3
+      fw_clay_hbox_center("bt_msg", 12, 4)
+        fw_clay_rpg_bg
+        clay_mon_name(etype, cfont, 18)
+        fw_clay_text(" attacks!", cfont, 18)
+      Clay.close
+    end
+
+    if phase == 5
+      fw_clay_rpg_window("bt_vic", 400, 120, 12)
+        Clay.layout(1, 12, 12, 12, 12, 6, 2, 400.0, 2, 120.0, 2, 0)
+        if G.bt[13] == 1
+          fw_clay_text("Escaped successfully!", cfont, 20)
+        else
+          fw_clay_text_color("Victory!", cfont, 24, 255, 215, 0)
+          fw_clay_hbox("bt_rew", 0, 12)
+            fw_clay_text("EXP:", cfont, 16)
+            fw_clay_num(20, G.bt[9], cfont, 16, 50, 255, 50)
+            fw_clay_text("Gold:", cfont, 16)
+            fw_clay_num(21, G.bt[10], cfont, 16, 255, 215, 0)
+          Clay.close
+        end
+        if G.bt[8] <= 0
+          fw_clay_text_color("[Enter] Continue", cfont, 14, 140, 140, 140)
+        end
+      Clay.close
+    end
+
+    if phase == 6
+      fw_clay_rpg_window("bt_def", 340, 80, 12)
+        Clay.layout(1, 12, 12, 12, 12, 6, 2, 340.0, 2, 80.0, 2, 2)
+        fw_clay_text_color("You have been defeated...", cfont, 20, 255, 60, 60)
+        if G.bt[8] <= 0
+          fw_clay_text_color("[Enter] Continue", cfont, 14, 140, 140, 140)
+        end
+      Clay.close
+    end
+
+  Clay.close # bt_root
+
+  fw_clay_frame_end
+  return 0
+end
+
+# Menu UI overlay (Clay)
+#: () -> Integer
+def draw_menu_clay
+  cfont = G.s[32]
+  mode = G.s[14]
+
+  fw_clay_frame_begin
+
+  # Root: full screen with dark overlay
+  fw_clay_hbox("mn_root", 16, 16)
+    Clay.bg(0.0, 0.0, 0.0, 160.0, 0.0)
+
+    # Left panel: menu choices
+    fw_clay_rpg_window("mn_left", 160, 140, 12)
+      fw_clay_menu_item("mn_mi", 0, "Status", G.s[12], cfont, 18)
+      fw_clay_menu_item("mn_mi", 1, "Items", G.s[12], cfont, 18)
+      fw_clay_menu_item("mn_mi", 2, "Close", G.s[12], cfont, 18)
+      # Gold display
+      fw_clay_hbox("mn_gld", 8, 4)
+        fw_clay_text_color("Gold:", cfont, 14, 200, 200, 200)
+        fw_clay_num(30, G.s[11], cfont, 14, 255, 215, 0)
+      Clay.close
+    Clay.close
+
+    # Right panel: Status or Items
+    if mode == 1
+      fw_clay_rpg_window("mn_stat", 380, 280, 12)
+        fw_clay_text_color("Hero", cfont, 24, 255, 215, 0)
+        # Level
+        fw_clay_hbox("mn_lv", 0, 4)
+          fw_clay_text("Level:", cfont, 16)
+          fw_clay_num(40, G.hero[0], cfont, 16, 255, 215, 0)
+        Clay.close
+        # HP
+        fw_clay_hbox("mn_hp", 0, 4)
+          fw_clay_text_color("HP:", cfont, 16, 200, 200, 200)
+          fw_clay_num(41, G.hero[1], cfont, 16, 50, 255, 50)
+          fw_clay_text_color("/", cfont, 16, 140, 140, 140)
+          fw_clay_num(42, G.hero[2], cfont, 16, 255, 255, 255)
+          fw_clay_bar("mn_hb", 2, G.hero[1], G.hero[2], 100, 12, 50, 200, 50)
+        Clay.close
+        # MP
+        fw_clay_hbox("mn_mp", 0, 4)
+          fw_clay_text_color("MP:", cfont, 16, 200, 200, 200)
+          fw_clay_num(43, G.hero[3], cfont, 16, 100, 180, 255)
+          fw_clay_text_color("/", cfont, 16, 140, 140, 140)
+          fw_clay_num(44, G.hero[4], cfont, 16, 255, 255, 255)
+          fw_clay_bar("mn_mb", 3, G.hero[3], G.hero[4], 100, 12, 80, 140, 255)
+        Clay.close
+        # ATK / DEF
+        fw_clay_hbox("mn_ad", 0, 16)
+          fw_clay_text("ATK:", cfont, 16)
+          fw_clay_num(45, hero_total_atk, cfont, 16, 255, 165, 0)
+          fw_clay_text("DEF:", cfont, 16)
+          fw_clay_num(46, hero_total_def, cfont, 16, 255, 165, 0)
+        Clay.close
+        # AGI
+        fw_clay_hbox("mn_ag", 0, 4)
+          fw_clay_text("AGI:", cfont, 16)
+          fw_clay_num(47, G.hero[7], cfont, 16, 255, 165, 0)
+        Clay.close
+        # EXP
+        fw_clay_hbox("mn_xp", 0, 16)
+          fw_clay_text("EXP:", cfont, 16)
+          fw_clay_num(48, G.hero[8], cfont, 16, 255, 255, 255)
+          fw_clay_text("Next:", cfont, 16)
+          next_exp = exp_for_level(G.hero[0] + 1) - G.hero[8]
+          if next_exp < 0
+            next_exp = 0
+          end
+          fw_clay_num(49, next_exp, cfont, 16, 255, 255, 255)
+        Clay.close
+        # Equipment
+        fw_clay_hbox("mn_weq", 0, 4)
+          fw_clay_text_color("Weapon:", cfont, 14, 140, 140, 140)
+          if G.hero[9] > 0
+            clay_item_name_c(G.hero[9], cfont, 14, 255, 255, 255)
+          else
+            fw_clay_text_color("(none)", cfont, 14, 80, 80, 80)
+          end
+        Clay.close
+        fw_clay_hbox("mn_aeq", 0, 4)
+          fw_clay_text_color("Armor:", cfont, 14, 140, 140, 140)
+          if G.hero[10] > 0
+            clay_item_name_c(G.hero[10], cfont, 14, 255, 255, 255)
+          else
+            fw_clay_text_color("(none)", cfont, 14, 80, 80, 80)
+          end
+        Clay.close
+      Clay.close
+    end
+
+    if mode == 2
+      fw_clay_rpg_window("mn_items", 380, 310, 12)
+        fw_clay_hbox("mn_ith", 0, 8)
+          fw_clay_text_color("Items", cfont, 20, 255, 215, 0)
+          fw_clay_spacer("mn_its")
+          fw_clay_text_color("[Enter]Use [X]Back", cfont, 12, 140, 140, 140)
+        Clay.close
+        ic = inv_count
+        idx = 0
+        while idx < ic
+          if idx < 10
+            slot = inv_slot_at(idx)
+            if slot >= 0
+              iid = G.inv[slot * 2]
+              Clay.open_i("mn_ii", idx)
+              Clay.layout(0, 4, 4, 2, 2, 4, 1, 0.0, 0, 0.0, 0, 2)
+              if G.s[13] == idx
+                Clay.bg(60.0, 60.0, 120.0, 200.0, 4.0)
+                fw_clay_text_color(">", cfont, 16, 255, 255, 100)
+              end
+              clay_item_name(iid, cfont, 16)
+              fw_clay_text_color(" x", cfont, 14, 140, 140, 140)
+              fw_clay_num(50 + idx, G.inv[slot * 2 + 1], cfont, 14, 255, 255, 255)
+              Clay.close
+            end
+          end
+          idx = idx + 1
+        end
+        if ic == 0
+          fw_clay_text_color("No items", cfont, 16, 80, 80, 80)
+        end
+      Clay.close
+    end
+
+    if mode == 0
+      # Hint area when no sub-menu open
+      fw_clay_spacer("mn_sp")
+    end
+
+  Clay.close # mn_root
+
+  fw_clay_frame_end
+  return 0
+end
+
+# Shop UI overlay (Clay)
+#: () -> Integer
+def draw_shop_clay
+  cfont = G.s[32]
+
+  fw_clay_frame_begin
+
+  # Root: full screen with dark overlay, centered
+  fw_clay_vbox("sh_root", 0, 0)
+    Clay.bg(0.0, 0.0, 0.0, 180.0, 0.0)
+
+    fw_clay_spacer("sh_top")
+
+    fw_clay_hbox_center("sh_mid", 0, 0)
+      fw_clay_spacer("sh_l")
+
+      fw_clay_rpg_window("sh_win", 440, 380, 16)
+        # Title + Gold
+        fw_clay_hbox("sh_hdr", 0, 16)
+          fw_clay_text_color("Shop", cfont, 24, 255, 215, 0)
+          fw_clay_spacer("sh_hs")
+          fw_clay_text_color("Gold:", cfont, 16, 200, 200, 200)
+          fw_clay_num(70, G.s[11], cfont, 16, 255, 215, 0)
+        Clay.close
+
+        # Shop items
+        idx = 0
+        while idx < 7
+          iid = shop_item_id(idx)
+          Clay.open_i("sh_si", idx)
+          Clay.layout(0, 8, 8, 4, 4, 8, 1, 0.0, 0, 0.0, 0, 2)
+          if G.s[24] == idx
+            Clay.bg(60.0, 60.0, 120.0, 200.0, 4.0)
+            fw_clay_text_color(">", cfont, 18, 255, 255, 100)
+          end
+          clay_item_name(iid, cfont, 18)
+          fw_clay_spacer("_ss")
+          fw_clay_num(71 + idx, item_price(iid), cfont, 16, 255, 215, 0)
+          fw_clay_text_color(" G", cfont, 14, 140, 140, 140)
+          Clay.close
+          idx = idx + 1
+        end
+
+        # Exit option
+        Clay.open_i("sh_si", 7)
+        Clay.layout(0, 8, 8, 4, 4, 8, 1, 0.0, 0, 0.0, 0, 2)
+        if G.s[24] == 7
+          Clay.bg(60.0, 60.0, 120.0, 200.0, 4.0)
+          fw_clay_text_color(">", cfont, 18, 255, 255, 100)
+        end
+        fw_clay_text("Exit", cfont, 18)
+        Clay.close
+
+        fw_clay_text_color("[Enter]Buy [X]Exit", cfont, 14, 140, 140, 140)
+      Clay.close
+
+      fw_clay_spacer("sh_r")
+    Clay.close
+
+    fw_clay_spacer("sh_bot")
+
+  Clay.close # sh_root
+
+  fw_clay_frame_end
+  return 0
+end
+
+# ════════════════════════════════════════════════════════════════════
+# Section 19: Main Game Loop
 # ════════════════════════════════════════════════════════════════════
 
 #: () -> Integer
@@ -2526,6 +3018,11 @@ def main
 
   # Load font (Verdana for clean readable text)
   G.s[30] = Raylib.load_font_ex("/System/Library/Fonts/Supplemental/Verdana.ttf", 32) + 1
+
+  # Initialize Clay UI
+  Clay.init(640.0, 480.0)
+  G.s[32] = Clay.load_font("/System/Library/Fonts/Supplemental/Verdana.ttf", 32)
+  Clay.set_measure_text_raylib
 
   G.s[0] = 0  # Start at title
   G.s[25] = 0  # blink timer
@@ -2606,15 +3103,16 @@ def main
       draw_field(anim_frame)
     end
     if scene == 4
-      draw_battle
+      draw_battle_bg
+      draw_battle_clay
     end
     if scene == 5
       draw_field(anim_frame)
-      draw_menu
+      draw_menu_clay
     end
     if scene == 6
       draw_field(anim_frame)
-      draw_shop
+      draw_shop_clay
     end
     if scene == 8
       draw_gameover
@@ -2626,6 +3124,7 @@ def main
     Raylib.end_drawing
   end
 
+  Clay.destroy
   Raylib.close_window
   return 0
 end

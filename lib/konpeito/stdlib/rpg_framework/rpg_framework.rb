@@ -12,6 +12,9 @@
 #   G.s[30] = font_id + 1 (0 = not loaded, used by fw_draw_txt)
 #   G.s[31] = global frame counter (for cursor blink etc.)
 #
+# Sections 1-10: Raylib drawing helpers (math, color, drawing, input, etc.)
+# Section 11: Clay UI helpers (optional, requires Clay module)
+#
 # rbs_inline: enabled
 
 # ════════════════════════════════════════════
@@ -434,5 +437,232 @@ end
 #: () -> Integer
 def fw_tick
   G.s[31] = G.s[31] + 1
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 11: Clay UI Helpers
+# ════════════════════════════════════════════
+#
+# Optional Clay UI integration for Flexbox-style layouts.
+# Requires Clay module (auto-detected when referenced).
+#
+# Sizing: FIT=0, GROW=1, FIXED=2, PERCENT=3
+# Direction: LEFT_TO_RIGHT=0, TOP_TO_BOTTOM=1
+# Alignment: LEFT/TOP=0, RIGHT/BOTTOM=1, CENTER=2
+
+# Per-frame Clay setup: update dimensions, pointer, and begin layout.
+# Call once per frame before building UI. Pair with fw_clay_frame_end.
+#: () -> Integer
+def fw_clay_frame_begin
+  w = Raylib.get_screen_width
+  h = Raylib.get_screen_height
+  Clay.set_dimensions(w * 1.0, h * 1.0)
+  mx = Raylib.get_mouse_x
+  my = Raylib.get_mouse_y
+  md = Raylib.mouse_button_down?(Raylib.mouse_left)
+  Clay.set_pointer(mx * 1.0, my * 1.0, md)
+  Clay.begin_layout
+  return 0
+end
+
+# End Clay layout and render all commands via raylib.
+# Call once per frame after building UI (between begin/end_drawing).
+#: () -> Integer
+def fw_clay_frame_end
+  Clay.end_layout
+  Clay.render_raylib
+  return 0
+end
+
+# Open a vertical container (GROW width, GROW height).
+# Caller must call Clay.close when done adding children.
+#: (String id, Integer pad, Integer gap) -> Integer
+def fw_clay_vbox(id, pad, gap)
+  Clay.open(id)
+  Clay.layout(1, pad, pad, pad, pad, gap, 1, 0.0, 1, 0.0, 0, 0)
+  return 0
+end
+
+# Open a horizontal container (GROW width, FIT height).
+# Caller must call Clay.close when done adding children.
+#: (String id, Integer pad, Integer gap) -> Integer
+def fw_clay_hbox(id, pad, gap)
+  Clay.open(id)
+  Clay.layout(0, pad, pad, pad, pad, gap, 1, 0.0, 0, 0.0, 0, 0)
+  return 0
+end
+
+# Open a centered horizontal container (GROW width, FIT height, center-aligned).
+#: (String id, Integer pad, Integer gap) -> Integer
+def fw_clay_hbox_center(id, pad, gap)
+  Clay.open(id)
+  Clay.layout(0, pad, pad, pad, pad, gap, 1, 0.0, 0, 0.0, 2, 2)
+  return 0
+end
+
+# Open a fixed-size vertical container.
+# Caller must call Clay.close when done adding children.
+#: (String id, Integer w, Integer h, Integer pad) -> Integer
+def fw_clay_fixed_box(id, w, h, pad)
+  Clay.open(id)
+  Clay.layout(1, pad, pad, pad, pad, 4, 2, w * 1.0, 2, h * 1.0, 0, 0)
+  return 0
+end
+
+# Apply RPG-style background and border to the current element.
+# Dark blue background with gold border (matches fw_draw_window colors).
+# Call after Clay.open and Clay.layout, before adding children.
+#: () -> Integer
+def fw_clay_rpg_bg
+  Clay.bg(16.0, 16.0, 64.0, 230.0, 4.0)
+  Clay.border(200.0, 180.0, 100.0, 255.0, 2, 2, 2, 2, 4.0)
+  return 0
+end
+
+# Open an RPG-style window: fixed-size vertical container with
+# dark blue background and gold border.
+# Caller must call Clay.close when done adding children.
+#: (String id, Integer w, Integer h, Integer pad) -> Integer
+def fw_clay_rpg_window(id, w, h, pad)
+  Clay.open(id)
+  Clay.layout(1, pad, pad, pad, pad, 4, 2, w * 1.0, 2, h * 1.0, 0, 0)
+  Clay.bg(16.0, 16.0, 64.0, 230.0, 4.0)
+  Clay.border(200.0, 180.0, 100.0, 255.0, 2, 2, 2, 2, 4.0)
+  return 0
+end
+
+# White text element.
+#: (String text, Integer font_id, Integer sz) -> Integer
+def fw_clay_text(text, font_id, sz)
+  Clay.text(text, font_id, sz, 255.0, 255.0, 255.0, 255.0, 0)
+  return 0
+end
+
+# Colored text element (RGB 0-255).
+#: (String text, Integer font_id, Integer sz, Integer r, Integer g, Integer b) -> Integer
+def fw_clay_text_color(text, font_id, sz, r, g, b)
+  Clay.text(text, font_id, sz, r * 1.0, g * 1.0, b * 1.0, 255.0, 0)
+  return 0
+end
+
+# HP/MP bar as a self-contained Clay element.
+# Opens and closes its own container. idx must be unique per bar.
+#: (String id, Integer idx, Integer val, Integer mx, Integer w, Integer h, Integer r, Integer g, Integer b) -> Integer
+def fw_clay_bar(id, idx, val, mx, w, h, r, g, b)
+  Clay.open_i(id, idx)
+  Clay.layout(0, 0, 0, 0, 0, 0, 2, w * 1.0, 2, h * 1.0, 0, 0)
+  Clay.bg(40.0, 40.0, 40.0, 255.0, 2.0)
+
+  if mx > 0
+    fill_w = val * w / mx
+    if fill_w < 0
+      fill_w = 0
+    end
+    if fill_w > w
+      fill_w = w
+    end
+    if fill_w > 0
+      Clay.open_i("_bfl", idx)
+      Clay.layout(0, 0, 0, 0, 0, 0, 2, fill_w * 1.0, 2, h * 1.0, 0, 0)
+      Clay.bg(r * 1.0, g * 1.0, b * 1.0, 255.0, 2.0)
+      Clay.close
+    end
+  end
+
+  Clay.close
+  return 0
+end
+
+# Menu item with cursor highlight.
+# Shows ">" prefix and highlight background when cursor == idx.
+# Uses open_i for unique element IDs.
+#: (String id, Integer idx, String text, Integer cursor, Integer font_id, Integer sz) -> Integer
+def fw_clay_menu_item(id, idx, text, cursor, font_id, sz)
+  Clay.open_i(id, idx)
+  Clay.layout(0, 8, 8, 4, 4, 4, 1, 0.0, 0, 0.0, 0, 2)
+
+  if cursor == idx
+    Clay.bg(60.0, 60.0, 120.0, 200.0, 4.0)
+    Clay.text(">", font_id, sz, 255.0, 255.0, 100.0, 255.0, 0)
+  end
+
+  Clay.text(text, font_id, sz, 255.0, 255.0, 255.0, 255.0, 0)
+  Clay.close
+  return 0
+end
+
+# Draw single digit (0-9) as Clay text element.
+#: (Integer d, Integer font_id, Integer sz, Integer r, Integer g, Integer b) -> Integer
+def fw_clay_draw_d(d, font_id, sz, r, g, b)
+  rf = r * 1.0
+  gf = g * 1.0
+  bf = b * 1.0
+  if d == 0
+    Clay.text("0", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 1
+    Clay.text("1", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 2
+    Clay.text("2", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 3
+    Clay.text("3", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 4
+    Clay.text("4", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 5
+    Clay.text("5", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 6
+    Clay.text("6", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 7
+    Clay.text("7", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 8
+    Clay.text("8", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  if d == 9
+    Clay.text("9", font_id, sz, rf, gf, bf, 255.0, 0)
+  end
+  return 0
+end
+
+# Draw integer number as Clay text elements (up to 5 digits).
+# Opens its own zero-gap container. idx must be unique per call in same parent.
+#: (Integer idx, Integer n, Integer font_id, Integer sz, Integer r, Integer g, Integer b) -> Integer
+def fw_clay_num(idx, n, font_id, sz, r, g, b)
+  Clay.open_i("_n", idx)
+  Clay.layout(0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0.0, 0, 0)
+  if n < 0
+    Clay.text("-", font_id, sz, r * 1.0, g * 1.0, b * 1.0, 255.0, 0)
+    n = 0 - n
+  end
+  if n >= 10000
+    fw_clay_draw_d(n / 10000, font_id, sz, r, g, b)
+  end
+  if n >= 1000
+    fw_clay_draw_d((n / 1000) % 10, font_id, sz, r, g, b)
+  end
+  if n >= 100
+    fw_clay_draw_d((n / 100) % 10, font_id, sz, r, g, b)
+  end
+  if n >= 10
+    fw_clay_draw_d((n / 10) % 10, font_id, sz, r, g, b)
+  end
+  fw_clay_draw_d(n % 10, font_id, sz, r, g, b)
+  Clay.close
+  return 0
+end
+
+# Spacer element that fills available space (GROW width, GROW height).
+#: (String id) -> Integer
+def fw_clay_spacer(id)
+  Clay.open(id)
+  Clay.layout(0, 0, 0, 0, 0, 0, 1, 0.0, 1, 0.0, 0, 0)
+  Clay.close
   return 0
 end

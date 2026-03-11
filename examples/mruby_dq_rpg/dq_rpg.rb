@@ -1,4 +1,4 @@
-# Konpeito Quest — Dragon Quest-style 2D RPG Demo
+# Konpeito Quest — Classic JRPG-style 2D RPG Demo
 # rbs_inline: enabled
 #
 # Demonstrates: Scene management, Tilemap, Sprite animation, Turn-based battle,

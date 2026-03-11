@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-11
+
+### Added
+- **Raylib stdlib expansion**: 119 new cfunc bindings (87 → 206 total) for 2D RPG/SLG game development
+  - Texture/Sprite management (10): load, unload, draw, draw_rec, draw_pro, draw_scaled, dimensions, validity check
+  - Audio — Sound (10): load, unload, play, stop, pause, resume, playing?, volume, pitch
+  - Audio — Music (13): load, unload, play, stop, pause, resume, update, playing?, volume, pitch, time_length, time_played, seek
+  - Audio — Device (4): init, close, ready?, master volume
+  - Camera2D (4): begin/end mode, world-to-screen coordinate conversion (x/y)
+  - File I/O (4): save/load text files, file/directory existence checks
+  - Font management (6): load, load_ex, unload, draw_text_ex, measure_text_ex (x/y)
+  - Gamepad input (7 + 21 constants): button pressed/down/released/up, axis movement/count, D-pad/face/trigger/middle button and axis constants
+  - Extended shapes (5): draw_rectangle_pro, draw_rectangle_rounded, gradient v/h, circle sector
+  - Collision detection (5): recs, circles, circle-rec, point-rec, point-circle
+  - ID table pattern for resource management: textures (256), sounds (128), music (32), fonts (32)
+- **RPG tilemap demo**: `examples/mruby_rpg_demo/rpg_demo.rb` — 40×40 tilemap, smooth camera scrolling, 4-direction player movement with animation, sign interaction, HUD with step counter
+- macOS audio framework linker flags (CoreAudio, AudioToolbox, CoreFoundation)
+
+### Fixed
+- **Inliner CFuncCall bug**: `clone_and_rename()` now handles `CFuncCall`, `ExternConstructorCall`, and `ExternMethodCall` — parameters are correctly remapped when user functions calling `@cfunc` are inlined (previously fell through to default case, returning instructions with unmapped parameters)
+- **CI lint**: use anonymous block forwarding (`&`) in `rbs_loader.rb`
+- **CI test isolation**: use unique symbol names in `module_native_array_test` to avoid ELF symbol interposition on Linux
+
 ## [0.5.0] - 2026-03-10
 
 ### Added

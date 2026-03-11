@@ -8,6 +8,10 @@ module Konpeito
   module Codegen
     # Generates standalone executable from LLVM module using mruby runtime
     class MRubyBackend
+      # Stdlib modules that should be auto-defined in mruby init code
+      # even when no ModuleDef exists in HIR (cfunc-only modules).
+      STDLIB_MODULES = %w[Raylib Clay].freeze
+
       attr_reader :llvm_generator, :output_file, :module_name, :rbs_loader, :debug
 
       def initialize(llvm_generator, output_file:, module_name: nil, rbs_loader: nil, debug: false, extra_c_files: [],
@@ -278,7 +282,9 @@ module Konpeito
         lines << ""
 
         # Define modules
+        defined_module_names = []
         hir.modules.each do |module_def|
+          defined_module_names << module_def.name.to_s
           module_var = "m#{module_def.name}"
           lines << "    struct RClass *#{module_var} = mrb_define_module(mrb, \"#{module_def.name}\");"
 
@@ -316,6 +322,18 @@ module Konpeito
             next unless c_value
 
             lines << "    mrb_define_const(mrb, #{module_var}, \"#{const_name}\", #{c_value});"
+          end
+        end
+
+        # Auto-define stdlib modules that have cfunc methods but no ModuleDef in HIR.
+        # This ensures that even if a dynamic dispatch fallback occurs (e.g., due to
+        # a method name mismatch), the module constant exists at runtime.
+        if @rbs_loader
+          STDLIB_MODULES.each do |mod_name|
+            next if defined_module_names.include?(mod_name)
+            next unless @rbs_loader.has_cfunc_methods?(mod_name.to_sym)
+
+            lines << "    mrb_define_module(mrb, \"#{mod_name}\");"
           end
         end
 

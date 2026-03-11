@@ -1950,6 +1950,9 @@ module Konpeito
           return visit_cfunc_call(typed_node)
         end
 
+        # Warn if calling a method on a known cfunc module that doesn't match any cfunc
+        warn_unmatched_cfunc_method(typed_node)
+
         # Check for ExternClass constructor call
         if extern_class_constructor_call?(typed_node)
           return visit_extern_constructor_call(typed_node)
@@ -2800,6 +2803,29 @@ module Konpeito
 
         # Check if this method is a cfunc
         @rbs_loader.cfunc_method?(class_name, method_name, singleton: true)
+      end
+
+      # Warn when a call targets a known cfunc module but uses a method name
+      # not defined in the RBS. This catches silent fallback to rb_funcallv
+      # which would crash at runtime in mruby (module not defined).
+      def warn_unmatched_cfunc_method(typed_node)
+        return unless @rbs_loader
+        return unless typed_node.node.respond_to?(:name)
+
+        method_name = typed_node.node.name.to_sym
+        receiver_child = typed_node.children.first
+        return unless receiver_child
+
+        class_name = extract_class_name_from_receiver(receiver_child)
+        return unless class_name
+
+        # Only warn for modules that have cfunc methods (stdlib modules like Raylib, Clay)
+        return unless @rbs_loader.has_cfunc_methods?(class_name)
+
+        available = @rbs_loader.cfunc_singleton_method_names(class_name)
+        warn "[konpeito] warning: #{class_name}.#{method_name} does not match any cfunc method in RBS. " \
+             "Available methods include: #{available.first(5).join(", ")}. " \
+             "This call will use dynamic dispatch (rb_funcallv) which may fail at runtime."
       end
 
       # Extract class name from a receiver node (for constant references like FastMath.sin)

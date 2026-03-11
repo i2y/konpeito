@@ -8,44 +8,22 @@
 #
 # Controls: Arrow keys / WASD — Move, SPACE — Interact, ESC — Quit
 
+require_relative "./rpg_framework"
+
 # @rbs module World
 # @rbs   @tilemap: NativeArray[Integer, 1600]
-# @rbs   @gs: NativeArray[Integer, 20]
+# @rbs   @gs: NativeArray[Integer, 32]
 # @rbs end
 
 # gs: 0=px, 1=py, 2=dir, 3=anim, 4=anim_timer, 5=cooldown,
 #     6=msg_timer, 7=cam_x*100, 8=cam_y*100, 9=state, 10=msg_id, 11=steps
-
-# ── Color helpers ──
-
-#: (Integer r, Integer g, Integer b, Integer a) -> Integer
-def rgba(r, g, b, a)
-  r * 16777216 + g * 65536 + b * 256 + a
-end
-
-# ── Pseudo-random ──
-
-#: (Integer seed) -> Integer
-def prand(seed)
-  seed = seed * 1103515245 + 12345
-  seed = seed % 2147483647
-  if seed < 0
-    seed = seed + 2147483647
-  end
-  return seed
-end
+# Framework reserved: 28=prev_scene, 29=rand_seed, 30=font_id+1, 31=frame_counter
 
 # ── Tile Drawing ──
 
 #: (Integer px, Integer py, Integer w, Integer h, Integer color) -> Integer
 def fill_rect(px, py, w, h, color)
   Raylib.draw_rectangle(px, py, w, h, color)
-  return 0
-end
-
-#: (Integer px, Integer py, Integer r, Integer color) -> Integer
-def fill_circle(px, py, r, color)
-  Raylib.draw_circle(px, py, r, color)
   return 0
 end
 
@@ -144,60 +122,23 @@ def draw_player(ppx, ppy, pdir, pwalk, c_body, c_skin, c_hair)
   return 0
 end
 
-#: (Integer steps, Integer c_hud) -> Integer
-def draw_hud(steps, c_hud)
+#: (Integer steps) -> Integer
+def draw_hud(steps)
+  c_hud = fw_rgba(0, 0, 0, 180)
   fill_rect(0, 0, 640, 32, c_hud)
   Raylib.draw_text("Konpeito RPG Demo", 8, 6, 20, Raylib.color_gold)
 
   Raylib.draw_text("Steps:", 500, 8, 16, Raylib.color_lightgray)
-  d3 = steps / 100
-  d2 = (steps % 100) / 10
-  d1 = steps % 10
-  xp = 570
-  if d3 > 0
-    Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d3 == 1
-    Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d3 == 2
-    Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d3 == 3
-    Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d3 == 4
-    Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d3 == 5
-    Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d3 == 6
-    Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d3 == 7
-    Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d3 == 8
-    Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d3 == 9
-    xp = xp + 10
-  end
-  if d3 > 0
-    Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d2 == 0
-  end
-  if d2 > 0
-    Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d2 == 1
-    Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d2 == 2
-    Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d2 == 3
-    Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d2 == 4
-    Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d2 == 5
-    Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d2 == 6
-    Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d2 == 7
-    Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d2 == 8
-    Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d2 == 9
-    xp = xp + 10
-  end
-  Raylib.draw_text("0", xp, 8, 16, Raylib.color_white) if d1 == 0
-  Raylib.draw_text("1", xp, 8, 16, Raylib.color_white) if d1 == 1
-  Raylib.draw_text("2", xp, 8, 16, Raylib.color_white) if d1 == 2
-  Raylib.draw_text("3", xp, 8, 16, Raylib.color_white) if d1 == 3
-  Raylib.draw_text("4", xp, 8, 16, Raylib.color_white) if d1 == 4
-  Raylib.draw_text("5", xp, 8, 16, Raylib.color_white) if d1 == 5
-  Raylib.draw_text("6", xp, 8, 16, Raylib.color_white) if d1 == 6
-  Raylib.draw_text("7", xp, 8, 16, Raylib.color_white) if d1 == 7
-  Raylib.draw_text("8", xp, 8, 16, Raylib.color_white) if d1 == 8
-  Raylib.draw_text("9", xp, 8, 16, Raylib.color_white) if d1 == 9
+  fw_draw_num(570, 8, steps, 16, Raylib.color_white)
 
   Raylib.draw_text("[SPACE] Interact", 8, 462, 14, Raylib.color_gray)
   return 0
 end
 
-#: (Integer mid, Integer c_msgbg, Integer c_msgbdr) -> Integer
-def draw_message_box(mid, c_msgbg, c_msgbdr)
+#: (Integer mid) -> Integer
+def draw_message_box(mid)
+  c_msgbg = fw_rgba(20, 20, 60, 230)
+  c_msgbdr = fw_rgba(200, 180, 100, 255)
   fill_rect(38, 348, 564, 104, c_msgbdr)
   fill_rect(40, 350, 560, 100, c_msgbg)
   if mid == 0
@@ -249,13 +190,11 @@ def generate_map
     wy = wy + 1
   end
 
-  seed = 12345
+  World.gs[29] = 12345
   i = 0
   while i < 80
-    seed = prand(seed)
-    tx = seed % 40
-    seed = prand(seed)
-    ty = seed % 40
+    tx = fw_rand(40)
+    ty = fw_rand(40)
     if World.tilemap[ty * 40 + tx] == 0
       World.tilemap[ty * 40 + tx] = 2
     end
@@ -270,26 +209,22 @@ def generate_map
   World.tilemap[20 * 40 + 26] = 5
   World.tilemap[22 * 40 + 20] = 5
 
-  seed = 777
+  World.gs[29] = 777
   i = 0
   while i < 40
-    seed = prand(seed)
-    fx = seed % 40
-    seed = prand(seed)
-    fy = seed % 40
+    fx = fw_rand(40)
+    fy = fw_rand(40)
     if World.tilemap[fy * 40 + fx] == 0
       World.tilemap[fy * 40 + fx] = 6
     end
     i = i + 1
   end
 
-  seed = 999
+  World.gs[29] = 999
   i = 0
   while i < 25
-    seed = prand(seed)
-    rx = seed % 40
-    seed = prand(seed)
-    ry = seed % 40
+    rx = fw_rand(40)
+    ry = fw_rand(40)
     if World.tilemap[ry * 40 + rx] == 0
       World.tilemap[ry * 40 + rx] = 7
     end
@@ -335,23 +270,6 @@ def is_walkable(tx, ty)
   return 1
 end
 
-# ── Camera lerp ──
-
-#: (Integer current, Integer target) -> Integer
-def lerp_cam(current, target)
-  diff = target - current
-  step = diff / 8
-  if step == 0
-    if diff > 0
-      step = 1
-    end
-    if diff < 0
-      step = -1
-    end
-  end
-  return current + step
-end
-
 # ── Main ──
 
 #: () -> Integer
@@ -373,75 +291,56 @@ def main
   World.gs[10] = 0
   World.gs[11] = 0
 
-  c_grass     = rgba(34, 139, 34, 255)
-  c_grass2    = rgba(50, 160, 50, 255)
-  c_water     = rgba(30, 100, 200, 255)
-  c_water2    = rgba(60, 140, 230, 255)
-  c_trunk     = rgba(101, 67, 33, 255)
-  c_leaves    = rgba(0, 100, 0, 255)
-  c_path      = rgba(194, 178, 128, 255)
-  c_wall      = rgba(180, 120, 60, 255)
-  c_roof      = rgba(160, 40, 40, 255)
-  c_signpost  = rgba(139, 90, 43, 255)
-  c_signboard = rgba(210, 180, 120, 255)
-  c_flowerr   = rgba(220, 50, 50, 255)
-  c_flowery   = rgba(255, 220, 50, 255)
-  c_rock      = rgba(130, 130, 130, 255)
-  c_rock2     = rgba(90, 90, 90, 255)
-  c_body      = rgba(50, 80, 200, 255)
-  c_skin      = rgba(255, 200, 150, 255)
-  c_hair      = rgba(60, 30, 10, 255)
-  c_hud       = rgba(0, 0, 0, 180)
-  c_msgbg     = rgba(20, 20, 60, 230)
-  c_msgbdr    = rgba(200, 180, 100, 255)
+  c_grass     = fw_rgba(34, 139, 34, 255)
+  c_grass2    = fw_rgba(50, 160, 50, 255)
+  c_water     = fw_rgba(30, 100, 200, 255)
+  c_water2    = fw_rgba(60, 140, 230, 255)
+  c_trunk     = fw_rgba(101, 67, 33, 255)
+  c_leaves    = fw_rgba(0, 100, 0, 255)
+  c_path      = fw_rgba(194, 178, 128, 255)
+  c_wall      = fw_rgba(180, 120, 60, 255)
+  c_roof      = fw_rgba(160, 40, 40, 255)
+  c_signpost  = fw_rgba(139, 90, 43, 255)
+  c_signboard = fw_rgba(210, 180, 120, 255)
+  c_flowerr   = fw_rgba(220, 50, 50, 255)
+  c_flowery   = fw_rgba(255, 220, 50, 255)
+  c_rock      = fw_rgba(130, 130, 130, 255)
+  c_rock2     = fw_rgba(90, 90, 90, 255)
+  c_body      = fw_rgba(50, 80, 200, 255)
+  c_skin      = fw_rgba(255, 200, 150, 255)
+  c_hair      = fw_rgba(60, 30, 10, 255)
 
   anim_counter = 0
   anim_frame = 0
 
   while Raylib.window_should_close == 0
+    fw_tick
+
     # ── Input ──
     if World.gs[9] == 1
-      if Raylib.key_pressed?(Raylib.key_space) != 0
-        World.gs[9] = 0
-      end
-      if Raylib.key_pressed?(Raylib.key_enter) != 0
+      if fw_confirm_pressed != 0
         World.gs[9] = 0
       end
     else
       if World.gs[5] > 0
         World.gs[5] = World.gs[5] - 1
       else
+        dir = fw_get_direction
         dx = 0
         dy = 0
-        if Raylib.key_down?(Raylib.key_up) != 0
-          dy = -1
-          World.gs[2] = 1
-        end
-        if Raylib.key_down?(Raylib.key_down) != 0
+        if dir == 0
           dy = 1
           World.gs[2] = 0
         end
-        if Raylib.key_down?(Raylib.key_left) != 0
-          dx = -1
-          World.gs[2] = 2
-        end
-        if Raylib.key_down?(Raylib.key_right) != 0
-          dx = 1
-          World.gs[2] = 3
-        end
-        if Raylib.key_down?(Raylib.key_w) != 0
-          dy = -1
+        if dir == 1
+          dy = 0 - 1
           World.gs[2] = 1
         end
-        if Raylib.key_down?(Raylib.key_s) != 0
-          dy = 1
-          World.gs[2] = 0
-        end
-        if Raylib.key_down?(Raylib.key_a) != 0
-          dx = -1
+        if dir == 2
+          dx = 0 - 1
           World.gs[2] = 2
         end
-        if Raylib.key_down?(Raylib.key_d) != 0
+        if dir == 3
           dx = 1
           World.gs[2] = 3
         end
@@ -468,17 +367,17 @@ def main
         if Raylib.key_pressed?(Raylib.key_space) != 0
           fx = World.gs[0]
           fy = World.gs[1]
-          dir = World.gs[2]
-          if dir == 0
+          d = World.gs[2]
+          if d == 0
             fy = fy + 1
           end
-          if dir == 1
+          if d == 1
             fy = fy - 1
           end
-          if dir == 2
+          if d == 2
             fx = fx - 1
           end
-          if dir == 3
+          if d == 3
             fx = fx + 1
           end
           if fx >= 0
@@ -516,8 +415,8 @@ def main
     # ── Camera ──
     target_cx = World.gs[0] * 3200
     target_cy = World.gs[1] * 3200
-    World.gs[7] = lerp_cam(World.gs[7], target_cx)
-    World.gs[8] = lerp_cam(World.gs[8], target_cy)
+    World.gs[7] = fw_lerp(World.gs[7], target_cx, 8)
+    World.gs[8] = fw_lerp(World.gs[8], target_cy, 8)
     cam_x = World.gs[7] / 100
     cam_y = World.gs[8] / 100
 
@@ -564,11 +463,11 @@ def main
     draw_player(ppx, ppy, World.gs[2], World.gs[3] % 4, c_body, c_skin, c_hair)
 
     # ── HUD ──
-    draw_hud(World.gs[11], c_hud)
+    draw_hud(World.gs[11])
 
     # ── Message Box ──
     if World.gs[9] == 1
-      draw_message_box(World.gs[10], c_msgbg, c_msgbdr)
+      draw_message_box(World.gs[10])
     end
 
     Raylib.end_drawing

@@ -164,6 +164,21 @@ module Konpeito
         !cfunc_method(class_name, method_name, singleton: singleton).nil?
       end
 
+      # Check if a class/module has any cfunc methods defined
+      def has_cfunc_methods?(class_name)
+        prefix = "#{class_name}."
+        @cfunc_methods.keys.any? { |k| k.to_s.start_with?(prefix) }
+      end
+
+      # List all singleton cfunc method names for a class/module
+      # @return [Array<Symbol>] Method names
+      def cfunc_singleton_method_names(class_name)
+        prefix = "#{class_name}."
+        @cfunc_methods.keys
+          .select { |k| k.to_s.start_with?(prefix) }
+          .map { |k| k.to_s.delete_prefix(prefix).to_sym }
+      end
+
       # Get the FFI library name for a class/module
       # @param name [Symbol, String] The class or module name
       # @return [String, nil] The library name (e.g., "libm") or nil

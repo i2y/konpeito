@@ -1,0 +1,258 @@
+# Konpeito stdlib: ClayTUI — Clay layout + termbox2 terminal renderer
+#
+# TUI framework using Clay for layout and termbox2 for rendering.
+# All coordinates are in terminal cells (1 Clay unit = 1 cell).
+# Truecolor by default.
+#
+# Usage:
+#   konpeito build --target mruby app.rb
+#   konpeito run --target mruby app.rb
+
+module ClayTUI
+  # ── Lifecycle ──
+
+  %a{cfunc: "konpeito_clay_tui_init"}
+  def self.init: (Float w, Float h) -> void
+
+  %a{cfunc: "konpeito_clay_tui_destroy"}
+  def self.destroy: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_begin_layout"}
+  def self.begin_layout: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_end_layout"}
+  def self.end_layout: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_set_dimensions"}
+  def self.set_dimensions: (Float w, Float h) -> void
+
+  %a{cfunc: "konpeito_clay_tui_set_measure_text"}
+  def self.set_measure_text: () -> void
+
+  # ── Element Construction ──
+
+  %a{cfunc: "konpeito_clay_tui_open"}
+  def self.open: (String id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_open_i"}
+  def self.open_i: (String id, Integer index) -> void
+
+  %a{cfunc: "konpeito_clay_tui_close"}
+  def self.close: () -> void
+
+  # ── Layout Direction ──
+
+  %a{cfunc: "konpeito_clay_tui_hbox"}
+  def self.hbox: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_vbox"}
+  def self.vbox: () -> void
+
+  # ── Padding & Gap ──
+
+  %a{cfunc: "konpeito_clay_tui_pad"}
+  def self.pad: (Integer l, Integer r, Integer t, Integer b) -> void
+
+  %a{cfunc: "konpeito_clay_tui_gap"}
+  def self.gap: (Integer gap) -> void
+
+  # ── Sizing (Width) ──
+
+  %a{cfunc: "konpeito_clay_tui_width_fit"}
+  def self.width_fit: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_width_grow"}
+  def self.width_grow: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_width_fixed"}
+  def self.width_fixed: (Float v) -> void
+
+  %a{cfunc: "konpeito_clay_tui_width_percent"}
+  def self.width_percent: (Float v) -> void
+
+  # ── Sizing (Height) ──
+
+  %a{cfunc: "konpeito_clay_tui_height_fit"}
+  def self.height_fit: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_height_grow"}
+  def self.height_grow: () -> void
+
+  %a{cfunc: "konpeito_clay_tui_height_fixed"}
+  def self.height_fixed: (Float v) -> void
+
+  %a{cfunc: "konpeito_clay_tui_height_percent"}
+  def self.height_percent: (Float v) -> void
+
+  # ── Alignment ──
+
+  # X: 0=LEFT, 1=RIGHT, 2=CENTER / Y: 0=TOP, 1=BOTTOM, 2=CENTER
+  %a{cfunc: "konpeito_clay_tui_align"}
+  def self.align: (Integer ax, Integer ay) -> void
+
+  # ── Decoration ──
+
+  # Background color (RGB, alpha=255, corner_radius=0)
+  %a{cfunc: "konpeito_clay_tui_bg"}
+  def self.bg: (Integer r, Integer g, Integer b) -> void
+
+  # Background color (full: RGBA + corner_radius)
+  %a{cfunc: "konpeito_clay_tui_bg_ex"}
+  def self.bg_ex: (Integer r, Integer g, Integer b, Integer a, Float cr) -> void
+
+  # Border: color (r,g,b,a), widths (top, right, bottom, left), corner radius
+  %a{cfunc: "konpeito_clay_tui_border"}
+  def self.border: (Float r, Float g, Float b, Float a, Integer top, Integer right, Integer bottom, Integer left, Float cr) -> void
+
+  # ── Text ──
+
+  # Simple text (RGB, font_id=0, font_size=1, alpha=255, wrap=0)
+  %a{cfunc: "konpeito_clay_tui_text"}
+  def self.text: (String str, Integer r, Integer g, Integer b) -> void
+
+  # Full text (font_id, font_size, RGBA, wrap mode)
+  %a{cfunc: "konpeito_clay_tui_text_ex"}
+  def self.text_ex: (String str, Integer fid, Integer fsz, Integer r, Integer g, Integer b, Integer a, Integer wrap) -> void
+
+  # ── Scroll & Floating ──
+
+  %a{cfunc: "konpeito_clay_tui_scroll"}
+  def self.scroll: (Integer h, Integer v) -> void
+
+  %a{cfunc: "konpeito_clay_tui_floating"}
+  def self.floating: (Float ox, Float oy, Integer z, Integer att_elem, Integer att_parent) -> void
+
+  # ── Pointer Input (Mouse) ──
+
+  %a{cfunc: "konpeito_clay_tui_set_pointer"}
+  def self.set_pointer: (Float x, Float y, Integer down) -> void
+
+  %a{cfunc: "konpeito_clay_tui_pointer_over"}
+  def self.pointer_over: (String id) -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_pointer_over_i"}
+  def self.pointer_over_i: (String id, Integer i) -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_update_scroll"}
+  def self.update_scroll: (Float dx, Float dy, Float dt) -> void
+
+  # ── Rendering ──
+
+  # Clear terminal, render Clay commands, present
+  %a{cfunc: "konpeito_clay_tui_render"}
+  def self.render: () -> void
+
+  # ── Events ──
+
+  # Non-blocking event peek (returns event type or 0)
+  %a{cfunc: "konpeito_clay_tui_peek_event"}
+  def self.peek_event: (Integer timeout_ms) -> Integer
+
+  # Blocking event poll (returns event type)
+  %a{cfunc: "konpeito_clay_tui_poll_event"}
+  def self.poll_event: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_type"}
+  def self.event_type: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_key"}
+  def self.event_key: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_ch"}
+  def self.event_ch: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_mouse_x"}
+  def self.event_mouse_x: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_mouse_y"}
+  def self.event_mouse_y: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_w"}
+  def self.event_w: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_event_h"}
+  def self.event_h: () -> Integer
+
+  # ── Terminal Info ──
+
+  %a{cfunc: "konpeito_clay_tui_term_width"}
+  def self.term_width: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_term_height"}
+  def self.term_height: () -> Integer
+
+  # ── Key Constants ──
+
+  %a{cfunc: "konpeito_clay_tui_key_esc"}
+  def self.key_esc: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_enter"}
+  def self.key_enter: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_tab"}
+  def self.key_tab: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_backspace"}
+  def self.key_backspace: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_arrow_up"}
+  def self.key_arrow_up: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_arrow_down"}
+  def self.key_arrow_down: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_arrow_left"}
+  def self.key_arrow_left: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_arrow_right"}
+  def self.key_arrow_right: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_space"}
+  def self.key_space: () -> Integer
+
+  # ── Color Constants (basic 8) ──
+
+  %a{cfunc: "konpeito_clay_tui_color_default"}
+  def self.color_default: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_black"}
+  def self.color_black: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_red"}
+  def self.color_red: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_green"}
+  def self.color_green: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_yellow"}
+  def self.color_yellow: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_blue"}
+  def self.color_blue: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_magenta"}
+  def self.color_magenta: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_cyan"}
+  def self.color_cyan: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_color_white"}
+  def self.color_white: () -> Integer
+
+  # ── Attributes ──
+
+  %a{cfunc: "konpeito_clay_tui_attr_bold"}
+  def self.attr_bold: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_attr_underline"}
+  def self.attr_underline: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_attr_reverse"}
+  def self.attr_reverse: () -> Integer
+
+  # ── Color Helper ──
+
+  # Build a truecolor value from RGB components
+  %a{cfunc: "konpeito_clay_tui_rgb"}
+  def self.rgb: (Integer r, Integer g, Integer b) -> Integer
+end

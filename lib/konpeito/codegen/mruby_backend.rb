@@ -10,7 +10,7 @@ module Konpeito
     class MRubyBackend
       # Stdlib modules that should be auto-defined in mruby init code
       # even when no ModuleDef exists in HIR (cfunc-only modules).
-      STDLIB_MODULES = %w[Raylib Clay].freeze
+      STDLIB_MODULES = %w[Raylib Clay ClayTUI KonpeitoShell].freeze
 
       attr_reader :llvm_generator, :output_file, :module_name, :rbs_loader, :debug
 
@@ -65,6 +65,10 @@ module Konpeito
           # Compile vendored Clay library if used
           clay_objs = ensure_clay_compiled
           extra_obj_files.concat(clay_objs)
+
+          # Compile vendored termbox2 library if ClayTUI is used
+          tb2_objs = ensure_termbox_compiled
+          extra_obj_files.concat(tb2_objs)
 
           obj_files = [obj_file, init_obj_file, helpers_obj_file] + extra_obj_files
 
@@ -951,6 +955,36 @@ module Konpeito
           )
         end
 
+        # Include termbox2 if ClayTUI is used
+        clay_tui_used = @extra_c_files.any? { |f| File.basename(f).include?("clay_tui") }
+        if clay_tui_used
+          sections << license_section(
+            "termbox2",
+            "MIT",
+            "Copyright (c) 2021 termbox developers",
+            "https://github.com/termbox/termbox2",
+            <<~MIT
+              Permission is hereby granted, free of charge, to any person obtaining a copy
+              of this software and associated documentation files (the "Software"), to deal
+              in the Software without restriction, including without limitation the rights
+              to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+              copies of the Software, and to permit persons to whom the Software is
+              furnished to do so, subject to the following conditions:
+
+              The above copyright notice and this permission notice shall be included in all
+              copies or substantial portions of the Software.
+
+              THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+              IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+              FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+              AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+              LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+              OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+              SOFTWARE.
+            MIT
+          )
+        end
+
         # Include raylib if linked
         ffi_libs = @rbs_loader&.all_ffi_libraries || []
         if ffi_libs.any? { |lib| lib.to_s.include?("raylib") }
@@ -1238,13 +1272,44 @@ module Konpeito
         [clay_impl_obj]
       end
 
+      # Compile vendored termbox2 implementation if ClayTUI stdlib is used
+      # Returns array of object file paths
+      def ensure_termbox_compiled
+        clay_tui_used = @extra_c_files.any? { |f| File.basename(f).include?("clay_tui") }
+        return [] unless clay_tui_used
+
+        tb2_dir = File.expand_path("../../../vendor/termbox2", __dir__)
+        tb2_impl_c = File.join(tb2_dir, "termbox2_impl.c")
+        tb2_impl_obj = File.join(tb2_dir, "termbox2_impl.o")
+
+        return [] unless File.exist?(tb2_impl_c)
+
+        cc, cc_flags = cross_cc_with_flags
+
+        # Compile termbox2_impl.c (only if stale)
+        unless File.exist?(tb2_impl_obj) && File.mtime(tb2_impl_obj) > File.mtime(tb2_impl_c)
+          cmd = [*cc, "-c", "-O2"]
+          cmd.concat(cc_flags)
+          cmd += ["-o", tb2_impl_obj, tb2_impl_c]
+          system(*cmd) or return []
+        end
+
+        [tb2_impl_obj]
+      end
+
       def ffi_include_flags
         flags = []
 
-        # Always add vendored Clay include path if Clay stdlib is used
+        # Always add vendored Clay include path if Clay/ClayTUI stdlib is used
         clay_dir = File.expand_path("../../../vendor/clay", __dir__)
         if @extra_c_files.any? { |f| File.basename(f).include?("clay") } && Dir.exist?(clay_dir)
           flags << "-I#{clay_dir}"
+        end
+
+        # Add vendored termbox2 include path if ClayTUI stdlib is used
+        tb2_dir = File.expand_path("../../../vendor/termbox2", __dir__)
+        if @extra_c_files.any? { |f| File.basename(f).include?("clay_tui") } && Dir.exist?(tb2_dir)
+          flags << "-I#{tb2_dir}"
         end
 
         if cross_compiling?

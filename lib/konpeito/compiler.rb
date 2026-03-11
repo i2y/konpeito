@@ -653,7 +653,9 @@ module Konpeito
     # Map of stdlib modules: module name pattern => stdlib directory name
     STDLIB_MODULE_MAP = {
       "Raylib" => "raylib",
-      "Clay" => "clay"
+      "Clay" => "clay",
+      "ClayTUI" => "clay_tui",
+      "KonpeitoShell" => "shell"
     }.freeze
 
     # Scan AST for known stdlib module references and auto-add their RBS paths

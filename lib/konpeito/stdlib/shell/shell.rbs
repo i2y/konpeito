@@ -1,0 +1,59 @@
+# Konpeito stdlib: KonpeitoShell — Shell execution, env vars, file I/O
+#
+# Provides POSIX shell execution, environment variable access, and basic
+# file I/O for mruby backend. All functions use scalar types for @cfunc.
+#
+# Usage:
+#   output = KonpeitoShell.exec("git log --oneline -5")
+#   status = KonpeitoShell.exec_status
+#
+#   home = KonpeitoShell.getenv("HOME")
+#
+#   content = KonpeitoShell.read_file("data.txt")
+#   KonpeitoShell.write_file("out.txt", "hello")
+
+module KonpeitoShell
+  # ── Shell Execution ──
+
+  # Execute a shell command and return stdout (trailing newline stripped).
+  # Result is valid until the next exec() call.
+  %a{cfunc: "konpeito_shell_exec"}
+  def self.exec: (String cmd) -> String
+
+  # Return the exit status of the last exec() call.
+  # 0 = success, non-zero = error, -1 = popen failed.
+  %a{cfunc: "konpeito_shell_exec_status"}
+  def self.exec_status: () -> Integer
+
+  # Execute a shell command, discard output, return exit status.
+  %a{cfunc: "konpeito_shell_system"}
+  def self.system: (String cmd) -> Integer
+
+  # ── Environment Variables ──
+
+  # Get an environment variable. Returns "" if not set.
+  %a{cfunc: "konpeito_shell_getenv"}
+  def self.getenv: (String name) -> String
+
+  # Set an environment variable. Returns 0 on success.
+  %a{cfunc: "konpeito_shell_setenv"}
+  def self.setenv: (String name, String value) -> Integer
+
+  # ── File I/O ──
+
+  # Read entire file contents. Returns "" if file not found.
+  %a{cfunc: "konpeito_shell_read_file"}
+  def self.read_file: (String path) -> String
+
+  # Write string to file (overwrite). Returns bytes written or -1.
+  %a{cfunc: "konpeito_shell_write_file"}
+  def self.write_file: (String path, String content) -> Integer
+
+  # Append string to file. Returns bytes written or -1.
+  %a{cfunc: "konpeito_shell_append_file"}
+  def self.append_file: (String path, String content) -> Integer
+
+  # Check if file exists. Returns 1 or 0.
+  %a{cfunc: "konpeito_shell_file_exists"}
+  def self.file_exists: (String path) -> Integer
+end

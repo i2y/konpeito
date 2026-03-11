@@ -659,6 +659,16 @@ Key concepts:
 
 See `examples/mruby_clay_ui/` for a full sidebar layout demo and a Memory Match card game.
 
+### RPG Framework
+
+Konpeito includes an RPG framework (`rpg_framework.rb`) with helpers for building 2D RPGs:
+
+- Tilemap rendering, sprite animation, scene management, NPC system, text boxes
+- Clay UI helpers: `fw_clay_rpg_window`, `fw_clay_bar`, `fw_clay_num`, `fw_clay_menu_item`
+- Uses `module G` with `NativeArray` globals for zero-allocation game state
+
+See `examples/mruby_dq_rpg/` for a full JRPG demo with Clay UI battle HUD, menu, and shop.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc`:

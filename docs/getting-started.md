@@ -552,6 +552,21 @@ konpeito run --target mruby simple_ui.rb
 
 Clay provides 40+ functions covering element construction (`open`/`close`/`layout`/`bg`/`border`), text rendering with TTF fonts, scrolling, floating elements, pointer hit-testing, and bulk rendering. See the [API Reference](api-reference.md) for the full list.
 
+### RPG Framework
+
+Konpeito includes an RPG framework (`rpg_framework.rb`) that provides helper functions for building 2D RPGs with the mruby backend. The framework covers:
+
+- **Tilemap rendering** — `fw_draw_tilemap` draws multi-layer tile maps with camera offset
+- **Sprite animation** — `fw_draw_sprite` handles sprite sheets with directional animation
+- **Scene management** — `fw_push_scene` / `fw_pop_scene` with scene stack
+- **NPC system** — `fw_draw_npc` / `fw_update_npc` for wandering NPCs
+- **Text display** — `fw_draw_text_box` for RPG-style message windows
+- **Clay UI helpers** — `fw_clay_rpg_window`, `fw_clay_bar`, `fw_clay_num`, `fw_clay_menu_item` for building menus, status panels, and HUD elements with Clay
+
+The framework uses `module G` with `NativeArray` globals for game state (no heap allocation). Include it with `require_relative "./rpg_framework"`.
+
+See `examples/mruby_dq_rpg/` for a full JRPG demo (tilemap, NPCs, turn-based battle, menu, shop) that uses Clay UI for battle HUD, menu, and shop interfaces.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc` as the cross-compiler:

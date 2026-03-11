@@ -692,7 +692,7 @@ konpeito build --target mruby \
 | raylib stdlib | 非対応 | 自動検出 |
 | Clay UI stdlib | 非対応 | 自動検出 |
 | Thread/Mutex | 対応 | 非対応 |
-| キーワード引数 | 対応 | 非対応 |
+| キーワード引数 | 対応 | 対応 |
 | コンパイルキャッシュ | `.konpeito_cache/run/` | `.konpeito_cache/run/` |
 
 ---

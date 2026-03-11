@@ -696,7 +696,7 @@ konpeito build --target mruby \
 | raylib stdlib | Not available | Auto-detected |
 | Clay UI stdlib | Not available | Auto-detected |
 | Thread/Mutex | Supported | Not supported |
-| Keyword arguments | Supported | Not supported |
+| Keyword arguments | Supported | Supported |
 | Compilation caching | `.konpeito_cache/run/` | `.konpeito_cache/run/` |
 
 ---

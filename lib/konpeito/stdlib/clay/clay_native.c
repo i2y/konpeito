@@ -56,13 +56,34 @@ static int g_needs_configure = 0;
 static Font g_fonts[MAX_FONTS];
 static int g_font_count = 0;
 
+/* Per-frame string pool — copies string data so Clay never holds pointers
+ * to GC-managed mruby heap memory. Reset each frame in begin_layout. */
+#define STRING_POOL_SIZE (64 * 1024)
+static char g_string_pool[STRING_POOL_SIZE];
+static int g_string_pool_pos = 0;
+
 /* ═══════════════════════════════════════════
  *  Helpers
  * ═══════════════════════════════════════════ */
 
-/* Create Clay_String from a runtime C string (not a string literal) */
+/* Copy a string into the per-frame pool and return a stable pointer.
+ * Falls back to the original pointer if the pool is exhausted. */
+static const char *pool_string(const char *s, int len) {
+    if (g_string_pool_pos + len + 1 > STRING_POOL_SIZE) {
+        return s; /* pool full — fallback (rare) */
+    }
+    char *copy = g_string_pool + g_string_pool_pos;
+    memcpy(copy, s, len);
+    copy[len] = '\0';
+    g_string_pool_pos += len + 1;
+    return copy;
+}
+
+/* Create Clay_String from a runtime C string, copying data to the pool */
 static Clay_String make_string(const char *s) {
-    return (Clay_String){ .isStaticallyAllocated = false, .length = (int32_t)strlen(s), .chars = s };
+    int len = (int32_t)strlen(s);
+    const char *pooled = pool_string(s, len);
+    return (Clay_String){ .isStaticallyAllocated = false, .length = len, .chars = pooled };
 }
 
 /* Auto-flush: commit pending config before adding children */
@@ -130,6 +151,7 @@ void konpeito_clay_destroy(void) {
 }
 
 void konpeito_clay_begin_layout(void) {
+    g_string_pool_pos = 0;  /* reset per-frame string pool */
     Clay_BeginLayout();
 }
 

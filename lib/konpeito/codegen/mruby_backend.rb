@@ -456,8 +456,21 @@ module Konpeito
         else
           arity = llvm_func.params.size - 1  # Subtract self
 
+          # Check if this function has only keyword args (no positional params).
+          # If so, the kwargs hash arg is optional — caller may pass 0 args
+          # when no keywords are specified (e.g., `footer do ... end`).
+          func_base_name = mangled_name.sub(/\Arn_/, "")
+          kw_info = llvm_generator.keyword_param_functions[func_base_name] ||
+                    llvm_generator.keyword_param_functions[func_base_name.to_sym]
+          kwargs_only = kw_info && kw_info[:regular_count] == 0 && arity == 1
+
           lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
-          if arity > 0
+          if kwargs_only
+            # Single optional kwargs hash arg — default to empty hash
+            lines << "    mrb_value a0 = mrb_nil_value(), _block = mrb_nil_value();"
+            lines << "    mrb_get_args(mrb, \"|o&\", &a0, &_block);"
+            lines << "    if (mrb_nil_p(a0)) a0 = mrb_hash_new(mrb);"
+          elsif arity > 0
             lines << "    mrb_value #{(0...arity).map { |i| "a#{i}" }.join(', ')}, _block;"
             format_str = "o" * arity + "&"
             args_list = (0...arity).map { |i| "&a#{i}" }.join(", ") + ", &_block"

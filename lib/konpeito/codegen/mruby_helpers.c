@@ -43,18 +43,50 @@ mrb_state *konpeito_get_mrb_state(void) {
 /* ================================================================
  * Block stack for rb_yield / rb_block_given_p / rb_block_proc
  *
- * mruby requires explicit block values, unlike CRuby's implicit
- * "current block" context. We maintain a stack of block values
- * that wrapper functions push/pop around LLVM function calls.
+ * We maintain TWO parallel stacks:
+ *
+ * 1. konpeito_block_stack: mruby Proc VALUE (for rb_block_proc,
+ *    rb_block_given_p, and fallback rb_yield via mrb_funcall).
+ *
+ * 2. konpeito_native_cb_stack: native function pointer + data pairs
+ *    (for rb_yield to call callbacks directly without re-entering
+ *    mrb_vm_exec, which corrupts mruby's callinfo on nested yields).
+ *
+ * rb_block_call pushes both the native callback AND the mruby proc.
+ * The mruby method wrapper pushes only the mruby proc (native_cb=NULL).
+ * rb_yield prefers the native callback when available.
  * ================================================================ */
+
+typedef mrb_value (*cruby_block_callback_t)(mrb_value, mrb_value, int, const mrb_value*);
+
+typedef struct {
+    cruby_block_callback_t func;
+    mrb_value data2;
+} konpeito_native_cb_entry;
 
 #define KONPEITO_MAX_BLOCK_STACK 64
 static mrb_value konpeito_block_stack[KONPEITO_MAX_BLOCK_STACK];
+static konpeito_native_cb_entry konpeito_native_cb_stack[KONPEITO_MAX_BLOCK_STACK];
 static int konpeito_block_stack_depth = 0;
+
+/* Pending native callback: set by rb_block_call before mrb_funcall_with_block,
+ * consumed by konpeito_push_block in the wrapper. */
+static cruby_block_callback_t konpeito_pending_native_func = NULL;
+static mrb_value konpeito_pending_native_data2;
 
 void konpeito_push_block(mrb_value block) {
     if (konpeito_block_stack_depth < KONPEITO_MAX_BLOCK_STACK) {
-        konpeito_block_stack[konpeito_block_stack_depth++] = block;
+        konpeito_block_stack[konpeito_block_stack_depth] = block;
+        /* If rb_block_call set a pending native callback, attach it here.
+         * This ensures the wrapper's push includes the native callback info. */
+        if (konpeito_pending_native_func) {
+            konpeito_native_cb_stack[konpeito_block_stack_depth].func = konpeito_pending_native_func;
+            konpeito_native_cb_stack[konpeito_block_stack_depth].data2 = konpeito_pending_native_data2;
+            konpeito_pending_native_func = NULL;
+        } else {
+            konpeito_native_cb_stack[konpeito_block_stack_depth].func = NULL;
+        }
+        konpeito_block_stack_depth++;
     }
 }
 
@@ -69,6 +101,37 @@ static mrb_value konpeito_get_block(void) {
         return konpeito_block_stack[konpeito_block_stack_depth - 1];
     }
     return mrb_nil_value();
+}
+
+static konpeito_native_cb_entry *konpeito_get_native_cb(void) {
+    if (konpeito_block_stack_depth > 0) {
+        konpeito_native_cb_entry *entry = &konpeito_native_cb_stack[konpeito_block_stack_depth - 1];
+        if (entry->func) return entry;
+    }
+    return NULL;
+}
+
+/* ================================================================
+ * GC arena management
+ *
+ * mruby objects created in LLVM-generated code live on the C stack,
+ * invisible to mruby's GC. The arena protects them as roots.
+ * Each generated function saves the arena index at entry and restores
+ * it before returning, preventing arena overflow.
+ * ================================================================ */
+
+int konpeito_gc_arena_save(void) {
+    return mrb_gc_arena_save(konpeito_mrb_state);
+}
+
+void konpeito_gc_arena_restore(int idx) {
+    mrb_gc_arena_restore(konpeito_mrb_state, idx);
+}
+
+void konpeito_gc_protect_value(mrb_value val) {
+    if (!mrb_immediate_p(val)) {
+        mrb_gc_protect(konpeito_mrb_state, val);
+    }
 }
 
 /* ================================================================
@@ -141,23 +204,31 @@ double rb_num2dbl(mrb_value v) {
 
 /* CRuby: VALUE rb_str_new(const char *ptr, long len) */
 mrb_value rb_str_new(const char *ptr, long len) {
-    return mrb_str_new(konpeito_mrb_state, ptr, (mrb_int)len);
+    mrb_value s = mrb_str_new(konpeito_mrb_state, ptr, (mrb_int)len);
+    mrb_gc_protect(konpeito_mrb_state, s);
+    return s;
 }
 
 /* CRuby: VALUE rb_utf8_str_new(const char *ptr, long len) */
 /* mruby doesn't distinguish encodings */
 mrb_value rb_utf8_str_new(const char *ptr, long len) {
-    return mrb_str_new(konpeito_mrb_state, ptr, (mrb_int)len);
+    mrb_value s = mrb_str_new(konpeito_mrb_state, ptr, (mrb_int)len);
+    mrb_gc_protect(konpeito_mrb_state, s);
+    return s;
 }
 
 /* CRuby: VALUE rb_str_new_cstr(const char *ptr) */
 mrb_value rb_str_new_cstr(const char *ptr) {
-    return mrb_str_new_cstr(konpeito_mrb_state, ptr);
+    mrb_value s = mrb_str_new_cstr(konpeito_mrb_state, ptr);
+    mrb_gc_protect(konpeito_mrb_state, s);
+    return s;
 }
 
 /* CRuby: VALUE rb_str_dup(VALUE str) */
 mrb_value rb_str_dup(mrb_value str) {
-    return mrb_str_dup(konpeito_mrb_state, str);
+    mrb_value s = mrb_str_dup(konpeito_mrb_state, str);
+    mrb_gc_protect(konpeito_mrb_state, s);
+    return s;
 }
 
 /* CRuby: VALUE rb_str_hash(VALUE str) */
@@ -230,7 +301,9 @@ mrb_value rb_reg_new_str(mrb_value str, int64_t options) {
 
 /* CRuby: VALUE rb_ary_new_capa(long capa) */
 mrb_value rb_ary_new_capa(int64_t capa) {
-    return mrb_ary_new_capa(konpeito_mrb_state, (mrb_int)capa);
+    mrb_value a = mrb_ary_new_capa(konpeito_mrb_state, (mrb_int)capa);
+    mrb_gc_protect(konpeito_mrb_state, a);
+    return a;
 }
 
 /* CRuby: VALUE rb_ary_push(VALUE ary, VALUE item) */
@@ -256,12 +329,16 @@ void rb_ary_store(mrb_value ary, int64_t idx, mrb_value val) {
 
 /* CRuby: VALUE rb_ary_new(void) */
 mrb_value rb_ary_new(void) {
-    return mrb_ary_new(konpeito_mrb_state);
+    mrb_value a = mrb_ary_new(konpeito_mrb_state);
+    mrb_gc_protect(konpeito_mrb_state, a);
+    return a;
 }
 
 /* CRuby: VALUE rb_ary_new_from_values(long n, const VALUE *elts) */
 mrb_value rb_ary_new_from_values(int64_t n, const mrb_value *elts) {
-    return mrb_ary_new_from_values(konpeito_mrb_state, (mrb_int)n, elts);
+    mrb_value a = mrb_ary_new_from_values(konpeito_mrb_state, (mrb_int)n, elts);
+    mrb_gc_protect(konpeito_mrb_state, a);
+    return a;
 }
 
 /* CRuby: VALUE rb_ary_subseq(VALUE ary, long beg, long len) */
@@ -305,7 +382,9 @@ mrb_value rb_ary_delete_at(mrb_value ary, int64_t pos) {
 
 /* CRuby: VALUE rb_hash_new(void) */
 mrb_value rb_hash_new(void) {
-    return mrb_hash_new(konpeito_mrb_state);
+    mrb_value h = mrb_hash_new(konpeito_mrb_state);
+    mrb_gc_protect(konpeito_mrb_state, h);
+    return h;
 }
 
 /* CRuby: VALUE rb_hash_aset(VALUE hash, VALUE key, VALUE val) */
@@ -412,17 +491,33 @@ mrb_value rb_obj_class(mrb_value obj) {
 /* CRuby: VALUE rb_yield(VALUE val) */
 mrb_value rb_yield(mrb_value val) {
     mrb_state *mrb = konpeito_mrb_state;
+
+    /* Prefer direct native callback to avoid mrb_vm_exec re-entry issues */
+    konpeito_native_cb_entry *native = konpeito_get_native_cb();
+    if (native) {
+        mrb_value argv[1];
+        argv[0] = val;
+        return native->func(val, native->data2, 1, argv);
+    }
+
     mrb_value block = konpeito_get_block();
     if (mrb_nil_p(block)) {
         mrb_raise(mrb, E_RUNTIME_ERROR, "no block given (yield)");
         return mrb_nil_value();
     }
-    return mrb_funcall(konpeito_mrb_state, block, "call", 1, val);
+    return mrb_funcall(mrb, block, "call", 1, val);
 }
 
 /* CRuby: VALUE rb_yield_values2(int argc, const VALUE *argv) */
 mrb_value rb_yield_values2(int argc, const mrb_value *argv) {
     mrb_state *mrb = konpeito_mrb_state;
+
+    konpeito_native_cb_entry *native = konpeito_get_native_cb();
+    if (native) {
+        mrb_value yielded = (argc > 0) ? argv[0] : mrb_nil_value();
+        return native->func(yielded, native->data2, argc, argv);
+    }
+
     mrb_value block = konpeito_get_block();
     if (mrb_nil_p(block)) {
         mrb_raise(mrb, E_RUNTIME_ERROR, "no block given (yield)");
@@ -456,8 +551,6 @@ mrb_value rb_block_proc(void) {
  * the original callback pointer and data in the proc's environment.
  * ================================================================ */
 
-typedef mrb_value (*cruby_block_callback_t)(mrb_value, mrb_value, int, const mrb_value*);
-
 /* Adapter: called as mruby cfunc, delegates to CRuby-style callback */
 static mrb_value konpeito_cfunc_adapter(mrb_state *mrb, mrb_value self) {
     mrb_value cb_ptr_val = mrb_proc_cfunc_env_get(mrb, 0);
@@ -481,15 +574,29 @@ mrb_value rb_block_call(mrb_value obj, mrb_sym mid, int argc, const mrb_value *a
         return mrb_funcall_argv(konpeito_mrb_state, obj, mid, argc, argv);
     }
 
-    /* Create a proc that wraps the CRuby callback via environment */
+    /* Create a proc that wraps the CRuby callback via environment.
+     * This is needed for rb_block_proc() and as fallback for rb_yield()
+     * when the block was not pushed via rb_block_call (e.g., mruby Proc). */
     mrb_value env[2];
     env[0] = mrb_cptr_value(konpeito_mrb_state, proc);
-    env[1] = data2;
+    /* Store nil instead of data2 in the proc env.  data2 may be a raw C
+     * stack pointer (pointer-to-alloca capture mode) which is NOT a valid
+     * mrb_value.  If GC marks the proc's env it would try to dereference
+     * that raw pointer as an RBasic* → crash in gc_mark_children.
+     * The native callback path reads data2 from konpeito_pending_native_data2
+     * (set below), so env[1] is never read in practice. */
+    env[1] = mrb_nil_value();
     struct RProc *block_proc = mrb_proc_new_cfunc_with_env(
         konpeito_mrb_state, konpeito_cfunc_adapter, 2, env);
     mrb_value block_val = mrb_obj_value(block_proc);
 
-    return mrb_funcall_with_block(konpeito_mrb_state, obj, mid, argc, argv, block_val);
+    /* Set pending native callback so the wrapper's konpeito_push_block call
+     * will attach the native function pointer. rb_yield will then call the
+     * native callback directly, bypassing mrb_vm_exec re-entry. */
+    konpeito_pending_native_func = (cruby_block_callback_t)proc;
+    konpeito_pending_native_data2 = data2;
+    mrb_value result = mrb_funcall_with_block(konpeito_mrb_state, obj, mid, argc, argv, block_val);
+    return result;
 }
 
 /* CRuby: VALUE rb_block_call_kw(...) */

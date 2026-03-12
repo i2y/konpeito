@@ -69,7 +69,7 @@ module Konpeito
         end
       end
 
-      attr_reader :profiler, :variadic_functions, :alias_renamed_methods
+      attr_reader :profiler, :variadic_functions, :keyword_param_functions, :alias_renamed_methods
 
       def generate(hir_program)
         @hir_program = hir_program
@@ -1126,6 +1126,17 @@ module Konpeito
         init_builder.store(init_builder.call(mrb_undef_fn), @mrb_qundef_global)
         init_builder.ret_void
 
+        # GC arena management functions (prevent arena overflow in loops)
+        @konpeito_gc_arena_save = @mod.functions.add(
+          "konpeito_gc_arena_save", [], LLVM::Int32
+        )
+        @konpeito_gc_arena_restore = @mod.functions.add(
+          "konpeito_gc_arena_restore", [LLVM::Int32], LLVM.Void
+        )
+        @konpeito_gc_protect_value = @mod.functions.add(
+          "konpeito_gc_protect_value", [value_type], LLVM.Void
+        )
+
         # Clear @qnil etc. so the accessor methods know to load from globals
         @qnil = nil
         @qtrue = nil
@@ -1728,6 +1739,16 @@ module Konpeito
           end
         end
 
+        # For mruby: save GC arena index so we can restore before return.
+        # This prevents arena overflow when LLVM functions call each other
+        # directly (bypassing mruby dispatch's arena management).
+        @mruby_gc_arena_alloca = nil
+        if @runtime == :mruby
+          @mruby_gc_arena_alloca = @builder.alloca(LLVM::Int32, "_gc_arena")
+          arena_idx = @builder.call(@konpeito_gc_arena_save)
+          @builder.store(arena_idx, @mruby_gc_arena_alloca)
+        end
+
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)
 
@@ -1751,6 +1772,21 @@ module Konpeito
         optimize_function(func)
 
         func
+      end
+
+      # Emit a return instruction with mruby GC arena management.
+      # For the mruby backend, restores the arena to the saved index and
+      # protects the return value from GC before returning.
+      def emit_ret(value)
+        if @mruby_gc_arena_alloca
+          idx = @builder.load2(LLVM::Int32, @mruby_gc_arena_alloca, "_arena_r")
+          @builder.call(@konpeito_gc_arena_restore, idx)
+          # Protect the return value so it survives the arena restore
+          if value.type == value_type
+            @builder.call(@konpeito_gc_protect_value, value)
+          end
+        end
+        @builder.ret(value)
       end
 
       # Topologically sort blocks based on phi dependencies
@@ -4843,6 +4879,9 @@ module Konpeito
         saved_allocas = @variable_allocas.dup
         saved_in_block_callback = @in_block_callback
         saved_block_callback_self = @block_callback_self
+        saved_mrb_cache = save_mrb_constant_cache
+        saved_current_function = @current_function
+        saved_gc_arena_alloca = @mruby_gc_arena_alloca
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -4850,10 +4889,16 @@ module Konpeito
 
         # Reset variable tracking for callback scope.
         # Set @in_block_callback so nested proc creation uses GC-safe escape-cells mode.
+        # Reset mruby constant cache — LLVM values are scoped per function, so
+        # cached %qnil/%qtrue from the parent function are invalid here.
+        # Clear GC arena alloca — callbacks don't own their own arena scope.
         @in_block_callback = true
+        @mruby_gc_arena_alloca = nil
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
+        reset_mrb_constant_cache
+        @current_function = callback_func
 
         # Setup captured variable access through data2 pointer
         unless captures.empty?
@@ -5132,6 +5177,9 @@ module Konpeito
         @variable_allocas = saved_allocas
         @in_block_callback = saved_in_block_callback
         @block_callback_self = saved_block_callback_self
+        restore_mrb_constant_cache(saved_mrb_cache)
+        @current_function = saved_current_function
+        @mruby_gc_arena_alloca = saved_gc_arena_alloca
 
         callback_func
       end
@@ -5583,6 +5631,7 @@ module Konpeito
         saved_block_callback_self = @block_callback_self
         saved_in_thread_callback = @in_thread_callback
         saved_thread_boxed_vars = @thread_boxed_vars
+        saved_gc_arena_alloca = @mruby_gc_arena_alloca
 
         # Create entry block for callback
         entry = callback_func.basic_blocks.append("entry")
@@ -5599,6 +5648,7 @@ module Konpeito
         @in_block_callback = false
         @block_callback_self = nil
         @in_thread_callback = true
+        @mruby_gc_arena_alloca = nil
 
         unless captures.empty?
           declare_free
@@ -5735,6 +5785,7 @@ module Konpeito
         @block_callback_self = saved_block_callback_self
         @in_thread_callback = saved_in_thread_callback
         @thread_boxed_vars = saved_thread_boxed_vars
+        @mruby_gc_arena_alloca = saved_gc_arena_alloca
 
         callback_func
       end
@@ -8134,11 +8185,13 @@ module Konpeito
         saved_block_callback_self = @block_callback_self
         saved_rescue_escape_array = @rescue_escape_array
         saved_rescue_escape_indices = @rescue_escape_indices
+        saved_gc_arena_alloca = @mruby_gc_arena_alloca
 
         # Reset variable tracking for callback scope
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
+        @mruby_gc_arena_alloca = nil
 
         if try_hir_blocks && !try_hir_blocks.empty?
           # Structured try body: process HIR BasicBlock list (handles control flow inside try).
@@ -8231,6 +8284,7 @@ module Konpeito
         @block_callback_self = saved_block_callback_self
         @rescue_escape_array = saved_rescue_escape_array
         @rescue_escape_indices = saved_rescue_escape_indices
+        @mruby_gc_arena_alloca = saved_gc_arena_alloca
 
         callback_func
       end
@@ -8252,6 +8306,7 @@ module Konpeito
         saved_block_callback_self = @block_callback_self
         saved_rescue_escape_array = @rescue_escape_array
         saved_rescue_escape_indices = @rescue_escape_indices
+        saved_gc_arena_alloca = @mruby_gc_arena_alloca
 
         # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
         @block_callback_self = callback_func.params[0] unless escape_var_names
@@ -8264,6 +8319,7 @@ module Konpeito
         @variables = {}
         @variable_types = {}
         @variable_allocas = {}
+        @mruby_gc_arena_alloca = nil
 
         # CRuby rescue callback: (VALUE data2, VALUE exception)
         exception_val = callback_func.params[1]
@@ -8393,6 +8449,7 @@ module Konpeito
         @block_callback_self = saved_block_callback_self
         @rescue_escape_array = saved_rescue_escape_array
         @rescue_escape_indices = saved_rescue_escape_indices
+        @mruby_gc_arena_alloca = saved_gc_arena_alloca
 
         callback_func
       end
@@ -8532,6 +8589,7 @@ module Konpeito
         @block_callback_self = saved_block_callback_self
         @rescue_escape_array = saved_rescue_escape_array
         @rescue_escape_indices = saved_rescue_escape_indices
+        @mruby_gc_arena_alloca = saved_gc_arena_alloca
 
         callback_func
       end
@@ -9593,9 +9651,9 @@ module Konpeito
             value, type_tag = get_value_with_type(term.value)
             # Box the value before returning to Ruby
             boxed = convert_value(value, type_tag, :value)
-            @builder.ret(boxed)
+            emit_ret(boxed)
           else
-            @builder.ret(qnil)
+            emit_ret(qnil)
           end
         when HIR::Branch
           condition, cond_type = get_value_with_type(term.condition)

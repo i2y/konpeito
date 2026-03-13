@@ -116,8 +116,14 @@ module Konpeito
 
     def parse
       log "Resolving dependencies for #{source_file}..."
+      # Include KUI stdlib in search paths so `require "kui_gui"` / `require "kui_tui"`
+      # resolves automatically without needing `-I` for the KUI directory.
+      kui_stdlib_dir = File.expand_path("stdlib/kui", __dir__)
+      all_require_paths = @require_paths.dup
+      all_require_paths << kui_stdlib_dir unless all_require_paths.include?(kui_stdlib_dir)
+
       resolver = DependencyResolver.new(
-        base_paths: @require_paths,
+        base_paths: all_require_paths,
         verbose: verbose,
         cache_manager: @cache_manager
       )

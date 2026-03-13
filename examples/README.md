@@ -55,7 +55,7 @@ KUI wraps Clay layout engine behind a declarative DSL. Same code works for GUI (
 | `kui_counter/minimal.rb` | Minimal "Hello KUI" example |
 | `kui_dashboard/dashboard_gui.rb` | Multi-page dashboard with sidebar, cards, progress bars |
 
-Build: `konpeito build --target mruby -I lib/konpeito/stdlib/kui -o app app.rb`
+Build: `konpeito build --target mruby -o app app.rb`
 
 ## Subdirectories
 

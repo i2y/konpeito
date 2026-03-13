@@ -44,10 +44,25 @@
 | `debug_sample.rb` / `.rbs` | DWARF debug info (`konpeito build -g`) |
 | `type_error_sample.rb` / `.rbs` | Diagnostic error messages demo |
 
+## KUI — Declarative UI Framework
+
+KUI wraps Clay layout engine behind a declarative DSL. Same code works for GUI (raylib) and TUI (termbox2).
+
+| File | Description |
+|------|-------------|
+| `kui_counter/counter_gui.rb` | Counter app (GUI: Clay + Raylib) |
+| `kui_counter/counter_tui.rb` | Counter app (TUI: ClayTUI + termbox2) |
+| `kui_counter/minimal.rb` | Minimal "Hello KUI" example |
+| `kui_dashboard/dashboard_gui.rb` | Multi-page dashboard with sidebar, cards, progress bars |
+
+Build: `konpeito build --target mruby -I lib/konpeito/stdlib/kui -o app app.rb`
+
 ## Subdirectories
 
 | Directory | Description |
 |-----------|-------------|
+| `kui_counter/` | KUI counter demos (GUI + TUI) |
+| `kui_dashboard/` | KUI multi-page dashboard |
 | `http_server/` | Fiber-based HTTP server (has its own README) |
 | `json_example/` | JSON parsing with KonpeitoJSON (yyjson) |
 | `castella_ui/` | Reactive GUI framework (see [docs/castella-ui.md](../docs/castella-ui.md)) |

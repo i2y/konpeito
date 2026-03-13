@@ -665,6 +665,171 @@ Konpeito には 2D RPG 構築用のフレームワーク（`rpg_framework.rb`）
 
 `examples/mruby_dq_rpg/` に Clay UI でバトル HUD・メニュー・ショップを描画する JRPG デモがあります。
 
+### KUI — 宣言的 UI フレームワーク
+
+KUI（Konpeito UI）は、Clay + Raylib（GUI）または ClayTUI + termbox2（TUI）を統一的な宣言 API でラップする Pure Ruby DSL です。同じコードで GUI/TUI 両方のビルドが可能です。
+
+#### カウンターアプリ（GUI）
+
+```ruby
+# counter_gui.rb
+# rbs_inline: enabled
+
+require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
+
+# @rbs module AppState
+# @rbs   @s: NativeArray[Integer, 4]
+# @rbs end
+
+#: () -> Integer
+def draw
+  vpanel pad: 24, gap: 16 do
+    header pad: 12 do
+      label "Counter App", size: 28, r: 255, g: 255, b: 255
+    end
+
+    spacer
+
+    cpanel gap: 8 do
+      label "Current Count:", size: 20
+      hpanel gap: 4 do
+        spacer
+        label_num AppState.s[0], size: 36, r: 100, g: 200, b: 255
+        spacer
+      end
+    end
+
+    spacer
+
+    hpanel gap: 12 do
+      spacer
+      button "  -  ", size: 20 do
+        AppState.s[0] = AppState.s[0] - 1
+      end
+      button " Reset ", size: 20 do
+        AppState.s[0] = 0
+      end
+      button "  +  ", size: 20 do
+        AppState.s[0] = AppState.s[0] + 1
+      end
+      spacer
+    end
+
+    spacer
+    divider
+
+    footer do
+      label "KUI Framework Demo", size: 14, r: 120, g: 120, b: 140
+    end
+  end
+  return 0
+end
+
+#: () -> Integer
+def main
+  kui_init("KUI Counter", 450, 350)
+  kui_theme_dark
+  AppState.s[0] = 0
+
+  while kui_running == 1
+    kui_begin_frame
+    draw
+    kui_end_frame
+  end
+
+  kui_destroy
+  return 0
+end
+
+main
+```
+
+```bash
+konpeito build --target mruby \
+  -I lib/konpeito/stdlib/kui \
+  -o counter_gui counter_gui.rb
+./counter_gui
+```
+
+#### TUI 版への切り替え
+
+require 行を変えるだけで同じアプリをターミナル向けにビルドできます:
+
+```ruby
+# counter_tui.rb
+require_relative "../../lib/konpeito/stdlib/kui/kui_tui"
+# ... draw/main は同じコード ...
+# フレーム末尾に _kui_update_focus を追加してキーボードナビゲーションを有効化
+```
+
+```bash
+konpeito build --target mruby \
+  -I lib/konpeito/stdlib/kui \
+  -o counter_tui counter_tui.rb
+./counter_tui
+```
+
+#### KUI ウィジェット一覧
+
+| ウィジェット | 説明 |
+|---|---|
+| `vpanel(pad:, gap:) { }` | 縦方向コンテナ（幅/高さ GROW） |
+| `hpanel(pad:, gap:) { }` | 横方向コンテナ（幅 GROW、高さ FIT） |
+| `cpanel(pad:, gap:) { }` | 中央寄せコンテナ |
+| `fixed_panel(w, h, pad:) { }` | 固定サイズコンテナ |
+| `scroll_panel(pad:, gap:) { }` | スクロール対応の縦方向コンテナ |
+| `card(pad:, gap:) { }` | ボーダー付きサーフェスパネル |
+| `header(pad:) { }` | プライマリカラーのトップバー |
+| `footer(pad:) { }` | 控えめなボトムバー |
+| `sidebar(w, pad:, gap:) { }` | 固定幅の縦方向サイドバー |
+| `label(text, size:, r:, g:, b:)` | テキストラベル |
+| `label_num(value, size:, r:, g:, b:)` | 整数表示（文字列割り当てなし） |
+| `button(text, size:) { }` | クリック可能なボタン（ブロックがクリック時に実行） |
+| `menu_item(text, index, cursor, size:)` | 選択可能なメニュー項目 |
+| `spacer` | 余白を埋める |
+| `divider(r:, g:, b:)` | 水平区切り線 |
+| `progress_bar(value, max, w, h, r:, g:, b:)` | プログレスバー |
+
+#### ライフサイクルとテーマ
+
+```ruby
+kui_init("タイトル", width, height)   # ウィンドウ/ターミナルを初期化
+kui_theme_dark                        # ダークテーマ（インディゴ背景、明るいテキスト）
+kui_theme_light                       # ライトテーマ（白背景、暗いテキスト）
+
+while kui_running == 1
+  kui_begin_frame
+  # ... UI を描画 ...
+  kui_end_frame
+end
+
+kui_destroy                           # 後片付け
+```
+
+#### 入力
+
+```ruby
+key = kui_key_pressed
+# 戻り値: KUI_KEY_UP, KUI_KEY_DOWN, KUI_KEY_LEFT, KUI_KEY_RIGHT,
+#         KUI_KEY_ENTER, KUI_KEY_ESC, KUI_KEY_SPACE, KUI_KEY_TAB,
+#         KUI_KEY_BACKSPACE, または KUI_KEY_NONE
+```
+
+#### 状態管理
+
+KUI アプリはモジュール NativeArray で GC フリーな状態管理を行います:
+
+```ruby
+# @rbs module AppState
+# @rbs   @s: NativeArray[Integer, 4]
+# @rbs end
+
+AppState.s[0] = 42         # 書き込み
+x = AppState.s[0]          # 読み出し
+```
+
+`examples/kui_counter/` にカウンターデモ、`examples/kui_dashboard/` にサイドバーナビゲーション付きマルチページダッシュボードがあります。
+
 ### クロスコンパイル
 
 `zig cc` を使って他のプラットフォーム向けにクロスコンパイルできます:
@@ -691,6 +856,7 @@ konpeito build --target mruby \
 | 用途 | ライブラリ/アプリの高速化 | 配布、ゲーム |
 | raylib stdlib | 非対応 | 自動検出 |
 | Clay UI stdlib | 非対応 | 自動検出 |
+| KUI（宣言的 UI） | 非対応 | 自動検出（GUI/TUI） |
 | Thread/Mutex | 対応 | 非対応 |
 | キーワード引数 | 対応 | 対応 |
 | コンパイルキャッシュ | `.konpeito_cache/run/` | `.konpeito_cache/run/` |

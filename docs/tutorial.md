@@ -669,6 +669,171 @@ Konpeito includes an RPG framework (`rpg_framework.rb`) with helpers for buildin
 
 See `examples/mruby_dq_rpg/` for a full JRPG demo with Clay UI battle HUD, menu, and shop.
 
+### KUI — Declarative UI Framework
+
+KUI (Konpeito UI) is a pure Ruby DSL that wraps Clay + Raylib (GUI) or ClayTUI + termbox2 (TUI) behind a unified, declarative API. Write your UI once, build for either backend.
+
+#### Counter App (GUI)
+
+```ruby
+# counter_gui.rb
+# rbs_inline: enabled
+
+require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
+
+# @rbs module AppState
+# @rbs   @s: NativeArray[Integer, 4]
+# @rbs end
+
+#: () -> Integer
+def draw
+  vpanel pad: 24, gap: 16 do
+    header pad: 12 do
+      label "Counter App", size: 28, r: 255, g: 255, b: 255
+    end
+
+    spacer
+
+    cpanel gap: 8 do
+      label "Current Count:", size: 20
+      hpanel gap: 4 do
+        spacer
+        label_num AppState.s[0], size: 36, r: 100, g: 200, b: 255
+        spacer
+      end
+    end
+
+    spacer
+
+    hpanel gap: 12 do
+      spacer
+      button "  -  ", size: 20 do
+        AppState.s[0] = AppState.s[0] - 1
+      end
+      button " Reset ", size: 20 do
+        AppState.s[0] = 0
+      end
+      button "  +  ", size: 20 do
+        AppState.s[0] = AppState.s[0] + 1
+      end
+      spacer
+    end
+
+    spacer
+    divider
+
+    footer do
+      label "KUI Framework Demo", size: 14, r: 120, g: 120, b: 140
+    end
+  end
+  return 0
+end
+
+#: () -> Integer
+def main
+  kui_init("KUI Counter", 450, 350)
+  kui_theme_dark
+  AppState.s[0] = 0
+
+  while kui_running == 1
+    kui_begin_frame
+    draw
+    kui_end_frame
+  end
+
+  kui_destroy
+  return 0
+end
+
+main
+```
+
+```bash
+konpeito build --target mruby \
+  -I lib/konpeito/stdlib/kui \
+  -o counter_gui counter_gui.rb
+./counter_gui
+```
+
+#### Switching to TUI
+
+To build the same app for the terminal, change only the require line:
+
+```ruby
+# counter_tui.rb
+require_relative "../../lib/konpeito/stdlib/kui/kui_tui"
+# ... same draw/main code ...
+# Add _kui_update_focus at end of frame for keyboard navigation
+```
+
+```bash
+konpeito build --target mruby \
+  -I lib/konpeito/stdlib/kui \
+  -o counter_tui counter_tui.rb
+./counter_tui
+```
+
+#### KUI Widgets
+
+| Widget | Description |
+|---|---|
+| `vpanel(pad:, gap:) { }` | Vertical container (GROW width/height) |
+| `hpanel(pad:, gap:) { }` | Horizontal container (GROW width, FIT height) |
+| `cpanel(pad:, gap:) { }` | Centered container |
+| `fixed_panel(w, h, pad:) { }` | Fixed-size container |
+| `scroll_panel(pad:, gap:) { }` | Scrollable vertical container |
+| `card(pad:, gap:) { }` | Surface panel with border |
+| `header(pad:) { }` | Top bar with primary color |
+| `footer(pad:) { }` | Bottom bar with subtle color |
+| `sidebar(w, pad:, gap:) { }` | Fixed-width vertical sidebar |
+| `label(text, size:, r:, g:, b:)` | Text label |
+| `label_num(value, size:, r:, g:, b:)` | Integer display (no string allocation) |
+| `button(text, size:) { }` | Clickable button (block called on click) |
+| `menu_item(text, index, cursor, size:)` | Selectable menu item |
+| `spacer` | Fills available space |
+| `divider(r:, g:, b:)` | Horizontal line |
+| `progress_bar(value, max, w, h, r:, g:, b:)` | Progress bar |
+
+#### Lifecycle & Theming
+
+```ruby
+kui_init("Title", width, height)   # Initialize window/terminal
+kui_theme_dark                      # Dark theme (indigo bg, light text)
+kui_theme_light                     # Light theme (white bg, dark text)
+
+while kui_running == 1
+  kui_begin_frame
+  # ... draw UI ...
+  kui_end_frame
+end
+
+kui_destroy                         # Cleanup
+```
+
+#### Input
+
+```ruby
+key = kui_key_pressed
+# Returns: KUI_KEY_UP, KUI_KEY_DOWN, KUI_KEY_LEFT, KUI_KEY_RIGHT,
+#          KUI_KEY_ENTER, KUI_KEY_ESC, KUI_KEY_SPACE, KUI_KEY_TAB,
+#          KUI_KEY_BACKSPACE, or KUI_KEY_NONE
+```
+
+#### State Management
+
+KUI apps use module NativeArray for GC-free state:
+
+```ruby
+# @rbs module AppState
+# @rbs   @s: NativeArray[Integer, 4]
+# @rbs end
+
+AppState.s[0] = 42         # write
+x = AppState.s[0]          # read
+```
+
+See `examples/kui_counter/` for counter demos and `examples/kui_dashboard/` for a multi-page dashboard with sidebar navigation.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc`:
@@ -695,6 +860,7 @@ konpeito build --target mruby \
 | Use case | Library/app acceleration | Distribution, games |
 | raylib stdlib | Not available | Auto-detected |
 | Clay UI stdlib | Not available | Auto-detected |
+| KUI (declarative UI) | Not available | Auto-detected (GUI/TUI) |
 | Thread/Mutex | Supported | Not supported |
 | Keyword arguments | Supported | Supported |
 | Compilation caching | `.konpeito_cache/run/` | `.konpeito_cache/run/` |

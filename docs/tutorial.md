@@ -679,7 +679,7 @@ KUI (Konpeito UI) is a pure Ruby DSL that wraps Clay + Raylib (GUI) or ClayTUI +
 # counter_gui.rb
 # rbs_inline: enabled
 
-require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
+require_relative "kui_gui"
 
 # @rbs module AppState
 # @rbs   @s: NativeArray[Integer, 4]
@@ -761,7 +761,7 @@ To build the same app for the terminal, change only the require line:
 
 ```ruby
 # counter_tui.rb
-require_relative "../../lib/konpeito/stdlib/kui/kui_tui"
+require_relative "kui_tui"
 # ... same draw/main code ...
 # Add _kui_update_focus at end of frame for keyboard navigation
 ```

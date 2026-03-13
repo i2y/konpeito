@@ -675,7 +675,7 @@ KUI（Konpeito UI）は、Clay + Raylib（GUI）または ClayTUI + termbox2（T
 # counter_gui.rb
 # rbs_inline: enabled
 
-require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
+require_relative "kui_gui"
 
 # @rbs module AppState
 # @rbs   @s: NativeArray[Integer, 4]
@@ -757,7 +757,7 @@ require 行を変えるだけで同じアプリをターミナル向けにビル
 
 ```ruby
 # counter_tui.rb
-require_relative "../../lib/konpeito/stdlib/kui/kui_tui"
+require_relative "kui_tui"
 # ... draw/main は同じコード ...
 # フレーム末尾に _kui_update_focus を追加してキーボードナビゲーションを有効化
 ```

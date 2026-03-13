@@ -1,0 +1,5 @@
+# KUI TUI Backend — ClayTUI state module
+
+module KUITuiState
+  @s: NativeArray[Integer, 8]
+end

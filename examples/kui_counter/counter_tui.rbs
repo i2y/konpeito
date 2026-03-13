@@ -1,0 +1,3 @@
+module AppState
+  @s: NativeArray[Integer, 4]
+end

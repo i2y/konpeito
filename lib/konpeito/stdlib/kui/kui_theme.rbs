@@ -1,0 +1,9 @@
+# KUI Theme System — NativeArray color palette + auto-ID
+
+module KUITheme
+  @c: NativeArray[Integer, 32]
+end
+
+module KUIState
+  @ids: NativeArray[Integer, 4]
+end

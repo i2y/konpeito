@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-14
+
+### Fixed
+- **rescue handler callback crash**: `generate_rescue_handler_with_global_flag_callback` was restoring `@mruby_gc_arena_alloca` without saving it first, causing `NameError` in begin/rescue/else code generation.
+
 ## [0.7.0] - 2026-03-14
 
 ### Added

@@ -31,6 +31,7 @@ end
 #: () -> Integer
 def kui_begin_frame
   kui_reset_ids
+  KUIState.ids[1] = KUIState.ids[1] + 1
   _kui_begin_frame
   return 0
 end
@@ -342,4 +343,449 @@ end
 #: () -> Integer
 def kui_key_pressed
   return _kui_key_pressed
+end
+
+# Get character code for the current frame (printable chars).
+# Returns 0 if no character was pressed.
+#: () -> Integer
+def kui_char_pressed
+  return _kui_char_pressed
+end
+
+# Get modifier key state (bitmask).
+#: () -> Integer
+def kui_mod_pressed
+  return _kui_mod_pressed
+end
+
+# ════════════════════════════════════════════
+# Public API — Interactive Widgets (Extended)
+# ════════════════════════════════════════════
+
+# Checkbox with toggle callback.
+# Renders as [x] or [ ] followed by text.
+# checked: 1 = checked, 0 = unchecked.
+# Yields block when toggled.
+#: (String text, Integer checked, Integer size) -> Integer
+def checkbox(text, checked, size: 16)
+  id = kui_auto_id
+  _kui_open_i("_cb", id)
+  _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
+
+  hover = _kui_pointer_over_i("_cb", id)
+  if hover == 1
+    _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  end
+
+  if checked == 1
+    _kui_text_color("[x] ", size, KUITheme.c[24], KUITheme.c[25], KUITheme.c[26])
+  else
+    _kui_text_color("[ ] ", size, KUITheme.c[21], KUITheme.c[22], KUITheme.c[23])
+  end
+  _kui_text(text, size)
+  _kui_close
+
+  if _kui_was_clicked_i("_cb", id) == 1
+    yield
+  end
+  return 0
+end
+
+# Radio button.
+# Renders as (*) or ( ) followed by text.
+# index: this radio's index, selected: currently selected index.
+# Yields block when selected.
+#: (String text, Integer index, Integer selected, Integer size) -> Integer
+def radio(text, index, selected, size: 16)
+  id = kui_auto_id
+  _kui_open_i("_rb", id)
+  _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
+
+  hover = _kui_pointer_over_i("_rb", id)
+  if hover == 1
+    _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  end
+
+  if index == selected
+    _kui_text_color("(*) ", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  else
+    _kui_text_color("( ) ", size, KUITheme.c[21], KUITheme.c[22], KUITheme.c[23])
+  end
+  _kui_text(text, size)
+  _kui_close
+
+  if _kui_was_clicked_i("_rb", id) == 1
+    yield
+  end
+  return 0
+end
+
+# Toggle switch.
+# Renders as [ON] or [OFF] followed by text.
+# on: 1 = on, 0 = off.
+# Yields block when toggled.
+#: (String text, Integer on, Integer size) -> Integer
+def toggle(text, on, size: 16)
+  id = kui_auto_id
+  _kui_open_i("_tg", id)
+  _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
+
+  hover = _kui_pointer_over_i("_tg", id)
+  if hover == 1
+    _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  end
+
+  if on == 1
+    _kui_text_color("[ON]  ", size, KUITheme.c[24], KUITheme.c[25], KUITheme.c[26])
+  else
+    _kui_text_color("[OFF] ", size, KUITheme.c[27], KUITheme.c[28], KUITheme.c[29])
+  end
+  _kui_text(text, size)
+  _kui_close
+
+  if _kui_was_clicked_i("_tg", id) == 1
+    yield
+  end
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Spinner
+# ════════════════════════════════════════════
+
+# Animated spinner using frame counter.
+# Displays rotating characters: - \ | /
+#: (Integer size) -> Integer
+def spinner(size: 16)
+  frame = KUIState.ids[0] + KUIState.ids[1]
+  phase = (frame / 8) % 4
+  if phase == 0
+    _kui_text_color("-", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  end
+  if phase == 1
+    _kui_text_color("\\", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  end
+  if phase == 2
+    _kui_text_color("|", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  end
+  if phase == 3
+    _kui_text_color("/", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  end
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Text Input
+# ════════════════════════════════════════════
+
+# Single-line text input widget.
+# buf_id: text buffer ID (0-7), managed by C-side buffer.
+# Handles keyboard input (characters, backspace, delete, cursor movement).
+# Returns KUI_KEY_ENTER when submitted, 0 otherwise.
+#: (Integer buf_id, Integer w, Integer size) -> Integer
+def text_input(buf_id, w: 40, size: 16)
+  id = kui_auto_id
+
+  # Handle character input
+  ch = _kui_char_pressed
+  if ch >= 32
+    if ch <= 126
+      _kui_textbuf_putchar(buf_id, ch)
+    end
+  end
+
+  # Handle special keys
+  key = kui_key_pressed
+  if key == KUI_KEY_BACKSPACE
+    _kui_textbuf_backspace(buf_id)
+  end
+  if key == KUI_KEY_DELETE
+    _kui_textbuf_delete(buf_id)
+  end
+  if key == KUI_KEY_LEFT
+    _kui_textbuf_cursor_left(buf_id)
+  end
+  if key == KUI_KEY_RIGHT
+    _kui_textbuf_cursor_right(buf_id)
+  end
+  if key == KUI_KEY_HOME
+    _kui_textbuf_cursor_home(buf_id)
+  end
+  if key == KUI_KEY_END
+    _kui_textbuf_cursor_end(buf_id)
+  end
+
+  # Render text box
+  _kui_open_i("_ti", id)
+  _kui_layout(0, 4, 4, 2, 2, 0, 2, w, 0, 0, 0, 2)
+  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+
+  # Render buffer content with cursor
+  buf_len = _kui_textbuf_len(buf_id)
+  cur = _kui_textbuf_cursor_pos(buf_id)
+
+  if buf_len > 0
+    if cur > 0
+      _kui_textbuf_render_range(buf_id, 0, cur, size, KUITheme.c[3], KUITheme.c[4], KUITheme.c[5])
+    end
+  end
+
+  # Cursor character (blinking)
+  blink = (KUIState.ids[0] / 15) % 2
+  if blink == 0
+    _kui_text_color("|", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  else
+    _kui_text_color(" ", size, KUITheme.c[3], KUITheme.c[4], KUITheme.c[5])
+  end
+
+  if buf_len > 0
+    if cur < buf_len
+      _kui_textbuf_render_range(buf_id, cur, buf_len, size, KUITheme.c[3], KUITheme.c[4], KUITheme.c[5])
+    end
+  end
+
+  _kui_close
+
+  if key == KUI_KEY_ENTER
+    return KUI_KEY_ENTER
+  end
+  return 0
+end
+
+# Clear a text input buffer.
+#: (Integer buf_id) -> Integer
+def kui_textbuf_clear(buf_id)
+  _kui_textbuf_clear(buf_id)
+  return 0
+end
+
+# Get text input buffer length.
+#: (Integer buf_id) -> Integer
+def kui_textbuf_len(buf_id)
+  return _kui_textbuf_len(buf_id)
+end
+
+# ════════════════════════════════════════════
+# Public API — Selectable List
+# ════════════════════════════════════════════
+
+# Selectable list container with keyboard navigation.
+# selected: current selection index (user manages this).
+# count: total number of items.
+# visible: max visible items (0 = show all).
+# Yields block for each visible item — user should render items inside.
+#: (Integer selected, Integer count, Integer visible) -> Integer
+def selectable_list(selected, count, visible: 0)
+  id = kui_auto_id
+  _kui_open_i("_sl", id)
+  _kui_layout(1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0)
+  _kui_scroll_v
+  yield
+  _kui_close
+  return 0
+end
+
+# Single item in a selectable list.
+# index: this item's index, selected: currently selected index.
+# Renders with highlight when selected.
+#: (String text, Integer index, Integer selected, Integer size) -> Integer
+def list_item(text, index, selected, size: 16)
+  id = kui_auto_id
+  _kui_open_i("_li", id)
+  _kui_layout(0, 8, 8, 2, 2, 4, 1, 0, 0, 0, 0, 2)
+
+  if index == selected
+    _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+    _kui_text_color(text, size, 255, 255, 255)
+  else
+    hover = _kui_pointer_over_i("_li", id)
+    if hover == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    end
+    _kui_text(text, size)
+  end
+
+  _kui_close
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Table / Data Grid
+# ════════════════════════════════════════════
+
+# Table header row.
+#: (Integer pad) -> Integer
+def table_header(pad: 4)
+  id = kui_auto_id
+  _kui_open_i("_th", id)
+  _kui_layout(0, pad, pad, pad, pad, 0, 1, 0, 0, 0, 0, 2)
+  _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  yield
+  _kui_close
+  return 0
+end
+
+# Table body row. Alternates background color based on row index.
+#: (Integer row_index, Integer pad) -> Integer
+def table_row(row_index, pad: 4)
+  id = kui_auto_id
+  _kui_open_i("_tr", id)
+  _kui_layout(0, pad, pad, pad, pad, 0, 1, 0, 0, 0, 0, 2)
+
+  even = row_index % 2
+  if even == 0
+    _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  end
+
+  yield
+  _kui_close
+  return 0
+end
+
+# Table cell with fixed width.
+#: (Integer w, Integer pad) -> Integer
+def table_cell(w, pad: 4)
+  id = kui_auto_id
+  _kui_open_i("_tc", id)
+  _kui_layout(0, pad, pad, 0, 0, 0, 2, w, 0, 0, 0, 2)
+  yield
+  _kui_close
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Modal / Dialog
+# ════════════════════════════════════════════
+
+# Modal overlay — centered floating panel.
+# Renders as a floating element with semi-transparent backdrop.
+#: (Integer w, Integer h) -> Integer
+def modal(w, h)
+  id = kui_auto_id
+
+  # Backdrop (full-screen semi-transparent)
+  _kui_open_i("_mbg", id)
+  _kui_layout(1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 2, 2)
+  _kui_set_bg(0, 0, 0)
+  _kui_floating(0, 0, 100)
+
+  # Modal content
+  _kui_open_i("_mdl", id)
+  _kui_layout(1, 16, 16, 16, 16, 8, 2, w, 2, h, 0, 0)
+  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+  yield
+  _kui_close
+
+  _kui_close
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Tabs
+# ════════════════════════════════════════════
+
+# Tab bar — horizontal row of tab buttons.
+# active: currently active tab index.
+# Yields block where user should call tab_button for each tab.
+#: (Integer active) -> Integer
+def tab_bar(active)
+  id = kui_auto_id
+  _kui_open_i("_tb", id)
+  _kui_layout(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0)
+  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  yield
+  _kui_close
+  return 0
+end
+
+# Single tab button. Yields when clicked.
+#: (String text, Integer index, Integer active, Integer size) -> Integer
+def tab_button(text, index, active, size: 16)
+  id = kui_auto_id
+  _kui_open_i("_tbt", id)
+  _kui_layout(0, 12, 12, 6, 6, 0, 0, 0, 0, 0, 2, 2)
+
+  if index == active
+    _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+    _kui_text_color(text, size, 255, 255, 255)
+  else
+    hover = _kui_pointer_over_i("_tbt", id)
+    if hover == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    end
+    _kui_text(text, size)
+  end
+
+  _kui_close
+
+  if _kui_was_clicked_i("_tbt", id) == 1
+    yield
+  end
+  return 0
+end
+
+# Tab content panel — shows content for the active tab.
+#: (Integer pad, Integer gap) -> Integer
+def tab_content(pad: 8, gap: 4)
+  id = kui_auto_id
+  _kui_open_i("_tcp", id)
+  _kui_layout(1, pad, pad, pad, pad, gap, 1, 0, 1, 0, 0, 0)
+  yield
+  _kui_close
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Status Bar
+# ════════════════════════════════════════════
+
+# Status bar — fixed at bottom with left/center/right segments.
+#: (Integer pad) -> Integer
+def status_bar(pad: 4)
+  id = kui_auto_id
+  _kui_open_i("_stb", id)
+  _kui_layout(0, pad, pad, pad, pad, 0, 1, 0, 0, 0, 0, 2)
+  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+  yield
+  _kui_close
+  return 0
+end
+
+# Status bar left segment.
+#: () -> Integer
+def status_left
+  id = kui_auto_id
+  _kui_open_i("_stl", id)
+  _kui_layout(0, 4, 4, 0, 0, 4, 0, 0, 0, 0, 0, 2)
+  yield
+  _kui_close
+  return 0
+end
+
+# Status bar center segment (spacer + content + spacer).
+#: () -> Integer
+def status_center
+  spacer
+  id = kui_auto_id
+  _kui_open_i("_stc", id)
+  _kui_layout(0, 4, 4, 0, 0, 4, 0, 0, 0, 0, 2, 2)
+  yield
+  _kui_close
+  spacer
+  return 0
+end
+
+# Status bar right segment.
+#: () -> Integer
+def status_right
+  spacer
+  id = kui_auto_id
+  _kui_open_i("_str", id)
+  _kui_layout(0, 4, 4, 0, 0, 4, 0, 0, 0, 0, 0, 2)
+  yield
+  _kui_close
+  return 0
 end

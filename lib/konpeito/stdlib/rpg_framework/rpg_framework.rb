@@ -666,3 +666,887 @@ def fw_clay_spacer(id)
   Clay.close
   return 0
 end
+
+# ════════════════════════════════════════════
+# Section 12: Timer System
+# ════════════════════════════════════════════
+#
+# Manages delay/repeat timers using NativeArray slots.
+# Timer array layout (stride 3): [remaining, interval, active]
+# remaining: frames until trigger (counts down)
+# interval:  0 = one-shot, >0 = repeat interval
+# active:    1 = running, 0 = inactive
+
+# Set a one-shot timer. Triggers after `frames` game frames.
+# arr = NativeArray, base = starting index (stride 3).
+#: (Integer base, Integer frames) -> Integer
+def fw_timer_set(arr, base, frames)
+  arr[base] = frames
+  arr[base + 1] = 0
+  arr[base + 2] = 1
+  return 0
+end
+
+# Set a repeating timer. Triggers every `interval` frames.
+#: (Integer base, Integer interval) -> Integer
+def fw_timer_repeat(arr, base, interval)
+  arr[base] = interval
+  arr[base + 1] = interval
+  arr[base + 2] = 1
+  return 0
+end
+
+# Tick one timer slot. Returns 1 if timer just triggered this frame.
+#: (Integer base) -> Integer
+def fw_timer_tick(arr, base)
+  if arr[base + 2] == 0
+    return 0
+  end
+  arr[base] = arr[base] - 1
+  if arr[base] <= 0
+    interval = arr[base + 1]
+    if interval > 0
+      arr[base] = interval
+    else
+      arr[base + 2] = 0
+    end
+    return 1
+  end
+  return 0
+end
+
+# Check if timer is active.
+#: (Integer base) -> Integer
+def fw_timer_active(arr, base)
+  return arr[base + 2]
+end
+
+# Cancel a timer.
+#: (Integer base) -> Integer
+def fw_timer_cancel(arr, base)
+  arr[base + 2] = 0
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 13: Debug Overlay
+# ════════════════════════════════════════════
+#
+# FPS display and debug info rendering.
+
+# Draw FPS counter at position (x, y).
+#: (Integer x, Integer y, Integer sz, Integer col) -> Integer
+def fw_draw_fps(x, y, sz, col)
+  fps = Raylib.get_fps
+  fw_draw_txt("FPS:", x, y, sz, col)
+  fw_draw_num(x + sz * 3, y, fps, sz, col)
+  return 0
+end
+
+# Draw a debug label + value pair.
+#: (String label_text, Integer val, Integer x, Integer y, Integer sz, Integer col) -> Integer
+def fw_draw_debug_val(label_text, val, x, y, sz, col)
+  fw_draw_txt(label_text, x, y, sz, col)
+  sp = sz * 6 / 10
+  label_w = 10 * sp
+  fw_draw_num(x + label_w, y, val, sz, col)
+  return 0
+end
+
+# Draw collision rectangle outline (debug visualization).
+#: (Integer x, Integer y, Integer w, Integer h, Integer col) -> Integer
+def fw_draw_collision_rect(x, y, w, h, col)
+  Raylib.draw_rectangle_lines(x, y, w, h, col)
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 14: Tween / Easing Library
+# ════════════════════════════════════════════
+#
+# All values in 1000x fixed-point.
+# t = progress [0, 1000], output = [0, 1000]
+#
+# Usage: actual = start + (end - start) * fw_ease_XXX(t) / 1000
+
+# Linear (identity).
+#: (Integer t) -> Integer
+def fw_ease_linear(t)
+  return t
+end
+
+# Quadratic ease-in: t^2
+#: (Integer t) -> Integer
+def fw_ease_in_quad(t)
+  return t * t / 1000
+end
+
+# Quadratic ease-out: 1 - (1-t)^2
+#: (Integer t) -> Integer
+def fw_ease_out_quad(t)
+  inv = 1000 - t
+  return 1000 - inv * inv / 1000
+end
+
+# Quadratic ease-in-out
+#: (Integer t) -> Integer
+def fw_ease_in_out_quad(t)
+  if t < 500
+    return 2 * t * t / 1000
+  end
+  inv = 1000 - t
+  return 1000 - 2 * inv * inv / 1000
+end
+
+# Cubic ease-in: t^3
+#: (Integer t) -> Integer
+def fw_ease_in_cubic(t)
+  return t * t / 1000 * t / 1000
+end
+
+# Cubic ease-out: 1 - (1-t)^3
+#: (Integer t) -> Integer
+def fw_ease_out_cubic(t)
+  inv = 1000 - t
+  return 1000 - inv * inv / 1000 * inv / 1000
+end
+
+# Cubic ease-in-out
+#: (Integer t) -> Integer
+def fw_ease_in_out_cubic(t)
+  if t < 500
+    return 4 * t * t / 1000 * t / 1000
+  end
+  inv = 1000 - t
+  return 1000 - 4 * inv * inv / 1000 * inv / 1000
+end
+
+# Bounce ease-out (approximation using piecewise quadratic)
+#: (Integer t) -> Integer
+def fw_ease_out_bounce(t)
+  if t < 363
+    return 7563 * t / 1000 * t / 1000000
+  end
+  if t < 727
+    t2 = t - 545
+    return 7563 * t2 / 1000 * t2 / 1000000 + 750
+  end
+  if t < 909
+    t2 = t - 818
+    return 7563 * t2 / 1000 * t2 / 1000000 + 937
+  end
+  t2 = t - 955
+  return 7563 * t2 / 1000 * t2 / 1000000 + 984
+end
+
+# Bounce ease-in
+#: (Integer t) -> Integer
+def fw_ease_in_bounce(t)
+  return 1000 - fw_ease_out_bounce(1000 - t)
+end
+
+# Elastic ease-out (simplified approximation)
+#: (Integer t) -> Integer
+def fw_ease_out_elastic(t)
+  if t == 0
+    return 0
+  end
+  if t >= 1000
+    return 1000
+  end
+  # Simplified: overshoot + decay
+  progress = t * t / 1000
+  overshoot = 0
+  if t > 600
+    overshoot = (t - 600) * 80 / 400
+    if t > 800
+      overshoot = 80 - (t - 800) * 80 / 200
+    end
+  end
+  result = progress + overshoot
+  if result > 1000
+    result = 1000
+  end
+  return result
+end
+
+# Apply tween: interpolate from start to end using easing progress t [0, 1000].
+# Returns interpolated value.
+#: (Integer start_val, Integer end_val, Integer eased_t) -> Integer
+def fw_tween(start_val, end_val, eased_t)
+  return start_val + (end_val - start_val) * eased_t / 1000
+end
+
+# Advance a tween slot. Returns progress [0, 1000].
+# Uses 2 consecutive G.s[] slots: [current_frame, total_frames].
+#: (Integer base_idx) -> Integer
+def fw_tween_advance(base_idx)
+  frame = G.s[base_idx]
+  total = G.s[base_idx + 1]
+  if total <= 0
+    return 1000
+  end
+  if frame < total
+    G.s[base_idx] = frame + 1
+  end
+  return G.s[base_idx] * 1000 / total
+end
+
+# Start a tween. Set frame=0, total=duration.
+#: (Integer base_idx, Integer duration_frames) -> Integer
+def fw_tween_start(base_idx, duration_frames)
+  G.s[base_idx] = 0
+  G.s[base_idx + 1] = duration_frames
+  return 0
+end
+
+# Check if tween is complete.
+#: (Integer base_idx) -> Integer
+def fw_tween_done(base_idx)
+  if G.s[base_idx] >= G.s[base_idx + 1]
+    return 1
+  end
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 15: Screen Shake
+# ════════════════════════════════════════════
+#
+# Camera2D random offset. Uses G.s[] slots:
+# base_idx: [shake_remaining, shake_intensity, offset_x, offset_y]
+
+# Start screen shake. duration = frames, intensity = max pixel offset.
+#: (Integer base_idx, Integer duration, Integer intensity) -> Integer
+def fw_shake_start(base_idx, duration, intensity)
+  G.s[base_idx] = duration
+  G.s[base_idx + 1] = intensity
+  G.s[base_idx + 2] = 0
+  G.s[base_idx + 3] = 0
+  return 0
+end
+
+# Update shake (call once per frame). Sets offset_x/offset_y in slots.
+#: (Integer base_idx) -> Integer
+def fw_shake_update(base_idx)
+  remaining = G.s[base_idx]
+  if remaining <= 0
+    G.s[base_idx + 2] = 0
+    G.s[base_idx + 3] = 0
+    return 0
+  end
+  intensity = G.s[base_idx + 1]
+  # Decay intensity as remaining decreases
+  current_intensity = intensity * remaining / G.s[base_idx]
+  if current_intensity < 1
+    current_intensity = 1
+  end
+  G.s[base_idx + 2] = fw_rand(current_intensity * 2 + 1) - current_intensity
+  G.s[base_idx + 3] = fw_rand(current_intensity * 2 + 1) - current_intensity
+  G.s[base_idx] = remaining - 1
+  return 0
+end
+
+# Get shake X offset.
+#: (Integer base_idx) -> Integer
+def fw_shake_x(base_idx)
+  return G.s[base_idx + 2]
+end
+
+# Get shake Y offset.
+#: (Integer base_idx) -> Integer
+def fw_shake_y(base_idx)
+  return G.s[base_idx + 3]
+end
+
+# Check if shake is active.
+#: (Integer base_idx) -> Integer
+def fw_shake_active(base_idx)
+  if G.s[base_idx] > 0
+    return 1
+  end
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 16: Scene Transition Effects
+# ════════════════════════════════════════════
+#
+# Fade/slide transitions using tween system.
+# Uses G.s[] slots: [phase, progress, total_frames, next_scene]
+# phase: 0=idle, 1=fading out, 2=fading in
+
+# Start a scene transition.
+#: (Integer base_idx, Integer next_scene, Integer duration) -> Integer
+def fw_transition_start(base_idx, next_scene, duration)
+  G.s[base_idx] = 1
+  G.s[base_idx + 1] = 0
+  G.s[base_idx + 2] = duration
+  G.s[base_idx + 3] = next_scene
+  return 0
+end
+
+# Update transition (call once per frame).
+# Returns: 0=idle, 1=fading out, 2=scene switch point, 3=fading in
+#: (Integer base_idx) -> Integer
+def fw_transition_update(base_idx)
+  phase = G.s[base_idx]
+  if phase == 0
+    return 0
+  end
+  total = G.s[base_idx + 2]
+  G.s[base_idx + 1] = G.s[base_idx + 1] + 1
+  progress = G.s[base_idx + 1]
+  if phase == 1
+    if progress >= total
+      G.s[base_idx] = 3
+      G.s[base_idx + 1] = 0
+      return 2
+    end
+    return 1
+  end
+  if phase == 3
+    if progress >= total
+      G.s[base_idx] = 0
+      G.s[base_idx + 1] = 0
+      return 0
+    end
+    return 3
+  end
+  return 0
+end
+
+# Get transition alpha (0-255) for fade overlay.
+#: (Integer base_idx) -> Integer
+def fw_transition_alpha(base_idx)
+  phase = G.s[base_idx]
+  if phase == 0
+    return 0
+  end
+  progress = G.s[base_idx + 1]
+  total = G.s[base_idx + 2]
+  if total <= 0
+    return 0
+  end
+  if phase == 1
+    return progress * 255 / total
+  end
+  if phase == 3
+    return 255 - progress * 255 / total
+  end
+  return 0
+end
+
+# Get the next scene ID stored in the transition.
+#: (Integer base_idx) -> Integer
+def fw_transition_next_scene(base_idx)
+  return G.s[base_idx + 3]
+end
+
+# Draw fade overlay (full-screen black rectangle with alpha).
+#: (Integer alpha, Integer w, Integer h) -> Integer
+def fw_draw_fade(alpha, w, h)
+  if alpha > 0
+    col = fw_rgba(0, 0, 0, alpha)
+    Raylib.draw_rectangle(0, 0, w, h, col)
+  end
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 17: Simple Physics
+# ════════════════════════════════════════════
+#
+# AABB collision, velocity, gravity.
+# All values in 100x fixed-point (1 pixel = 100 units).
+# Entity layout (stride 8): [x, y, vx, vy, w, h, flags, _reserved]
+
+# Initialize a physics entity.
+#: (Integer base, Integer x100, Integer y100, Integer w100, Integer h100) -> Integer
+def fw_phys_init(arr, base, x100, y100, w100, h100)
+  arr[base] = x100
+  arr[base + 1] = y100
+  arr[base + 2] = 0
+  arr[base + 3] = 0
+  arr[base + 4] = w100
+  arr[base + 5] = h100
+  arr[base + 6] = 1
+  arr[base + 7] = 0
+  return 0
+end
+
+# Apply velocity to position.
+#: (Integer base) -> Integer
+def fw_phys_move(arr, base)
+  arr[base] = arr[base] + arr[base + 2]
+  arr[base + 1] = arr[base + 1] + arr[base + 3]
+  return 0
+end
+
+# Apply gravity (add to vy).
+#: (Integer base, Integer gravity100) -> Integer
+def fw_phys_gravity(arr, base, gravity100)
+  arr[base + 3] = arr[base + 3] + gravity100
+  return 0
+end
+
+# Apply friction (multiply velocity by factor/100).
+# factor=90 means 90% of velocity retained each frame.
+#: (Integer base, Integer factor) -> Integer
+def fw_phys_friction(arr, base, factor)
+  arr[base + 2] = arr[base + 2] * factor / 100
+  arr[base + 3] = arr[base + 3] * factor / 100
+  return 0
+end
+
+# AABB collision check between two entities. Returns 1 if overlapping.
+#: (Integer base_a, Integer base_b) -> Integer
+def fw_phys_aabb(arr, base_a, base_b)
+  ax = arr[base_a]
+  ay = arr[base_a + 1]
+  aw = arr[base_a + 4]
+  ah = arr[base_a + 5]
+  bx = arr[base_b]
+  by = arr[base_b + 1]
+  bw = arr[base_b + 4]
+  bh = arr[base_b + 5]
+  if ax + aw <= bx
+    return 0
+  end
+  if bx + bw <= ax
+    return 0
+  end
+  if ay + ah <= by
+    return 0
+  end
+  if by + bh <= ay
+    return 0
+  end
+  return 1
+end
+
+# Clamp entity position within bounds.
+#: (Integer base, Integer min_x, Integer min_y, Integer max_x, Integer max_y) -> Integer
+def fw_phys_clamp_pos(arr, base, min_x, min_y, max_x, max_y)
+  w = arr[base + 4]
+  h = arr[base + 5]
+  if arr[base] < min_x
+    arr[base] = min_x
+    arr[base + 2] = 0
+  end
+  if arr[base] + w > max_x
+    arr[base] = max_x - w
+    arr[base + 2] = 0
+  end
+  if arr[base + 1] < min_y
+    arr[base + 1] = min_y
+    arr[base + 3] = 0
+  end
+  if arr[base + 1] + h > max_y
+    arr[base + 1] = max_y - h
+    arr[base + 3] = 0
+  end
+  return 0
+end
+
+# Get pixel X from 100x fixed-point.
+#: (Integer base) -> Integer
+def fw_phys_px(arr, base)
+  return arr[base] / 100
+end
+
+# Get pixel Y from 100x fixed-point.
+#: (Integer base) -> Integer
+def fw_phys_py(arr, base)
+  return arr[base + 1] / 100
+end
+
+# ════════════════════════════════════════════
+# Section 18: Particle System
+# ════════════════════════════════════════════
+#
+# NativeArray pool with stride 6: [x, y, vx, vy, life, max_life]
+# All positions in 100x fixed-point.
+
+# Emit a particle at given position with velocity.
+# Scans pool for inactive slot (life <= 0). Returns slot index or -1.
+#: (Integer count, Integer stride, Integer x100, Integer y100, Integer vx, Integer vy, Integer life) -> Integer
+def fw_particle_emit(arr, count, stride, x100, y100, vx, vy, life)
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base + 4] <= 0
+      arr[base] = x100
+      arr[base + 1] = y100
+      arr[base + 2] = vx
+      arr[base + 3] = vy
+      arr[base + 4] = life
+      arr[base + 5] = life
+      return i
+    end
+    i = i + 1
+  end
+  return 0 - 1
+end
+
+# Update all particles: apply velocity, gravity, decrement life.
+#: (Integer count, Integer stride, Integer gravity100) -> Integer
+def fw_particle_update(arr, count, stride, gravity100)
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base + 4] > 0
+      arr[base] = arr[base] + arr[base + 2]
+      arr[base + 1] = arr[base + 1] + arr[base + 3]
+      arr[base + 3] = arr[base + 3] + gravity100
+      arr[base + 4] = arr[base + 4] - 1
+    end
+    i = i + 1
+  end
+  return 0
+end
+
+# Draw all active particles as small rectangles.
+#: (Integer count, Integer stride, Integer sz, Integer col) -> Integer
+def fw_particle_draw(arr, count, stride, sz, col)
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base + 4] > 0
+      px = arr[base] / 100
+      py = arr[base + 1] / 100
+      Raylib.draw_rectangle(px, py, sz, sz, col)
+    end
+    i = i + 1
+  end
+  return 0
+end
+
+# Count active particles.
+#: (Integer count, Integer stride) -> Integer
+def fw_particle_active_count(arr, count, stride)
+  n = 0
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base + 4] > 0
+      n = n + 1
+    end
+    i = i + 1
+  end
+  return n
+end
+
+# ════════════════════════════════════════════
+# Section 19: Grid / Tile Utilities
+# ════════════════════════════════════════════
+
+# Convert grid position to pixel position.
+#: (Integer grid_pos, Integer tile_size) -> Integer
+def fw_grid_to_px(grid_pos, tile_size)
+  return grid_pos * tile_size
+end
+
+# Convert pixel position to grid position.
+#: (Integer px, Integer tile_size) -> Integer
+def fw_px_to_grid(px, tile_size)
+  if tile_size <= 0
+    return 0
+  end
+  return px / tile_size
+end
+
+# Get array index from grid (x, y) coordinates. row-major layout.
+#: (Integer gx, Integer gy, Integer cols) -> Integer
+def fw_grid_index(gx, gy, cols)
+  return gy * cols + gx
+end
+
+# Check if grid position is within bounds.
+#: (Integer gx, Integer gy, Integer cols, Integer rows) -> Integer
+def fw_grid_in_bounds(gx, gy, cols, rows)
+  if gx < 0
+    return 0
+  end
+  if gy < 0
+    return 0
+  end
+  if gx >= cols
+    return 0
+  end
+  if gy >= rows
+    return 0
+  end
+  return 1
+end
+
+# Check walkability at grid position. 0 = walkable tile.
+#: (Integer gx, Integer gy, Integer cols, Integer rows) -> Integer
+def fw_grid_walkable(map_arr, gx, gy, cols, rows)
+  if fw_grid_in_bounds(gx, gy, cols, rows) == 0
+    return 0
+  end
+  idx = gy * cols + gx
+  if map_arr[idx] == 0
+    return 1
+  end
+  return 0
+end
+
+# Manhattan distance between two grid points.
+#: (Integer x1, Integer y1, Integer x2, Integer y2) -> Integer
+def fw_manhattan(x1, y1, x2, y2)
+  dx = x2 - x1
+  if dx < 0
+    dx = 0 - dx
+  end
+  dy = y2 - y1
+  if dy < 0
+    dy = 0 - dy
+  end
+  return dx + dy
+end
+
+# Chebyshev distance (max of dx, dy). Used for 8-directional movement.
+#: (Integer x1, Integer y1, Integer x2, Integer y2) -> Integer
+def fw_chebyshev(x1, y1, x2, y2)
+  dx = x2 - x1
+  if dx < 0
+    dx = 0 - dx
+  end
+  dy = y2 - y1
+  if dy < 0
+    dy = 0 - dy
+  end
+  if dx > dy
+    return dx
+  end
+  return dy
+end
+
+# ════════════════════════════════════════════
+# Section 20: Object Pool
+# ════════════════════════════════════════════
+#
+# Generic object pool using NativeArray with configurable stride.
+# Slot 0 of each entry = active flag (1=active, 0=free).
+
+# Allocate a slot from pool. Returns base index or -1 if full.
+#: (Integer count, Integer stride) -> Integer
+def fw_pool_alloc(arr, count, stride)
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base] == 0
+      arr[base] = 1
+      return base
+    end
+    i = i + 1
+  end
+  return 0 - 1
+end
+
+# Free a pool slot.
+#: (Integer base) -> Integer
+def fw_pool_free(arr, base)
+  arr[base] = 0
+  return 0
+end
+
+# Check if slot is active.
+#: (Integer base) -> Integer
+def fw_pool_active(arr, base)
+  return arr[base]
+end
+
+# Count active slots in pool.
+#: (Integer count, Integer stride) -> Integer
+def fw_pool_count(arr, count, stride)
+  n = 0
+  i = 0
+  while i < count
+    base = i * stride
+    if arr[base] == 1
+      n = n + 1
+    end
+    i = i + 1
+  end
+  return n
+end
+
+# ════════════════════════════════════════════
+# Section 21: FSM — Finite State Machine (G10)
+# ════════════════════════════════════════════
+#
+# State management using G.s[] slots:
+# base_idx: [current_state, prev_state, frames_in_state, just_entered]
+
+# Initialize FSM with starting state.
+#: (Integer base_idx, Integer initial_state) -> Integer
+def fw_fsm_init(base_idx, initial_state)
+  G.s[base_idx] = initial_state
+  G.s[base_idx + 1] = initial_state
+  G.s[base_idx + 2] = 0
+  G.s[base_idx + 3] = 1
+  return 0
+end
+
+# Transition to a new state.
+#: (Integer base_idx, Integer new_state) -> Integer
+def fw_fsm_set(base_idx, new_state)
+  current = G.s[base_idx]
+  if current != new_state
+    G.s[base_idx + 1] = current
+    G.s[base_idx] = new_state
+    G.s[base_idx + 2] = 0
+    G.s[base_idx + 3] = 1
+  end
+  return 0
+end
+
+# Update FSM (call once per frame). Increments frame counter.
+#: (Integer base_idx) -> Integer
+def fw_fsm_tick(base_idx)
+  G.s[base_idx + 2] = G.s[base_idx + 2] + 1
+  G.s[base_idx + 3] = 0
+  return 0
+end
+
+# Get current state.
+#: (Integer base_idx) -> Integer
+def fw_fsm_state(base_idx)
+  return G.s[base_idx]
+end
+
+# Get previous state.
+#: (Integer base_idx) -> Integer
+def fw_fsm_prev(base_idx)
+  return G.s[base_idx + 1]
+end
+
+# Get frames spent in current state.
+#: (Integer base_idx) -> Integer
+def fw_fsm_frames(base_idx)
+  return G.s[base_idx + 2]
+end
+
+# Check if just entered current state (1 on first frame only).
+#: (Integer base_idx) -> Integer
+def fw_fsm_just_entered(base_idx)
+  return G.s[base_idx + 3]
+end
+
+# ════════════════════════════════════════════
+# Section 22: Parallax Scrolling (G11)
+# ════════════════════════════════════════════
+
+# Calculate parallax offset for a layer.
+# camera_x = camera position, factor = speed factor (100 = same speed, 50 = half).
+#: (Integer camera_x, Integer factor) -> Integer
+def fw_parallax(camera_x, factor)
+  return camera_x * factor / 100
+end
+
+# ════════════════════════════════════════════
+# Section 23: Save / Load (G12)
+# ════════════════════════════════════════════
+#
+# NativeArray serialization to/from text file.
+# Format: one integer per line.
+# Requires KonpeitoShell module (auto-detected).
+
+# Save NativeArray range to file (start inclusive, count = number of slots).
+#: (String path, Integer start, Integer count) -> Integer
+def fw_save(arr, path, start, count)
+  content = ""
+  i = 0
+  while i < count
+    val = arr[start + i]
+    content = content + val.to_s + "\n"
+    i = i + 1
+  end
+  KonpeitoShell.write_file(path, content)
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Section 24: Gamepad Abstraction (G13)
+# ════════════════════════════════════════════
+#
+# Unified input: keyboard + gamepad. Returns direction or button state.
+
+# Check if gamepad is connected.
+#: (Integer pad_id) -> Integer
+def fw_gamepad_available(pad_id)
+  return Raylib.gamepad_available?(pad_id)
+end
+
+# Get unified direction input from keyboard OR gamepad.
+# Returns: 0=down, 1=up, 2=left, 3=right, -1=none
+#: (Integer pad_id) -> Integer
+def fw_input_direction(pad_id)
+  # Keyboard first
+  dir = fw_get_direction
+  if dir >= 0
+    return dir
+  end
+  # Gamepad D-pad
+  if Raylib.gamepad_available?(pad_id) == 1
+    if Raylib.gamepad_button_down?(pad_id, 2) == 1
+      return 2
+    end
+    if Raylib.gamepad_button_down?(pad_id, 3) == 1
+      return 3
+    end
+    if Raylib.gamepad_button_down?(pad_id, 1) == 1
+      return 0
+    end
+    if Raylib.gamepad_button_down?(pad_id, 4) == 1
+      return 1
+    end
+    # Left stick with deadzone (30%)
+    axis_x = Raylib.gamepad_axis_value(pad_id, 0)
+    axis_y = Raylib.gamepad_axis_value(pad_id, 1)
+    if axis_x < -30
+      return 2
+    end
+    if axis_x > 30
+      return 3
+    end
+    if axis_y > 30
+      return 0
+    end
+    if axis_y < -30
+      return 1
+    end
+  end
+  return 0 - 1
+end
+
+# Check unified confirm button (keyboard Enter/Space OR gamepad A).
+#: (Integer pad_id) -> Integer
+def fw_input_confirm(pad_id)
+  if fw_confirm_pressed == 1
+    return 1
+  end
+  if Raylib.gamepad_available?(pad_id) == 1
+    if Raylib.gamepad_button_pressed?(pad_id, 7) == 1
+      return 1
+    end
+  end
+  return 0
+end
+
+# Check unified cancel button (keyboard Escape/X OR gamepad B).
+#: (Integer pad_id) -> Integer
+def fw_input_cancel(pad_id)
+  if fw_cancel_pressed == 1
+    return 1
+  end
+  if Raylib.gamepad_available?(pad_id) == 1
+    if Raylib.gamepad_button_pressed?(pad_id, 8) == 1
+      return 1
+    end
+  end
+  return 0
+end

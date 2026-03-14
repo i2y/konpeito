@@ -54,6 +54,22 @@ KUI wraps Clay layout engine behind a declarative DSL. Same code works for GUI (
 | `kui_counter/counter_tui.rb` | Counter app (TUI: ClayTUI + termbox2) |
 | `kui_counter/minimal.rb` | Minimal "Hello KUI" example |
 | `kui_dashboard/dashboard_gui.rb` | Multi-page dashboard with sidebar, cards, progress bars |
+| `kui_form_demo/form_demo.rb` | Text input, checkbox, radio, toggle showcase |
+| `kui_tabs_demo/tabs_demo.rb` | Tab bar, table, modal, selectable list, status bar |
+| `kui_showcase/showcase_gui.rb` | Rich GUI app demonstrating all KUI widgets (4-tab layout) |
+
+Build: `konpeito build --target mruby -o app app.rb`
+
+## Game Framework Demos
+
+| Directory | Description |
+|-----------|-------------|
+| `game_showcase/` | "Coin Dash" platformer (physics, particles, tween, FSM, parallax) |
+| `mruby_dq_rpg/` | JRPG-style demo (tilemap, NPC, battle, menu, shop) |
+| `mruby_physics_demo/` | Platformer physics demo |
+| `mruby_sprite_demo/` | Sprite animation demo |
+| `mruby_rpg_demo/` | Tilemap + camera scrolling demo |
+| `mruby_space_invaders/` | Space Invaders clone |
 
 Build: `konpeito build --target mruby -o app app.rb`
 
@@ -63,6 +79,9 @@ Build: `konpeito build --target mruby -o app app.rb`
 |-----------|-------------|
 | `kui_counter/` | KUI counter demos (GUI + TUI) |
 | `kui_dashboard/` | KUI multi-page dashboard |
+| `kui_form_demo/` | KUI form widgets demo |
+| `kui_tabs_demo/` | KUI tabs, table, modal demo |
+| `kui_showcase/` | KUI full widget showcase (GUI) |
 | `http_server/` | Fiber-based HTTP server (has its own README) |
 | `json_example/` | JSON parsing with KonpeitoJSON (yyjson) |
 | `castella_ui/` | Reactive GUI framework (see [docs/castella-ui.md](../docs/castella-ui.md)) |
@@ -78,6 +97,10 @@ cd examples && ruby -r ./hello -e ""
 # JVM backend (standalone .jar)
 konpeito build --target jvm examples/jvm_hello.rb
 java -jar examples/jvm_hello.jar
+
+# mruby backend (standalone executable — KUI / game demos)
+konpeito build --target mruby -o examples/kui_showcase/showcase_gui examples/kui_showcase/showcase_gui.rb
+./examples/kui_showcase/showcase_gui
 
 # With explicit RBS types
 konpeito build examples/typed_example.rb

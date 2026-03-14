@@ -552,20 +552,26 @@ konpeito run --target mruby simple_ui.rb
 
 Clay provides 40+ functions covering element construction (`open`/`close`/`layout`/`bg`/`border`), text rendering with TTF fonts, scrolling, floating elements, pointer hit-testing, and bulk rendering. See the [API Reference](api-reference.md) for the full list.
 
-### RPG Framework
+### Game Framework
 
-Konpeito includes an RPG framework (`rpg_framework.rb`) that provides helper functions for building 2D RPGs with the mruby backend. The framework covers:
+Konpeito includes a game framework (`game_framework.rb`) that provides helper functions for building 2D games with the mruby backend. The framework covers:
 
 - **Tilemap rendering** — `fw_draw_tilemap` draws multi-layer tile maps with camera offset
 - **Sprite animation** — `fw_draw_sprite` handles sprite sheets with directional animation
 - **Scene management** — `fw_push_scene` / `fw_pop_scene` with scene stack
 - **NPC system** — `fw_draw_npc` / `fw_update_npc` for wandering NPCs
 - **Text display** — `fw_draw_text_box` for RPG-style message windows
+- **Tween/easing** — linear, quad, cubic, bounce, elastic with `fw_tween_start` / `fw_tween_advance`
+- **Screen shake** — `fw_shake_start` / `fw_shake_update` with intensity control
+- **Simple physics** — AABB collision, gravity, friction with `fw_phys_init` / `fw_phys_update`
+- **Particle system** — `fw_particle_emit` / `fw_particle_update` / `fw_particle_draw`
+- **FSM** — `fw_fsm_init` / `fw_fsm_transition` / `fw_fsm_update` for state machines
+- **Timer, parallax, object pool, grid/tile utilities, debug overlay, gamepad, save/load**
 - **Clay UI helpers** — `fw_clay_rpg_window`, `fw_clay_bar`, `fw_clay_num`, `fw_clay_menu_item` for building menus, status panels, and HUD elements with Clay
 
-The framework uses `module G` with `NativeArray` globals for game state (no heap allocation). Include it with `require_relative "./rpg_framework"`.
+The framework uses `module G` with `NativeArray` globals for game state (no heap allocation). Include it with `require_relative "./game_framework"`.
 
-See `examples/mruby_dq_rpg/` for a full JRPG demo (tilemap, NPCs, turn-based battle, menu, shop) that uses Clay UI for battle HUD, menu, and shop interfaces.
+See `examples/mruby_dq_rpg/` for a JRPG-style demo and `examples/game_showcase/` for a platformer demo showcasing physics, particles, tween, FSM, and parallax.
 
 ### Cross-compilation
 

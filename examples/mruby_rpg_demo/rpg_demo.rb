@@ -8,7 +8,7 @@
 #
 # Controls: Arrow keys / WASD — Move, SPACE — Interact, ESC — Quit
 
-require_relative "./rpg_framework"
+require_relative "./game_framework"
 
 # @rbs module World
 # @rbs   @tilemap: NativeArray[Integer, 1600]

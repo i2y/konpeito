@@ -655,15 +655,19 @@ Clay.render_raylib  # raylib で全コマンドをレンダリング
 
 `examples/mruby_clay_ui/` にサイドバーレイアウトのデモと Memory Match カードゲームがあります。
 
-### RPG フレームワーク
+### ゲームフレームワーク
 
-Konpeito には 2D RPG 構築用のフレームワーク（`rpg_framework.rb`）が含まれています:
+Konpeito には 2D ゲーム構築用のフレームワーク（`game_framework.rb`）が含まれています:
 
 - タイルマップ描画、スプライトアニメーション、シーン管理、NPC システム、テキストボックス
+- Tween/イージング（linear, quad, cubic, bounce, elastic）、画面シェイク、シーン遷移
+- 簡易物理演算（AABB、重力、摩擦）、パーティクルシステム、オブジェクトプール
+- FSM（有限状態マシン）、タイマーシステム、パララックススクロール
+- グリッド/タイルユーティリティ、デバッグオーバーレイ（FPS、衝突矩形）、ゲームパッド抽象化、セーブ/ロード
 - Clay UI ヘルパー: `fw_clay_rpg_window`, `fw_clay_bar`, `fw_clay_num`, `fw_clay_menu_item`
 - `module G` + `NativeArray` グローバルによるゼロアロケーションのゲーム状態管理
 
-`examples/mruby_dq_rpg/` に Clay UI でバトル HUD・メニュー・ショップを描画する JRPG デモがあります。
+`examples/mruby_dq_rpg/` に JRPG デモ、`examples/game_showcase/` に物理・パーティクル・Tween・FSM・パララックスを活用したプラットフォーマーデモがあります。
 
 ### KUI — 宣言的 UI フレームワーク
 

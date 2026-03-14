@@ -19,12 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Delete/Home/End/PgUp/PgDn/F1-F12 key constants
 - **KUI text buffer API**: `kui_textbuf_copy`, `kui_textbuf_render` for dynamic content
 - **KUI GUI backend**: Full GUI implementations for all new widgets (Clay+Raylib)
-- **RPG framework expansion**: tween/easing (linear, quad, cubic, bounce, elastic),
+- **Game framework expansion**: tween/easing (linear, quad, cubic, bounce, elastic),
   screen shake, scene transitions (fade), FSM, timer system, parallax scrolling,
   simple physics (AABB, gravity, friction), particle system, object pool, grid/tile
   utilities, debug overlay (FPS, collision rects), gamepad abstraction, save/load
-- **Game showcase demo**: "Coin Dash" score-attack platformer demonstrating full
-  RPG framework API (physics, particles, tween, FSM, parallax, Camera2D, etc.)
+- **Game showcase demo**: "Coin Dash" score-attack platformer demonstrating
+  game framework API (physics, particles, tween, FSM, parallax, Camera2D)
 - **Physics demo**: Platformer demo showcasing NativeArray-based physics
 - **KUI form demo**: Text input, checkbox, radio, toggle showcase
 - **KUI tabs demo**: Tab bar, table, modal dialog, selectable list, status bar showcase
@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **KUI declarative UI framework**: Pure Ruby DSL for building GUI/TUI apps with a single codebase. Wraps Clay+Raylib (GUI) or ClayTUI (TUI). Widgets: `vpanel`, `hpanel`, `fixed_panel`, `label`, `label_num`, `button`, `menu_item`, `spacer`, `divider`, `progress_bar`. Theme system and unified key event abstraction.
 - **ClayTUI stdlib**: Terminal UI backend using Clay layout engine + termbox2 rendering. Auto-detected via `ClayTUI` module reference.
 - **KonpeitoShell stdlib**: Shell execution (`exec`, `system`), environment variables (`getenv`, `setenv`), and file I/O (`read_file`, `write_file`, `append_file`, `file_exists`) for mruby backend.
-- **RPG framework stdlib**: Reusable RPG game components (tilemap, sprites, camera, battle system) for raylib-based games.
+- **Game framework stdlib**: Reusable 2D game components (tilemap, sprites, camera, battle system) for raylib-based games.
 - **Stdlib auto-detection expansion**: `KonpeitoJSON`, `KonpeitoHTTP`, `KonpeitoCrypto`, `KonpeitoCompression` added to `STDLIB_MODULE_MAP` for automatic RBS injection when referenced in source code.
 - **KUI auto-path resolution**: `require "kui_gui"` / `require "kui_tui"` works without `-I` flags — KUI stdlib directory is automatically included in compiler search paths.
 - **KUI example apps**: Counter (GUI + TUI), minimal hello, multi-page dashboard with sidebar navigation.

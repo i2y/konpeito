@@ -1,8 +1,8 @@
 # rbs_inline: enabled
-require_relative "./rpg_framework"
+require_relative "./game_framework"
 
 # ═══════════════════════════════════════════════════════════════
-# Konpeito Sprite Demo (using RPG Framework)
+# Konpeito Sprite Demo (using Game Framework)
 # Demonstrates: texture loading, spritesheet animation,
 #   tilemap rendering, smooth character movement, chest interaction
 # ═══════════════════════════════════════════════════════════════

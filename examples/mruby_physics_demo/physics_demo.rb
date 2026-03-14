@@ -19,7 +19,7 @@
 #
 # rbs_inline: enabled
 
-require_relative "../../lib/konpeito/stdlib/rpg_framework/rpg_framework"
+require_relative "../../lib/konpeito/stdlib/game_framework/game_framework"
 
 # @rbs module G
 # @rbs   @s: NativeArray[Integer, 64]

@@ -659,15 +659,19 @@ Key concepts:
 
 See `examples/mruby_clay_ui/` for a full sidebar layout demo and a Memory Match card game.
 
-### RPG Framework
+### Game Framework
 
-Konpeito includes an RPG framework (`rpg_framework.rb`) with helpers for building 2D RPGs:
+Konpeito includes a game framework (`game_framework.rb`) with helpers for building 2D games:
 
 - Tilemap rendering, sprite animation, scene management, NPC system, text boxes
+- Tween/easing (linear, quad, cubic, bounce, elastic), screen shake, scene transitions
+- Simple physics (AABB, gravity, friction), particle system, object pool
+- FSM (finite state machine), timer system, parallax scrolling
+- Grid/tile utilities, debug overlay (FPS, collision rects), gamepad abstraction, save/load
 - Clay UI helpers: `fw_clay_rpg_window`, `fw_clay_bar`, `fw_clay_num`, `fw_clay_menu_item`
 - Uses `module G` with `NativeArray` globals for zero-allocation game state
 
-See `examples/mruby_dq_rpg/` for a full JRPG demo with Clay UI battle HUD, menu, and shop.
+See `examples/mruby_dq_rpg/` for a JRPG-style demo and `examples/game_showcase/` for a platformer demo showcasing physics, particles, tween, FSM, and parallax.
 
 ### KUI — Declarative UI Framework
 

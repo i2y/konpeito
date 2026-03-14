@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Konpeito RPG Framework - Reusable helpers for 2D games
+# Konpeito Game Framework - Reusable helpers for 2D games
 #
 # Usage: place in same directory as game file, then:
-#   require_relative "./rpg_framework"
+#   require_relative "./game_framework"
 #
 # Requires module G with @s: NativeArray[Integer, 32+] declared.
 # Framework uses G.s[28..31] for internal state:

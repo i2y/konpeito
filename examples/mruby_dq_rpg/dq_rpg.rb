@@ -9,7 +9,7 @@
 #
 # Controls: Arrow/WASD — Move, Z/SPACE — Confirm, X — Cancel/Menu
 
-require_relative "./rpg_framework"
+require_relative "./game_framework"
 
 # ── State Modules ──
 # All mutable game state stored in fixed-size unboxed i64 arrays (LLVM globals).
@@ -31,7 +31,7 @@ require_relative "./rpg_framework"
 # 14:menu_mode 15:dlg_active 16:dlg_id 17:dlg_line 18:dlg_timer
 # 19:enc_steps 20:msg_active 21:msg_timer 22:msg_id 23:title_cur
 # 24:shop_cur 25:blink 26:map_w 27:map_h
-# 28-31: reserved by rpg_framework (28:prev_scene 29:rng_seed 30:font_id+1 31:frame_counter)
+# 28-31: reserved by game_framework (28:prev_scene 29:rng_seed 30:font_id+1 31:frame_counter)
 # 32: Clay font ID
 # Scenes: 0=title 1=town 2=overworld 3=cave 4=battle 5=menu 6=shop 7=inn 8=gameover 9=victory
 

@@ -78,13 +78,17 @@ module Konpeito
           # Generate license file alongside the executable
           generate_license_file
         ensure
-          # Clean up intermediate files
+          # Clean up intermediate files (keep .ll for debugging if ENV['KONPEITO_KEEP_IR'] is set)
+          keep_ir = ENV['KONPEITO_KEEP_IR']
           all_temps = [ir_file, obj_file, init_c_file, init_obj_file, helpers_obj_file] + extra_obj_files
           all_temps.each do |f|
+            next if keep_ir && f&.end_with?('.ll')
             FileUtils.rm_f(f) if f && File.exist?(f)
           end
           # Also clean optimized IR if it was generated
-          FileUtils.rm_f("#{ir_file}.opt.ll") if File.exist?("#{ir_file}.opt.ll")
+          unless keep_ir
+            FileUtils.rm_f("#{ir_file}.opt.ll") if File.exist?("#{ir_file}.opt.ll")
+          end
         end
       end
 

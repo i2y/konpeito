@@ -1597,6 +1597,24 @@ module Konpeito
             boxed_value = func.params[i + 1]  # +1 to skip self
           type_tag = @variable_types[param.name]
 
+          if type_tag == :native_array
+            # NativeArray parameter: the VALUE is actually a pointer address (via ptr2int).
+            # Reconstruct the pointer and store directly in @variables (not alloca).
+            # generate_load_local reads NativeArray values from @variables, not allocas.
+            array_ptr = @builder.int2ptr(boxed_value, ptr_type, "#{param.name}_ptr")
+            @variables[param.name] = array_ptr
+            # Propagate element type and length from the parameter's HM type if available
+            if param.type.is_a?(TypeChecker::Types::NativeArrayType)
+              elem_type = param.type.element_type
+              @variables["#{param.name}_len"] = LLVM::Int64.from_i(param.type.size || 0)
+              if elem_type && elem_type != :Int64 && elem_type != :Float64
+                @native_array_class_types ||= {}
+                @native_array_class_types[param.name] = elem_type
+              end
+            end
+            next
+          end
+
           # Unbox parameter if it's a numeric type
           value_to_store = case type_tag
           when :i64
@@ -2004,6 +2022,10 @@ module Konpeito
           [LLVM::Int64, :i64]
         elsif float_type?(ruby_type)
           [LLVM::Double, :double]
+        elsif ruby_type.is_a?(TypeChecker::Types::NativeArrayType)
+          # NativeArray parameters: alloca holds VALUE (i64) but type is :native_array
+          # The actual pointer is reconstructed from the VALUE in parameter setup
+          [value_type, :native_array]
         else
           [value_type, :value]
         end
@@ -3028,6 +3050,9 @@ module Konpeito
           @builder.select(is_true, qtrue, qfalse)
         when [:native_class, :value]
           # NativeClass struct pointer to VALUE (i64)
+          @builder.ptr2int(value, LLVM::Int64)
+        when [:native_array, :value]
+          # NativeArray pointer to VALUE (i64) — encode pointer address as integer
           @builder.ptr2int(value, LLVM::Int64)
         when [:i64, :double]
           @builder.si2fp(value, LLVM::Double)
@@ -7369,6 +7394,15 @@ module Konpeito
         if hir_value.is_a?(HIR::LoadLocal)
           var_name = hir_value.result_var || hir_value.var.name
           type_tag = @variable_types[var_name]
+          return type_tag if type_tag == :i64 || type_tag == :double
+        end
+
+        # Check @variable_types for any instruction with result_var.
+        # This is critical for sub-expressions (e.g. NativeArrayGet, Call) whose
+        # HIR type may be an unresolved TypeVar but whose actual generated type
+        # is correctly tracked in @variable_types.
+        if hir_value.is_a?(HIR::Instruction) && hir_value.result_var
+          type_tag = @variable_types[hir_value.result_var]
           return type_tag if type_tag == :i64 || type_tag == :double
         end
 

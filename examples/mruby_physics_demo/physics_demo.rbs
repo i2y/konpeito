@@ -1,0 +1,7 @@
+module G
+  @s: NativeArray[Integer, 64]
+end
+
+module Particles
+  @p: NativeArray[Integer, 384]
+end

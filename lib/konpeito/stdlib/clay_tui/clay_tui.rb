@@ -109,4 +109,45 @@ module ClayTUI
 
   # Color Helper
   def self.rgb(r, g, b) end
+
+  # Extended Key Constants
+  def self.key_delete() end
+  def self.key_home() end
+  def self.key_end() end
+  def self.key_pgup() end
+  def self.key_pgdn() end
+  def self.key_f1() end
+  def self.key_f2() end
+  def self.key_f3() end
+  def self.key_f4() end
+  def self.key_f5() end
+  def self.key_f6() end
+  def self.key_f7() end
+  def self.key_f8() end
+  def self.key_f9() end
+  def self.key_f10() end
+  def self.key_f11() end
+  def self.key_f12() end
+
+  # Modifier Keys
+  def self.event_mod() end
+  def self.mod_alt() end
+  def self.mod_ctrl() end
+  def self.mod_shift() end
+
+  # Text Buffer System
+  def self.textbuf_clear(id) end
+  def self.textbuf_copy(dst, src) end
+  def self.textbuf_putchar(id, ch) end
+  def self.textbuf_backspace(id) end
+  def self.textbuf_delete(id) end
+  def self.textbuf_cursor_left(id) end
+  def self.textbuf_cursor_right(id) end
+  def self.textbuf_cursor_home(id) end
+  def self.textbuf_cursor_end(id) end
+  def self.textbuf_len(id) end
+  def self.textbuf_cursor(id) end
+  def self.textbuf_render(id, r, g, b) end
+  def self.textbuf_render_range(id, start_pos, end_pos, r, g, b) end
+  def self.text_char(ch, r, g, b) end
 end

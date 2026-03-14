@@ -26,6 +26,16 @@
 # @rbs   @ids: NativeArray[Integer, 4]
 # @rbs end
 
+# Text buffer state for text_input widgets (8 buffers x 256 chars)
+# @rbs module KUITextBuf
+# @rbs   @b: NativeArray[Integer, 2048]
+# @rbs   @s: NativeArray[Integer, 24]
+# @rbs end
+# KUITextBuf.s slots per buffer (id * 3 + offset):
+#   [0] = length
+#   [1] = cursor position
+#   [2] = max length (set on init)
+
 # ── Dark Theme ──
 
 #: () -> Integer

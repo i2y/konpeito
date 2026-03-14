@@ -85,10 +85,14 @@ def _kui_begin_frame
     end
 
     if etype == 3
-      # Mouse event
+      # Mouse event — only register click on button press, not release
+      mkey = ClayTUI.event_key
       KUITuiState.s[3] = ClayTUI.event_mouse_x
       KUITuiState.s[4] = ClayTUI.event_mouse_y
-      KUITuiState.s[5] = 1
+      # TB_KEY_MOUSE_RELEASE = 0xffff - 26 = 65509
+      if mkey != 65509
+        KUITuiState.s[5] = 1
+      end
       ClayTUI.set_pointer(KUITuiState.s[3] * 1.0, KUITuiState.s[4] * 1.0, 1)
     end
   end
@@ -302,6 +306,13 @@ def _kui_register_focusable
   return 0
 end
 
+# Set focus to the current focusable element (click-to-focus)
+#: () -> Integer
+def _kui_set_focus_current
+  KUITuiState.s[0] = KUITuiState.s[1]
+  return 0
+end
+
 # Check if the current focusable element is focused
 #: () -> Integer
 def _kui_is_focused
@@ -345,7 +356,183 @@ def _kui_key_pressed
   if key == ClayTUI.key_backspace
     return KUI_KEY_BACKSPACE
   end
+  if key == ClayTUI.key_delete
+    return KUI_KEY_DELETE
+  end
+  if key == ClayTUI.key_home
+    return KUI_KEY_HOME
+  end
+  if key == ClayTUI.key_end
+    return KUI_KEY_END
+  end
+  if key == ClayTUI.key_pgup
+    return KUI_KEY_PGUP
+  end
+  if key == ClayTUI.key_pgdn
+    return KUI_KEY_PGDN
+  end
+  if key == ClayTUI.key_f1
+    return KUI_KEY_F1
+  end
+  if key == ClayTUI.key_f2
+    return KUI_KEY_F2
+  end
+  if key == ClayTUI.key_f3
+    return KUI_KEY_F3
+  end
+  if key == ClayTUI.key_f4
+    return KUI_KEY_F4
+  end
+  if key == ClayTUI.key_f5
+    return KUI_KEY_F5
+  end
+  if key == ClayTUI.key_f6
+    return KUI_KEY_F6
+  end
+  if key == ClayTUI.key_f7
+    return KUI_KEY_F7
+  end
+  if key == ClayTUI.key_f8
+    return KUI_KEY_F8
+  end
+  if key == ClayTUI.key_f9
+    return KUI_KEY_F9
+  end
+  if key == ClayTUI.key_f10
+    return KUI_KEY_F10
+  end
+  if key == ClayTUI.key_f11
+    return KUI_KEY_F11
+  end
+  if key == ClayTUI.key_f12
+    return KUI_KEY_F12
+  end
   return KUI_KEY_NONE
+end
+
+# Get character code from current frame's key event.
+# Returns 0 if no character was pressed.
+#: () -> Integer
+def _kui_char_pressed
+  etype = KUITuiState.s[7]
+  if etype == 1
+    ch = ClayTUI.event_ch
+    if ch > 0
+      return ch
+    end
+  end
+  return 0
+end
+
+# Get modifier key state (bitmask: ALT=1, CTRL=2, SHIFT=4).
+#: () -> Integer
+def _kui_mod_pressed
+  etype = KUITuiState.s[7]
+  if etype == 1
+    return ClayTUI.event_mod
+  end
+  return 0
+end
+
+# ── Text Buffer (delegates to C) ──
+
+#: (Integer id) -> Integer
+def _kui_textbuf_clear(id)
+  ClayTUI.textbuf_clear(id)
+  return 0
+end
+
+#: (Integer dst, Integer src) -> Integer
+def _kui_textbuf_copy(dst, src)
+  ClayTUI.textbuf_copy(dst, src)
+  return 0
+end
+
+#: (Integer id, Integer ch) -> Integer
+def _kui_textbuf_putchar(id, ch)
+  ClayTUI.textbuf_putchar(id, ch)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_backspace(id)
+  ClayTUI.textbuf_backspace(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_delete(id)
+  ClayTUI.textbuf_delete(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_left(id)
+  ClayTUI.textbuf_cursor_left(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_right(id)
+  ClayTUI.textbuf_cursor_right(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_home(id)
+  ClayTUI.textbuf_cursor_home(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_end(id)
+  ClayTUI.textbuf_cursor_end(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_len(id)
+  return ClayTUI.textbuf_len(id)
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_pos(id)
+  return ClayTUI.textbuf_cursor(id)
+end
+
+# Render text buffer as Clay text (GC-free via C string pool).
+#: (Integer id, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_textbuf_render(id, size, r, g, b)
+  ClayTUI.textbuf_render(id, r, g, b)
+  return 0
+end
+
+# Render text buffer range [start, end) as Clay text.
+#: (Integer id, Integer start_pos, Integer end_pos, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_textbuf_render_range(id, start_pos, end_pos, size, r, g, b)
+  ClayTUI.textbuf_render_range(id, start_pos, end_pos, r, g, b)
+  return 0
+end
+
+# Render single character by code (GC-free via C).
+#: (Integer ch, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_text_char(ch, size, r, g, b)
+  ClayTUI.text_char(ch, r, g, b)
+  return 0
+end
+
+# ── Floating / Scroll DSL helpers ──
+
+#: (Integer ox, Integer oy, Integer z) -> Integer
+def _kui_floating(ox, oy, z)
+  ClayTUI.floating(ox * 1.0, oy * 1.0, z, 0, 0)
+  return 0
+end
+
+#: () -> Integer
+def _kui_scroll_v
+  ClayTUI.scroll(0, 1)
+  return 0
 end
 
 # ── Focus Navigation ──

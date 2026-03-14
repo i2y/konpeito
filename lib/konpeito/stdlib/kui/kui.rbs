@@ -44,10 +44,48 @@ module TopLevel
   # Convenience
   def kui_load_font: (String path, Integer size) -> Integer
   def kui_key_pressed: () -> Integer
+  def kui_char_pressed: () -> Integer
+  def kui_mod_pressed: () -> Integer
 
   # Theme
   def kui_theme_dark: () -> Integer
   def kui_theme_light: () -> Integer
   def kui_reset_ids: () -> Integer
   def kui_auto_id: () -> Integer
+
+  # Interactive (Extended)
+  def checkbox: (String text, Integer checked, ?size: Integer) { () -> void } -> Integer
+  def radio: (String text, Integer index, Integer selected, ?size: Integer) { () -> void } -> Integer
+  def toggle: (String text, Integer on, ?size: Integer) { () -> void } -> Integer
+
+  # Spinner
+  def spinner: (?size: Integer) -> Integer
+
+  # Text Input
+  def text_input: (Integer buf_id, ?w: Integer, ?size: Integer) -> Integer
+  def kui_textbuf_clear: (Integer buf_id) -> Integer
+  def kui_textbuf_len: (Integer buf_id) -> Integer
+
+  # Selectable List
+  def selectable_list: (Integer selected, Integer count, ?visible: Integer) { () -> void } -> Integer
+  def list_item: (String text, Integer index, Integer selected, ?size: Integer) -> Integer
+
+  # Table
+  def table_header: (?pad: Integer) { () -> void } -> Integer
+  def table_row: (Integer row_index, ?pad: Integer) { () -> void } -> Integer
+  def table_cell: (Integer w, ?pad: Integer) { () -> void } -> Integer
+
+  # Modal
+  def modal: (Integer w, Integer h) { () -> void } -> Integer
+
+  # Tabs
+  def tab_bar: (Integer active) { () -> void } -> Integer
+  def tab_button: (String text, Integer index, Integer active, ?size: Integer) { () -> void } -> Integer
+  def tab_content: (?pad: Integer, ?gap: Integer) { () -> void } -> Integer
+
+  # Status Bar
+  def status_bar: (?pad: Integer) { () -> void } -> Integer
+  def status_left: () { () -> void } -> Integer
+  def status_center: () { () -> void } -> Integer
+  def status_right: () { () -> void } -> Integer
 end

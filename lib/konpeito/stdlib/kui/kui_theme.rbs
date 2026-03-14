@@ -7,3 +7,8 @@ end
 module KUIState
   @ids: NativeArray[Integer, 4]
 end
+
+module KUITextBuf
+  @b: NativeArray[Integer, 2048]
+  @s: NativeArray[Integer, 24]
+end

@@ -234,7 +234,194 @@ def _kui_key_pressed
   if Raylib.key_pressed?(Raylib.key_space) == 1
     return KUI_KEY_SPACE
   end
+  if Raylib.key_pressed?(Raylib.key_tab) == 1
+    return KUI_KEY_TAB
+  end
+  if Raylib.key_pressed?(Raylib.key_backspace) == 1
+    return KUI_KEY_BACKSPACE
+  end
+  if Raylib.key_pressed?(Raylib.key_delete) == 1
+    return KUI_KEY_DELETE
+  end
+  if Raylib.key_pressed?(Raylib.key_home) == 1
+    return KUI_KEY_HOME
+  end
+  if Raylib.key_pressed?(Raylib.key_end) == 1
+    return KUI_KEY_END
+  end
+  if Raylib.key_pressed?(Raylib.key_page_up) == 1
+    return KUI_KEY_PGUP
+  end
+  if Raylib.key_pressed?(Raylib.key_page_down) == 1
+    return KUI_KEY_PGDN
+  end
+  if Raylib.key_pressed?(Raylib.key_f1) == 1
+    return KUI_KEY_F1
+  end
+  if Raylib.key_pressed?(Raylib.key_f2) == 1
+    return KUI_KEY_F2
+  end
+  if Raylib.key_pressed?(Raylib.key_f3) == 1
+    return KUI_KEY_F3
+  end
+  if Raylib.key_pressed?(Raylib.key_f4) == 1
+    return KUI_KEY_F4
+  end
+  if Raylib.key_pressed?(Raylib.key_f5) == 1
+    return KUI_KEY_F5
+  end
+  if Raylib.key_pressed?(Raylib.key_f6) == 1
+    return KUI_KEY_F6
+  end
+  if Raylib.key_pressed?(Raylib.key_f7) == 1
+    return KUI_KEY_F7
+  end
+  if Raylib.key_pressed?(Raylib.key_f8) == 1
+    return KUI_KEY_F8
+  end
+  if Raylib.key_pressed?(Raylib.key_f9) == 1
+    return KUI_KEY_F9
+  end
+  if Raylib.key_pressed?(Raylib.key_f10) == 1
+    return KUI_KEY_F10
+  end
+  if Raylib.key_pressed?(Raylib.key_f11) == 1
+    return KUI_KEY_F11
+  end
+  if Raylib.key_pressed?(Raylib.key_f12) == 1
+    return KUI_KEY_F12
+  end
   return KUI_KEY_NONE
+end
+
+# Get character code from current frame.
+# Returns 0 if no character was pressed.
+#: () -> Integer
+def _kui_char_pressed
+  return Raylib.get_char_pressed
+end
+
+# Get modifier key state (bitmask: SHIFT=1, CTRL=2, ALT=4).
+#: () -> Integer
+def _kui_mod_pressed
+  mod = 0
+  if Raylib.key_down?(Raylib.key_left_shift) == 1
+    mod = mod + 1
+  end
+  if Raylib.key_down?(Raylib.key_right_shift) == 1
+    mod = mod + 1
+  end
+  if Raylib.key_down?(Raylib.key_left_control) == 1
+    mod = mod + 2
+  end
+  if Raylib.key_down?(Raylib.key_right_control) == 1
+    mod = mod + 2
+  end
+  if Raylib.key_down?(Raylib.key_left_alt) == 1
+    mod = mod + 4
+  end
+  if Raylib.key_down?(Raylib.key_right_alt) == 1
+    mod = mod + 4
+  end
+  return mod
+end
+
+# ── Text Buffer (delegates to Clay C) ──
+
+#: (Integer id) -> Integer
+def _kui_textbuf_clear(id)
+  Clay.textbuf_clear(id)
+  return 0
+end
+
+#: (Integer id, Integer ch) -> Integer
+def _kui_textbuf_putchar(id, ch)
+  Clay.textbuf_putchar(id, ch)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_backspace(id)
+  Clay.textbuf_backspace(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_delete(id)
+  Clay.textbuf_delete(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_left(id)
+  Clay.textbuf_cursor_left(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_right(id)
+  Clay.textbuf_cursor_right(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_home(id)
+  Clay.textbuf_cursor_home(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_end(id)
+  Clay.textbuf_cursor_end(id)
+  return 0
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_len(id)
+  return Clay.textbuf_len(id)
+end
+
+#: (Integer id) -> Integer
+def _kui_textbuf_cursor_pos(id)
+  return Clay.textbuf_cursor(id)
+end
+
+# Render text buffer as Clay text (GC-free via C string pool).
+#: (Integer id, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_textbuf_render(id, size, r, g, b)
+  fid = KUITheme.c[31]
+  Clay.textbuf_render(id, fid, size, r * 1.0, g * 1.0, b * 1.0)
+  return 0
+end
+
+# Render text buffer range [start, end) as Clay text.
+#: (Integer id, Integer start_pos, Integer end_pos, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_textbuf_render_range(id, start_pos, end_pos, size, r, g, b)
+  fid = KUITheme.c[31]
+  Clay.textbuf_render_range(id, start_pos, end_pos, fid, size, r * 1.0, g * 1.0, b * 1.0)
+  return 0
+end
+
+# Render single character by code (GC-free via C).
+#: (Integer ch, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_text_char(ch, size, r, g, b)
+  fid = KUITheme.c[31]
+  Clay.text_char(ch, fid, size, r * 1.0, g * 1.0, b * 1.0)
+  return 0
+end
+
+# ── Floating / Scroll DSL helpers ──
+
+#: (Integer ox, Integer oy, Integer z) -> Integer
+def _kui_floating(ox, oy, z)
+  Clay.floating(ox * 1.0, oy * 1.0, z, 0, 0)
+  return 0
+end
+
+#: () -> Integer
+def _kui_scroll_v
+  Clay.scroll(0, 1)
+  return 0
 end
 
 # ── Font ──

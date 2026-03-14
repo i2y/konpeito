@@ -149,6 +149,7 @@ end
 #: (String text, Integer size) -> Integer
 def button(text, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_btn", id)
   _kui_layout(0, 8, 8, 4, 4, 0, 0, 0, 0, 0, 2, 2)
 
@@ -157,7 +158,11 @@ def button(text, size: 16)
   if hover == 1
     _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
   else
-    _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+    if focused == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    else
+      _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+    end
   end
   _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
 
@@ -168,6 +173,7 @@ def button(text, size: 16)
   if _kui_was_clicked_i("_btn", id) == 1
     yield
   end
+  _kui_register_focusable
   return 0
 end
 
@@ -369,12 +375,17 @@ end
 #: (String text, Integer checked, Integer size) -> Integer
 def checkbox(text, checked, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_cb", id)
   _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
 
   hover = _kui_pointer_over_i("_cb", id)
   if hover == 1
     _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  else
+    if focused == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    end
   end
 
   if checked == 1
@@ -388,6 +399,7 @@ def checkbox(text, checked, size: 16)
   if _kui_was_clicked_i("_cb", id) == 1
     yield
   end
+  _kui_register_focusable
   return 0
 end
 
@@ -398,12 +410,17 @@ end
 #: (String text, Integer index, Integer selected, Integer size) -> Integer
 def radio(text, index, selected, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_rb", id)
   _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
 
   hover = _kui_pointer_over_i("_rb", id)
   if hover == 1
     _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  else
+    if focused == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    end
   end
 
   if index == selected
@@ -417,6 +434,7 @@ def radio(text, index, selected, size: 16)
   if _kui_was_clicked_i("_rb", id) == 1
     yield
   end
+  _kui_register_focusable
   return 0
 end
 
@@ -427,12 +445,17 @@ end
 #: (String text, Integer on, Integer size) -> Integer
 def toggle(text, on, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_tg", id)
   _kui_layout(0, 4, 8, 2, 2, 4, 0, 0, 0, 0, 0, 2)
 
   hover = _kui_pointer_over_i("_tg", id)
   if hover == 1
     _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+  else
+    if focused == 1
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    end
   end
 
   if on == 1
@@ -446,6 +469,7 @@ def toggle(text, on, size: 16)
   if _kui_was_clicked_i("_tg", id) == 1
     yield
   end
+  _kui_register_focusable
   return 0
 end
 
@@ -486,40 +510,58 @@ end
 def text_input(buf_id, w: 40, size: 16)
   id = kui_auto_id
 
-  # Handle character input
-  ch = _kui_char_pressed
-  if ch >= 32
-    if ch <= 126
-      _kui_textbuf_putchar(buf_id, ch)
-    end
-  end
+  # Check if this text input is focused
+  focused = _kui_is_focused
 
-  # Handle special keys
-  key = kui_key_pressed
-  if key == KUI_KEY_BACKSPACE
-    _kui_textbuf_backspace(buf_id)
+  # Click-to-focus: if mouse clicked on this element, set focus to it
+  # Must be before _kui_register_focusable so s[1] still holds this element's index
+  if _kui_was_clicked_i("_ti", id) == 1
+    _kui_set_focus_current
   end
-  if key == KUI_KEY_DELETE
-    _kui_textbuf_delete(buf_id)
-  end
-  if key == KUI_KEY_LEFT
-    _kui_textbuf_cursor_left(buf_id)
-  end
-  if key == KUI_KEY_RIGHT
-    _kui_textbuf_cursor_right(buf_id)
-  end
-  if key == KUI_KEY_HOME
-    _kui_textbuf_cursor_home(buf_id)
-  end
-  if key == KUI_KEY_END
-    _kui_textbuf_cursor_end(buf_id)
+  _kui_register_focusable
+
+  # Only process keyboard input if this text_input is focused
+  if focused == 1
+    # Handle character input
+    ch = _kui_char_pressed
+    if ch >= 32
+      if ch <= 126
+        _kui_textbuf_putchar(buf_id, ch)
+      end
+    end
+
+    # Handle special keys
+    key = kui_key_pressed
+    if key == KUI_KEY_BACKSPACE
+      _kui_textbuf_backspace(buf_id)
+    end
+    if key == KUI_KEY_DELETE
+      _kui_textbuf_delete(buf_id)
+    end
+    if key == KUI_KEY_LEFT
+      _kui_textbuf_cursor_left(buf_id)
+    end
+    if key == KUI_KEY_RIGHT
+      _kui_textbuf_cursor_right(buf_id)
+    end
+    if key == KUI_KEY_HOME
+      _kui_textbuf_cursor_home(buf_id)
+    end
+    if key == KUI_KEY_END
+      _kui_textbuf_cursor_end(buf_id)
+    end
   end
 
   # Render text box
   _kui_open_i("_ti", id)
   _kui_layout(0, 4, 4, 2, 2, 0, 2, w, 0, 0, 0, 2)
-  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
-  _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+  if focused == 1
+    _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    _kui_set_border(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  else
+    _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+    _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+  end
 
   # Render buffer content with cursor
   buf_len = _kui_textbuf_len(buf_id)
@@ -531,12 +573,18 @@ def text_input(buf_id, w: 40, size: 16)
     end
   end
 
-  # Cursor character (blinking)
-  blink = (KUIState.ids[0] / 15) % 2
-  if blink == 0
-    _kui_text_color("|", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  # Cursor character (blinking) — only show when focused; space placeholder when unfocused
+  if focused == 1
+    blink = (KUIState.ids[0] / 15) % 2
+    if blink == 0
+      _kui_text_color("|", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+    else
+      _kui_text_color(" ", size, KUITheme.c[3], KUITheme.c[4], KUITheme.c[5])
+    end
   else
-    _kui_text_color(" ", size, KUITheme.c[3], KUITheme.c[4], KUITheme.c[5])
+    if buf_len == 0
+      _kui_text_color(" ", size, KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
+    end
   end
 
   if buf_len > 0
@@ -547,8 +595,11 @@ def text_input(buf_id, w: 40, size: 16)
 
   _kui_close
 
-  if key == KUI_KEY_ENTER
-    return KUI_KEY_ENTER
+  if focused == 1
+    key = kui_key_pressed
+    if key == KUI_KEY_ENTER
+      return KUI_KEY_ENTER
+    end
   end
   return 0
 end
@@ -564,6 +615,20 @@ end
 #: (Integer buf_id) -> Integer
 def kui_textbuf_len(buf_id)
   return _kui_textbuf_len(buf_id)
+end
+
+# Copy text buffer contents from src to dst.
+#: (Integer dst, Integer src) -> Integer
+def kui_textbuf_copy(dst, src)
+  _kui_textbuf_copy(dst, src)
+  return 0
+end
+
+# Render text buffer content as a text element.
+#: (Integer buf_id, Integer size, Integer r, Integer g, Integer b) -> Integer
+def kui_textbuf_render(buf_id, size: 16, r: 255, g: 255, b: 255)
+  _kui_textbuf_render(buf_id, size, r, g, b)
+  return 0
 end
 
 # ════════════════════════════════════════════
@@ -592,6 +657,7 @@ end
 #: (String text, Integer index, Integer selected, Integer size) -> Integer
 def list_item(text, index, selected, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_li", id)
   _kui_layout(0, 8, 8, 2, 2, 4, 1, 0, 0, 0, 0, 2)
 
@@ -602,11 +668,20 @@ def list_item(text, index, selected, size: 16)
     hover = _kui_pointer_over_i("_li", id)
     if hover == 1
       _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    else
+      if focused == 1
+        _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+      end
     end
     _kui_text(text, size)
   end
 
   _kui_close
+
+  if _kui_was_clicked_i("_li", id) == 1
+    yield
+  end
+  _kui_register_focusable
   return 0
 end
 
@@ -661,7 +736,7 @@ end
 # Modal overlay — centered floating panel.
 # Renders as a floating element with semi-transparent backdrop.
 #: (Integer w, Integer h) -> Integer
-def modal(w, h)
+def modal(w, h, pad: 1, gap: 1)
   id = kui_auto_id
 
   # Backdrop (full-screen semi-transparent)
@@ -672,7 +747,7 @@ def modal(w, h)
 
   # Modal content
   _kui_open_i("_mdl", id)
-  _kui_layout(1, 16, 16, 16, 16, 8, 2, w, 2, h, 0, 0)
+  _kui_layout(1, pad, pad, pad, pad, gap, 2, w, 2, h, 0, 0)
   _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
   _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
   yield
@@ -704,6 +779,7 @@ end
 #: (String text, Integer index, Integer active, Integer size) -> Integer
 def tab_button(text, index, active, size: 16)
   id = kui_auto_id
+  focused = _kui_is_focused
   _kui_open_i("_tbt", id)
   _kui_layout(0, 12, 12, 6, 6, 0, 0, 0, 0, 0, 2, 2)
 
@@ -714,6 +790,10 @@ def tab_button(text, index, active, size: 16)
     hover = _kui_pointer_over_i("_tbt", id)
     if hover == 1
       _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    else
+      if focused == 1
+        _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+      end
     end
     _kui_text(text, size)
   end
@@ -723,6 +803,7 @@ def tab_button(text, index, active, size: 16)
   if _kui_was_clicked_i("_tbt", id) == 1
     yield
   end
+  _kui_register_focusable
   return 0
 end
 

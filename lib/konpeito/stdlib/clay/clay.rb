@@ -63,4 +63,19 @@ module Clay
   def self.sizing_percent() end
   def self.left_to_right() end
   def self.top_to_bottom() end
+
+  # Text Buffer System
+  def self.textbuf_clear(id) end
+  def self.textbuf_putchar(id, ch) end
+  def self.textbuf_backspace(id) end
+  def self.textbuf_delete(id) end
+  def self.textbuf_cursor_left(id) end
+  def self.textbuf_cursor_right(id) end
+  def self.textbuf_cursor_home(id) end
+  def self.textbuf_cursor_end(id) end
+  def self.textbuf_len(id) end
+  def self.textbuf_cursor(id) end
+  def self.textbuf_render(id, fid, fsz, r, g, b) end
+  def self.textbuf_render_range(id, start_pos, end_pos, fid, fsz, r, g, b) end
+  def self.text_char(ch, fid, fsz, r, g, b) end
 end

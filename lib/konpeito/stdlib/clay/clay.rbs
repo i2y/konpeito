@@ -166,4 +166,45 @@ module Clay
 
   %a{cfunc: "konpeito_clay_top_to_bottom"}
   def self.top_to_bottom: () -> Integer
+
+  # ── Text Buffer System ──
+
+  %a{cfunc: "konpeito_clay_textbuf_clear"}
+  def self.textbuf_clear: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_putchar"}
+  def self.textbuf_putchar: (Integer id, Integer ch) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_backspace"}
+  def self.textbuf_backspace: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_delete"}
+  def self.textbuf_delete: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_cursor_left"}
+  def self.textbuf_cursor_left: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_cursor_right"}
+  def self.textbuf_cursor_right: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_cursor_home"}
+  def self.textbuf_cursor_home: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_cursor_end"}
+  def self.textbuf_cursor_end: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_len"}
+  def self.textbuf_len: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_clay_textbuf_cursor"}
+  def self.textbuf_cursor: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_clay_textbuf_render"}
+  def self.textbuf_render: (Integer id, Integer fid, Integer fsz, Float r, Float g, Float b) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_render_range"}
+  def self.textbuf_render_range: (Integer id, Integer start, Integer end_pos, Integer fid, Integer fsz, Float r, Float g, Float b) -> void
+
+  %a{cfunc: "konpeito_clay_text_char"}
+  def self.text_char: (Integer ch, Integer fid, Integer fsz, Float r, Float g, Float b) -> void
 end

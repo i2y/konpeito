@@ -255,4 +255,115 @@ module ClayTUI
   # Build a truecolor value from RGB components
   %a{cfunc: "konpeito_clay_tui_rgb"}
   def self.rgb: (Integer r, Integer g, Integer b) -> Integer
+
+  # ── Extended Key Constants ──
+
+  %a{cfunc: "konpeito_clay_tui_key_delete"}
+  def self.key_delete: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_home"}
+  def self.key_home: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_end"}
+  def self.key_end: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_pgup"}
+  def self.key_pgup: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_pgdn"}
+  def self.key_pgdn: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f1"}
+  def self.key_f1: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f2"}
+  def self.key_f2: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f3"}
+  def self.key_f3: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f4"}
+  def self.key_f4: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f5"}
+  def self.key_f5: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f6"}
+  def self.key_f6: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f7"}
+  def self.key_f7: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f8"}
+  def self.key_f8: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f9"}
+  def self.key_f9: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f10"}
+  def self.key_f10: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f11"}
+  def self.key_f11: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_key_f12"}
+  def self.key_f12: () -> Integer
+
+  # ── Modifier Keys ──
+
+  %a{cfunc: "konpeito_clay_tui_event_mod"}
+  def self.event_mod: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_mod_alt"}
+  def self.mod_alt: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_mod_ctrl"}
+  def self.mod_ctrl: () -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_mod_shift"}
+  def self.mod_shift: () -> Integer
+
+  # ── Text Buffer System ──
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_clear"}
+  def self.textbuf_clear: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_copy"}
+  def self.textbuf_copy: (Integer dst, Integer src) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_putchar"}
+  def self.textbuf_putchar: (Integer id, Integer ch) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_backspace"}
+  def self.textbuf_backspace: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_delete"}
+  def self.textbuf_delete: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_cursor_left"}
+  def self.textbuf_cursor_left: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_cursor_right"}
+  def self.textbuf_cursor_right: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_cursor_home"}
+  def self.textbuf_cursor_home: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_cursor_end"}
+  def self.textbuf_cursor_end: (Integer id) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_len"}
+  def self.textbuf_len: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_cursor"}
+  def self.textbuf_cursor: (Integer id) -> Integer
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_render"}
+  def self.textbuf_render: (Integer id, Integer r, Integer g, Integer b) -> void
+
+  %a{cfunc: "konpeito_clay_tui_textbuf_render_range"}
+  def self.textbuf_render_range: (Integer id, Integer start, Integer end_pos, Integer r, Integer g, Integer b) -> void
+
+  %a{cfunc: "konpeito_clay_tui_text_char"}
+  def self.text_char: (Integer ch, Integer r, Integer g, Integer b) -> void
 end

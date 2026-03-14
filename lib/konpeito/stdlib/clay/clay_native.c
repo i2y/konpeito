@@ -491,3 +491,137 @@ int konpeito_clay_sizing_fixed(void)  { return 2; }
 int konpeito_clay_sizing_percent(void){ return 3; }
 int konpeito_clay_left_to_right(void) { return 0; }
 int konpeito_clay_top_to_bottom(void) { return 1; }
+
+/* ═══════════════════════════════════════════
+ *  Text Buffer System
+ * ═══════════════════════════════════════════
+ * 8 independent text buffers for text_input widgets.
+ * Each buffer holds up to 255 characters (256 bytes including null).
+ * Buffer operations are GC-free — no mruby String allocation.
+ */
+
+#define TEXTBUF_COUNT 8
+#define TEXTBUF_SIZE 256
+
+static char g_textbufs[TEXTBUF_COUNT][TEXTBUF_SIZE];
+static int g_textbuf_lens[TEXTBUF_COUNT];
+static int g_textbuf_cursors[TEXTBUF_COUNT];
+
+void konpeito_clay_textbuf_clear(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    g_textbufs[id][0] = '\0';
+    g_textbuf_lens[id] = 0;
+    g_textbuf_cursors[id] = 0;
+}
+
+void konpeito_clay_textbuf_putchar(int id, int ch) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    int len = g_textbuf_lens[id];
+    int cur = g_textbuf_cursors[id];
+    if (len >= TEXTBUF_SIZE - 1) return;
+    for (int i = len; i > cur; i--) {
+        g_textbufs[id][i] = g_textbufs[id][i - 1];
+    }
+    g_textbufs[id][cur] = (char)ch;
+    g_textbuf_lens[id] = len + 1;
+    g_textbuf_cursors[id] = cur + 1;
+    g_textbufs[id][len + 1] = '\0';
+}
+
+void konpeito_clay_textbuf_backspace(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    int cur = g_textbuf_cursors[id];
+    int len = g_textbuf_lens[id];
+    if (cur <= 0) return;
+    for (int i = cur - 1; i < len - 1; i++) {
+        g_textbufs[id][i] = g_textbufs[id][i + 1];
+    }
+    g_textbuf_lens[id] = len - 1;
+    g_textbuf_cursors[id] = cur - 1;
+    g_textbufs[id][len - 1] = '\0';
+}
+
+void konpeito_clay_textbuf_delete(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    int cur = g_textbuf_cursors[id];
+    int len = g_textbuf_lens[id];
+    if (cur >= len) return;
+    for (int i = cur; i < len - 1; i++) {
+        g_textbufs[id][i] = g_textbufs[id][i + 1];
+    }
+    g_textbuf_lens[id] = len - 1;
+    g_textbufs[id][len - 1] = '\0';
+}
+
+void konpeito_clay_textbuf_cursor_left(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    if (g_textbuf_cursors[id] > 0) g_textbuf_cursors[id]--;
+}
+
+void konpeito_clay_textbuf_cursor_right(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    if (g_textbuf_cursors[id] < g_textbuf_lens[id]) g_textbuf_cursors[id]++;
+}
+
+void konpeito_clay_textbuf_cursor_home(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    g_textbuf_cursors[id] = 0;
+}
+
+void konpeito_clay_textbuf_cursor_end(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    g_textbuf_cursors[id] = g_textbuf_lens[id];
+}
+
+int konpeito_clay_textbuf_len(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return 0;
+    return g_textbuf_lens[id];
+}
+
+int konpeito_clay_textbuf_cursor(int id) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return 0;
+    return g_textbuf_cursors[id];
+}
+
+void konpeito_clay_textbuf_render(int id, int fid, int fsz, double r, double g, double b) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    if (g_textbuf_lens[id] == 0) return;
+    flush_config();
+    Clay_TextElementConfig cfg = {
+        .textColor = {(float)r, (float)g, (float)b, 255.0f},
+        .fontId = (uint16_t)fid, .fontSize = (uint16_t)fsz, .wrapMode = 0
+    };
+    Clay_String cs = make_string(g_textbufs[id]);
+    Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(cfg));
+}
+
+void konpeito_clay_textbuf_render_range(int id, int start, int end, int fid, int fsz,
+                                         double r, double g, double b) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    int len = g_textbuf_lens[id];
+    if (start >= len || start >= end) return;
+    if (end > len) end = len;
+    int range_len = end - start;
+    flush_config();
+    const char *pooled = pool_string(g_textbufs[id] + start, range_len);
+    Clay_String cs = {.isStaticallyAllocated = false, .length = range_len, .chars = pooled};
+    Clay_TextElementConfig cfg = {
+        .textColor = {(float)r, (float)g, (float)b, 255.0f},
+        .fontId = (uint16_t)fid, .fontSize = (uint16_t)fsz, .wrapMode = 0
+    };
+    Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(cfg));
+}
+
+void konpeito_clay_text_char(int ch, int fid, int fsz, double r, double g, double b) {
+    if (ch < 32 || ch > 126) return;
+    char buf[2];
+    buf[0] = (char)ch;
+    buf[1] = '\0';
+    flush_config();
+    Clay_TextElementConfig cfg = {
+        .textColor = {(float)r, (float)g, (float)b, 255.0f},
+        .fontId = (uint16_t)fid, .fontSize = (uint16_t)fsz, .wrapMode = 0
+    };
+    Clay_String cs = make_string(buf);
+    Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(cfg));
+}

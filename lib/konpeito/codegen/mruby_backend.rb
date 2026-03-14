@@ -306,7 +306,7 @@ module Konpeito
 
             arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
             wrapper = "mrb_wrap_#{mangled_name}"
-            mrb_args = arity_to_mrb_args(arity)
+            mrb_args = effective_mrb_args(mangled_name, arity)
             lines << "    mrb_define_method(mrb, #{module_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
           end
 
@@ -320,7 +320,7 @@ module Konpeito
 
             arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
             wrapper = "mrb_wrap_#{mangled_name}"
-            mrb_args = arity_to_mrb_args(arity)
+            mrb_args = effective_mrb_args(mangled_name, arity)
             lines << "    mrb_define_class_method(mrb, #{module_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
           end
 
@@ -376,7 +376,7 @@ module Konpeito
 
             arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
             wrapper = "mrb_wrap_#{mangled_name}"
-            mrb_args = arity_to_mrb_args(arity)
+            mrb_args = effective_mrb_args(mangled_name, arity)
             lines << "    mrb_define_method(mrb, #{class_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
           end
 
@@ -390,7 +390,7 @@ module Konpeito
 
             arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
             wrapper = "mrb_wrap_#{mangled_name}"
-            mrb_args = arity_to_mrb_args(arity)
+            mrb_args = effective_mrb_args(mangled_name, arity)
             lines << "    mrb_define_class_method(mrb, #{class_var}, \"#{method_name}\", #{wrapper}, #{mrb_args});"
           end
 
@@ -412,7 +412,7 @@ module Konpeito
 
           arity = llvm_generator.variadic_functions[mangled_name] ? -1 : func.params.size - 1
           wrapper = "mrb_wrap_#{mangled_name}"
-          mrb_args = arity_to_mrb_args(arity)
+          mrb_args = effective_mrb_args(mangled_name, arity)
           lines << "    mrb_define_method(mrb, mrb->object_class, \"#{func_def.name}\", #{wrapper}, #{mrb_args});"
         end
 
@@ -460,13 +460,14 @@ module Konpeito
         else
           arity = llvm_func.params.size - 1  # Subtract self
 
-          # Check if this function has only keyword args (no positional params).
-          # If so, the kwargs hash arg is optional — caller may pass 0 args
-          # when no keywords are specified (e.g., `footer do ... end`).
+          # Check if this function has keyword args.
+          # The kwargs hash arg should be optional — caller may pass only
+          # positional args when no keywords are specified.
           func_base_name = mangled_name.sub(/\Arn_/, "")
           kw_info = llvm_generator.keyword_param_functions[func_base_name] ||
                     llvm_generator.keyword_param_functions[func_base_name.to_sym]
           kwargs_only = kw_info && kw_info[:regular_count] == 0 && arity == 1
+          has_mixed_kwargs = kw_info && kw_info[:regular_count] > 0 && arity > 1
 
           lines << "static mrb_value #{wrapper_name}(mrb_state *mrb, mrb_value self) {"
           if kwargs_only
@@ -474,6 +475,15 @@ module Konpeito
             lines << "    mrb_value a0 = mrb_nil_value(), _block = mrb_nil_value();"
             lines << "    mrb_get_args(mrb, \"|o&\", &a0, &_block);"
             lines << "    if (mrb_nil_p(a0)) a0 = mrb_hash_new(mrb);"
+          elsif has_mixed_kwargs
+            # Positional args + optional kwargs hash — last arg defaults to empty hash
+            kw_hash_idx = arity - 1
+            req_count = kw_info[:regular_count]
+            lines << "    mrb_value #{(0...arity).map { |i| "a#{i} = mrb_nil_value()" }.join(', ')}, _block = mrb_nil_value();"
+            format_str = "o" * req_count + "|o&"
+            args_list = (0...arity).map { |i| "&a#{i}" }.join(", ") + ", &_block"
+            lines << "    mrb_get_args(mrb, \"#{format_str}\", #{args_list});"
+            lines << "    if (mrb_nil_p(a#{kw_hash_idx})) a#{kw_hash_idx} = mrb_hash_new(mrb);"
           elsif arity > 0
             lines << "    mrb_value #{(0...arity).map { |i| "a#{i}" }.join(', ')}, _block;"
             format_str = "o" * arity + "&"
@@ -805,6 +815,24 @@ module Konpeito
           "MRB_ARGS_NONE()"
         else
           "MRB_ARGS_REQ(#{arity})"
+        end
+      end
+
+      # Compute mrb_args for a function, accounting for optional keyword hash.
+      # Functions with keyword params can be called with or without the keyword
+      # hash argument, so the kwargs arg must be registered as optional.
+      def effective_mrb_args(mangled_name, arity)
+        return arity_to_mrb_args(arity) if arity <= 0
+
+        func_base_name = mangled_name.sub(/\Arn_/, "")
+        kw_info = llvm_generator.keyword_param_functions[func_base_name] ||
+                  llvm_generator.keyword_param_functions[func_base_name.to_sym]
+        if kw_info
+          # Keyword hash is optional — use MRB_ARGS_ARG(required, optional)
+          req = kw_info[:regular_count]
+          "MRB_ARGS_ARG(#{req}, #{arity - req})"
+        else
+          arity_to_mrb_args(arity)
         end
       end
 

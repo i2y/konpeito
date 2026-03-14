@@ -8469,6 +8469,7 @@ module Konpeito
         saved_block_callback_self = @block_callback_self
         saved_rescue_escape_array = @rescue_escape_array
         saved_rescue_escape_indices = @rescue_escape_indices
+        saved_gc_arena_alloca = @mruby_gc_arena_alloca
 
         # In normal mode: params[0] = self. In escape mode, set @block_callback_self after unpacking.
         @block_callback_self = callback_func.params[0] unless escape_var_names

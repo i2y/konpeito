@@ -104,7 +104,7 @@ def scroll_panel(pad: 0, gap: 0)
   id = kui_auto_id
   _kui_open_i("_sp", id)
   _kui_layout(1, pad, pad, pad, pad, gap, 1, 0, 1, 0, 0, 0)
-  # Enable vertical scrolling (handled by Clay internally)
+  _kui_scroll_v
   yield
   _kui_close
   return 0
@@ -554,7 +554,10 @@ def text_input(buf_id, w: 40, size: 16)
 
   # Render text box
   _kui_open_i("_ti", id)
-  _kui_layout(0, 4, 4, 2, 2, 0, 2, w, 0, 0, 0, 2)
+  hp = size / 2
+  vp = size / 4
+  th = size + vp * 2 + 4
+  _kui_layout(0, hp, hp, vp, vp, 0, 2, w, 2, th, 0, 2)
   if focused == 1
     _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
     _kui_set_border(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
@@ -575,7 +578,7 @@ def text_input(buf_id, w: 40, size: 16)
 
   # Cursor character (blinking) — only show when focused; space placeholder when unfocused
   if focused == 1
-    blink = (KUIState.ids[0] / 15) % 2
+    blink = (KUIState.ids[1] / 15) % 2
     if blink == 0
       _kui_text_color("|", size, KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
     else
@@ -813,6 +816,7 @@ def tab_content(pad: 8, gap: 4)
   id = kui_auto_id
   _kui_open_i("_tcp", id)
   _kui_layout(1, pad, pad, pad, pad, gap, 1, 0, 1, 0, 0, 0)
+  _kui_scroll_v
   yield
   _kui_close
   return 0

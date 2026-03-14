@@ -67,6 +67,8 @@ double konpeito_get_frame_time(void)    { return (double)GetFrameTime(); }
 double konpeito_get_time(void)          { return (double)GetTime(); }
 int  konpeito_get_screen_width(void)    { return GetScreenWidth(); }
 int  konpeito_get_screen_height(void)   { return GetScreenHeight(); }
+int  konpeito_get_render_width(void)    { return GetRenderWidth(); }
+int  konpeito_get_render_height(void)   { return GetRenderHeight(); }
 void konpeito_set_window_title(const char *title) { SetWindowTitle(title); }
 void konpeito_set_window_size(int w, int h) { SetWindowSize(w, h); }
 int  konpeito_is_window_focused(void)   { return (int)IsWindowFocused(); }
@@ -241,6 +243,33 @@ int konpeito_key_six(void)    { return KEY_SIX; }
 int konpeito_key_seven(void)  { return KEY_SEVEN; }
 int konpeito_key_eight(void)  { return KEY_EIGHT; }
 int konpeito_key_nine(void)   { return KEY_NINE; }
+
+/* Extended key constants */
+int konpeito_key_tab(void)           { return KEY_TAB; }
+int konpeito_key_backspace(void)     { return KEY_BACKSPACE; }
+int konpeito_key_delete(void)        { return KEY_DELETE; }
+int konpeito_key_home(void)          { return KEY_HOME; }
+int konpeito_key_end(void)           { return KEY_END; }
+int konpeito_key_page_up(void)       { return KEY_PAGE_UP; }
+int konpeito_key_page_down(void)     { return KEY_PAGE_DOWN; }
+int konpeito_key_f1(void)            { return KEY_F1; }
+int konpeito_key_f2(void)            { return KEY_F2; }
+int konpeito_key_f3(void)            { return KEY_F3; }
+int konpeito_key_f4(void)            { return KEY_F4; }
+int konpeito_key_f5(void)            { return KEY_F5; }
+int konpeito_key_f6(void)            { return KEY_F6; }
+int konpeito_key_f7(void)            { return KEY_F7; }
+int konpeito_key_f8(void)            { return KEY_F8; }
+int konpeito_key_f9(void)            { return KEY_F9; }
+int konpeito_key_f10(void)           { return KEY_F10; }
+int konpeito_key_f11(void)           { return KEY_F11; }
+int konpeito_key_f12(void)           { return KEY_F12; }
+int konpeito_key_left_shift(void)    { return KEY_LEFT_SHIFT; }
+int konpeito_key_right_shift(void)   { return KEY_RIGHT_SHIFT; }
+int konpeito_key_left_control(void)  { return KEY_LEFT_CONTROL; }
+int konpeito_key_right_control(void) { return KEY_RIGHT_CONTROL; }
+int konpeito_key_left_alt(void)      { return KEY_LEFT_ALT; }
+int konpeito_key_right_alt(void)     { return KEY_RIGHT_ALT; }
 
 /* Mouse button constants */
 int konpeito_mouse_left(void)    { return MOUSE_BUTTON_LEFT; }

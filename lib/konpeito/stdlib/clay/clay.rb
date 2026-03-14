@@ -66,6 +66,7 @@ module Clay
 
   # Text Buffer System
   def self.textbuf_clear(id) end
+  def self.textbuf_copy(dst, src) end
   def self.textbuf_putchar(id, ch) end
   def self.textbuf_backspace(id) end
   def self.textbuf_delete(id) end

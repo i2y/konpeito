@@ -275,6 +275,7 @@ void konpeito_clay_border(double r, double g, double b, double a,
 void konpeito_clay_scroll(int horizontal, int vertical) {
     g_decl.clip.horizontal = horizontal != 0;
     g_decl.clip.vertical = vertical != 0;
+    g_decl.clip.childOffset = Clay_GetScrollOffset();
 }
 
 /* Floating element */
@@ -512,6 +513,17 @@ void konpeito_clay_textbuf_clear(int id) {
     g_textbufs[id][0] = '\0';
     g_textbuf_lens[id] = 0;
     g_textbuf_cursors[id] = 0;
+}
+
+void konpeito_clay_textbuf_copy(int dst, int src) {
+    if (dst < 0 || dst >= TEXTBUF_COUNT) return;
+    if (src < 0 || src >= TEXTBUF_COUNT) return;
+    int len = g_textbuf_lens[src];
+    for (int i = 0; i <= len; i++) {
+        g_textbufs[dst][i] = g_textbufs[src][i];
+    }
+    g_textbuf_lens[dst] = len;
+    g_textbuf_cursors[dst] = len;
 }
 
 void konpeito_clay_textbuf_putchar(int id, int ch) {

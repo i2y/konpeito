@@ -172,6 +172,9 @@ module Clay
   %a{cfunc: "konpeito_clay_textbuf_clear"}
   def self.textbuf_clear: (Integer id) -> void
 
+  %a{cfunc: "konpeito_clay_textbuf_copy"}
+  def self.textbuf_copy: (Integer dst, Integer src) -> void
+
   %a{cfunc: "konpeito_clay_textbuf_putchar"}
   def self.textbuf_putchar: (Integer id, Integer ch) -> void
 

@@ -40,6 +40,12 @@ module Raylib
   %a{cfunc: "konpeito_get_screen_height"}
   def self.get_screen_height: () -> Integer
 
+  %a{cfunc: "konpeito_get_render_width"}
+  def self.get_render_width: () -> Integer
+
+  %a{cfunc: "konpeito_get_render_height"}
+  def self.get_render_height: () -> Integer
+
   %a{cfunc: "konpeito_set_window_title"}
   def self.set_window_title: (String title) -> void
 
@@ -251,6 +257,81 @@ module Raylib
 
   %a{cfunc: "konpeito_key_escape"}
   def self.key_escape: () -> Integer
+
+  %a{cfunc: "konpeito_key_tab"}
+  def self.key_tab: () -> Integer
+
+  %a{cfunc: "konpeito_key_backspace"}
+  def self.key_backspace: () -> Integer
+
+  %a{cfunc: "konpeito_key_delete"}
+  def self.key_delete: () -> Integer
+
+  %a{cfunc: "konpeito_key_home"}
+  def self.key_home: () -> Integer
+
+  %a{cfunc: "konpeito_key_end"}
+  def self.key_end: () -> Integer
+
+  %a{cfunc: "konpeito_key_page_up"}
+  def self.key_page_up: () -> Integer
+
+  %a{cfunc: "konpeito_key_page_down"}
+  def self.key_page_down: () -> Integer
+
+  %a{cfunc: "konpeito_key_f1"}
+  def self.key_f1: () -> Integer
+
+  %a{cfunc: "konpeito_key_f2"}
+  def self.key_f2: () -> Integer
+
+  %a{cfunc: "konpeito_key_f3"}
+  def self.key_f3: () -> Integer
+
+  %a{cfunc: "konpeito_key_f4"}
+  def self.key_f4: () -> Integer
+
+  %a{cfunc: "konpeito_key_f5"}
+  def self.key_f5: () -> Integer
+
+  %a{cfunc: "konpeito_key_f6"}
+  def self.key_f6: () -> Integer
+
+  %a{cfunc: "konpeito_key_f7"}
+  def self.key_f7: () -> Integer
+
+  %a{cfunc: "konpeito_key_f8"}
+  def self.key_f8: () -> Integer
+
+  %a{cfunc: "konpeito_key_f9"}
+  def self.key_f9: () -> Integer
+
+  %a{cfunc: "konpeito_key_f10"}
+  def self.key_f10: () -> Integer
+
+  %a{cfunc: "konpeito_key_f11"}
+  def self.key_f11: () -> Integer
+
+  %a{cfunc: "konpeito_key_f12"}
+  def self.key_f12: () -> Integer
+
+  %a{cfunc: "konpeito_key_left_shift"}
+  def self.key_left_shift: () -> Integer
+
+  %a{cfunc: "konpeito_key_right_shift"}
+  def self.key_right_shift: () -> Integer
+
+  %a{cfunc: "konpeito_key_left_control"}
+  def self.key_left_control: () -> Integer
+
+  %a{cfunc: "konpeito_key_right_control"}
+  def self.key_right_control: () -> Integer
+
+  %a{cfunc: "konpeito_key_left_alt"}
+  def self.key_left_alt: () -> Integer
+
+  %a{cfunc: "konpeito_key_right_alt"}
+  def self.key_right_alt: () -> Integer
 
   %a{cfunc: "konpeito_key_a"}
   def self.key_a: () -> Integer

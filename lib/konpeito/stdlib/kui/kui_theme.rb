@@ -82,8 +82,7 @@ def kui_theme_dark
   KUITheme.c[29] = 80
   # corner radius (pixels for GUI, ignored in TUI)
   KUITheme.c[30] = 6
-  # font_id (0 = default)
-  KUITheme.c[31] = 0
+  # font_id: preserve current (don't reset loaded font)
   return 0
 end
 
@@ -133,8 +132,7 @@ def kui_theme_light
   KUITheme.c[29] = 50
   # corner radius
   KUITheme.c[30] = 6
-  # font_id
-  KUITheme.c[31] = 0
+  # font_id: preserve current (don't reset loaded font)
   return 0
 end
 

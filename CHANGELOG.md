@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-14
+
+### Added
+- **KUI widget expansion**: text_input, checkbox, radio, toggle, spinner, status_bar,
+  selectable_list, list_item, table (header/row/cell), modal, tab_bar, tab_button,
+  tab_content — all with keyboard focus support and click-to-focus
+- **KUI focus system**: Tab/arrow key navigation across all interactive widgets with
+  focus highlight and Enter key activation
+- **KUI extended key input**: `kui_char_pressed()`, `kui_mod_pressed()`,
+  Delete/Home/End/PgUp/PgDn/F1-F12 key constants
+- **KUI text buffer API**: `kui_textbuf_copy`, `kui_textbuf_render` for dynamic content
+- **KUI GUI backend**: Full GUI implementations for all new widgets (Clay+Raylib)
+- **RPG framework expansion**: tween/easing (linear, quad, cubic, bounce, elastic),
+  screen shake, scene transitions (fade), FSM, timer system, parallax scrolling,
+  simple physics (AABB, gravity, friction), particle system, object pool, grid/tile
+  utilities, debug overlay (FPS, collision rects), gamepad abstraction, save/load
+- **Game showcase demo**: "Coin Dash" score-attack platformer demonstrating full
+  RPG framework API (physics, particles, tween, FSM, parallax, Camera2D, etc.)
+- **Physics demo**: Platformer demo showcasing NativeArray-based physics
+- **KUI form demo**: Text input, checkbox, radio, toggle showcase
+- **KUI tabs demo**: Tab bar, table, modal dialog, selectable list, status bar showcase
+- **KUI showcase demo**: Rich GUI app demonstrating all v0.8.0 widgets in a 4-tab layout
+
+### Fixed
+- **NativeArray SEGV as function argument**: `convert_value()` lacked
+  `[:native_array, :value]` case, causing raw LLVM pointers where Ruby VALUEs
+  were expected
+- **NativeArray SEGV in compound expressions**: `get_effective_unboxed_type()`
+  only checked `@variable_types` for LoadLocal nodes, causing incorrect float path
+  for integer arithmetic in if conditions
+- **KUI text input isolation**: Only focused text_input processes keyboard input
+- **KUI toggle flip-back**: Filter out termbox2 mouse release events (key 65509)
+- **KUI modal layout**: Reduced TUI padding from 16 to 1 char cells
+- **mruby keyword argument handling**: Optional keyword hash with `MRB_ARGS_ARG`
+- **KUI scroll containers not scrolling**: `Clay_GetScrollOffset()` was not called
+  in `konpeito_clay_scroll` / `konpeito_clay_tui_scroll`, so `childOffset` remained
+  zero and scroll position was never visually applied
+
 ## [0.7.1] - 2026-03-14
 
 ### Fixed
@@ -341,6 +379,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.8.0]: https://github.com/i2y/konpeito/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/i2y/konpeito/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/i2y/konpeito/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/i2y/konpeito/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/i2y/konpeito/compare/v0.4.2...v0.5.0
+[0.4.2]: https://github.com/i2y/konpeito/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/i2y/konpeito/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/i2y/konpeito/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/i2y/konpeito/compare/v0.3.0...v0.3.1

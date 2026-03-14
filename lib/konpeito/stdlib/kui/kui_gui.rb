@@ -17,14 +17,24 @@ require_relative "kui_theme"
 require_relative "kui_events"
 require_relative "kui"
 
+# @rbs module KUIGuiState
+# @rbs   @s: NativeArray[Integer, 4]
+# @rbs end
+# KUIGuiState.s slots:
+#   [0] = focus_index (current focused element)
+#   [1] = focus_count (total focusable elements this frame)
+
 # ── Lifecycle ──
 
 #: (String title, Integer w, Integer h) -> Integer
 def _kui_init(title, w, h)
-  Raylib.set_config_flags(Raylib.flag_window_resizable)
+  flags = Raylib.flag_window_resizable + Raylib.flag_window_highdpi
+  Raylib.set_config_flags(flags)
   Raylib.init_window(w, h, title)
   Raylib.set_target_fps(60)
-  Clay.init(w * 1.0, h * 1.0)
+  rw = Raylib.get_render_width
+  rh = Raylib.get_render_height
+  Clay.init(rw * 1.0, rh * 1.0)
   Clay.set_measure_text_raylib
   return 0
 end
@@ -38,17 +48,22 @@ end
 
 #: () -> Integer
 def _kui_begin_frame
-  w = Raylib.get_screen_width
-  h = Raylib.get_screen_height
-  Clay.set_dimensions(w * 1.0, h * 1.0)
-  mx = Raylib.get_mouse_x
-  my = Raylib.get_mouse_y
+  rw = Raylib.get_render_width
+  rh = Raylib.get_render_height
+  sw = Raylib.get_screen_width
+  sh = Raylib.get_screen_height
+  Clay.set_dimensions(rw * 1.0, rh * 1.0)
+  # Scale mouse coordinates from screen space to render space
+  mx = Raylib.get_mouse_x * rw / sw
+  my = Raylib.get_mouse_y * rh / sh
   md = Raylib.mouse_button_down?(Raylib.mouse_left)
   Clay.set_pointer(mx * 1.0, my * 1.0, md)
   # Update scroll
   wheel = Raylib.get_mouse_wheel_move
   dt = Raylib.get_frame_time
   Clay.update_scroll(0.0, wheel * 40.0, dt)
+  # Reset per-frame focus counter
+  KUIGuiState.s[1] = 0
   Clay.begin_layout
   return 0
 end
@@ -386,6 +401,13 @@ def _kui_textbuf_cursor_pos(id)
   return Clay.textbuf_cursor(id)
 end
 
+# Copy text buffer contents from src to dst.
+#: (Integer dst, Integer src) -> Integer
+def _kui_textbuf_copy(dst, src)
+  Clay.textbuf_copy(dst, src)
+  return 0
+end
+
 # Render text buffer as Clay text (GC-free via C string pool).
 #: (Integer id, Integer size, Integer r, Integer g, Integer b) -> Integer
 def _kui_textbuf_render(id, size, r, g, b)
@@ -407,6 +429,33 @@ end
 def _kui_text_char(ch, size, r, g, b)
   fid = KUITheme.c[31]
   Clay.text_char(ch, fid, size, r * 1.0, g * 1.0, b * 1.0)
+  return 0
+end
+
+# ── Focus System ──
+
+# Register a focusable element (call for each interactive widget)
+#: () -> Integer
+def _kui_register_focusable
+  KUIGuiState.s[1] = KUIGuiState.s[1] + 1
+  return 0
+end
+
+# Set focus to the current focusable element (click-to-focus)
+#: () -> Integer
+def _kui_set_focus_current
+  KUIGuiState.s[0] = KUIGuiState.s[1]
+  return 0
+end
+
+# Check if the current focusable element is focused
+#: () -> Integer
+def _kui_is_focused
+  fi = KUIGuiState.s[0]
+  fc = KUIGuiState.s[1]
+  if fi == fc
+    return 1
+  end
   return 0
 end
 

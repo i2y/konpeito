@@ -306,6 +306,7 @@ void konpeito_clay_tui_text_ex(const char *str, int fid, int fsz,
 void konpeito_clay_tui_scroll(int horizontal, int vertical) {
     g_decl.clip.horizontal = horizontal != 0;
     g_decl.clip.vertical = vertical != 0;
+    g_decl.clip.childOffset = Clay_GetScrollOffset();
 }
 
 void konpeito_clay_tui_floating(double ox, double oy, int z,

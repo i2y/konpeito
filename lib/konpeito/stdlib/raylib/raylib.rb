@@ -17,6 +17,8 @@ module Raylib
   def self.get_time() end
   def self.get_screen_width() end
   def self.get_screen_height() end
+  def self.get_render_width() end
+  def self.get_render_height() end
   def self.set_window_title(title) end
   def self.set_window_size(w, h) end
   def self.window_focused?() end
@@ -95,6 +97,31 @@ module Raylib
   def self.key_space() end
   def self.key_enter() end
   def self.key_escape() end
+  def self.key_tab() end
+  def self.key_backspace() end
+  def self.key_delete() end
+  def self.key_home() end
+  def self.key_end() end
+  def self.key_page_up() end
+  def self.key_page_down() end
+  def self.key_f1() end
+  def self.key_f2() end
+  def self.key_f3() end
+  def self.key_f4() end
+  def self.key_f5() end
+  def self.key_f6() end
+  def self.key_f7() end
+  def self.key_f8() end
+  def self.key_f9() end
+  def self.key_f10() end
+  def self.key_f11() end
+  def self.key_f12() end
+  def self.key_left_shift() end
+  def self.key_right_shift() end
+  def self.key_left_control() end
+  def self.key_right_control() end
+  def self.key_left_alt() end
+  def self.key_right_alt() end
   def self.key_a() end
   def self.key_b() end
   def self.key_c() end

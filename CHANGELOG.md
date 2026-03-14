@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-14
+
+### Added
+- **KUI declarative UI framework**: Pure Ruby DSL for building GUI/TUI apps with a single codebase. Wraps Clay+Raylib (GUI) or ClayTUI (TUI). Widgets: `vpanel`, `hpanel`, `fixed_panel`, `label`, `label_num`, `button`, `menu_item`, `spacer`, `divider`, `progress_bar`. Theme system and unified key event abstraction.
+- **ClayTUI stdlib**: Terminal UI backend using Clay layout engine + termbox2 rendering. Auto-detected via `ClayTUI` module reference.
+- **KonpeitoShell stdlib**: Shell execution (`exec`, `system`), environment variables (`getenv`, `setenv`), and file I/O (`read_file`, `write_file`, `append_file`, `file_exists`) for mruby backend.
+- **RPG framework stdlib**: Reusable RPG game components (tilemap, sprites, camera, battle system) for raylib-based games.
+- **Stdlib auto-detection expansion**: `KonpeitoJSON`, `KonpeitoHTTP`, `KonpeitoCrypto`, `KonpeitoCompression` added to `STDLIB_MODULE_MAP` for automatic RBS injection when referenced in source code.
+- **KUI auto-path resolution**: `require "kui_gui"` / `require "kui_tui"` works without `-I` flags — KUI stdlib directory is automatically included in compiler search paths.
+- **KUI example apps**: Counter (GUI + TUI), minimal hello, multi-page dashboard with sidebar navigation.
+- **DQ RPG demo with Clay UI**: Battle scenes, shop menus, and status displays using Clay layout integration.
+- Keyword arguments documented as supported in mruby backend.
+
+### Fixed
+- **mruby GC crash in native callbacks**: `rb_block_call` stored raw C stack pointer (`data2`) in proc env — GC tried to dereference it as `RBasic*` causing crash in `gc_mark_children`. Fixed by storing `mrb_nil_value()` instead; the native callback path reads `data2` from a global, not from proc env.
+- **TUI rendering flicker**: Added per-frame string pool to `clay_tui_native.c` (64KB static buffer) to prevent Clay from holding pointers to GC-managed mruby heap memory that could be invalidated between frames.
+- **Documentation references**: Fixed CLAUDE.md referencing non-existent `docs/architecture.md`.
+
+### Changed
+- Tutorials (EN/JA) updated with KUI framework sections and all stdlib module documentation (Shell, JSON, HTTP, Crypto, Compression).
+
 ## [0.6.0] - 2026-03-11
 
 ### Added

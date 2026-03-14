@@ -826,6 +826,63 @@ x = AppState.s[0]          # 読み出し
 
 `examples/kui_counter/` にカウンターデモ、`examples/kui_dashboard/` にサイドバーナビゲーション付きマルチページダッシュボードがあります。
 
+### シェル実行 & ファイル I/O — KonpeitoShell
+
+シェルコマンドの実行やファイルの読み書き:
+
+```ruby
+# KonpeitoShell を参照すると自動検出されます
+output = KonpeitoShell.exec("ls -la")
+status = KonpeitoShell.exec_status   # 0 = 成功
+
+home = KonpeitoShell.getenv("HOME")
+KonpeitoShell.setenv("MY_VAR", "value")
+
+content = KonpeitoShell.read_file("data.txt")
+KonpeitoShell.write_file("out.txt", "hello")
+KonpeitoShell.append_file("log.txt", "new line\n")
+
+if KonpeitoShell.file_exists("config.json") == 1
+  # ...
+end
+```
+
+### JSON — KonpeitoJSON
+
+yyjson を使った JSON パース・生成:
+
+```ruby
+obj = KonpeitoJSON.parse('{"name": "Alice", "age": 30}')
+json = KonpeitoJSON.generate(obj)
+```
+
+### HTTP — KonpeitoHTTP
+
+libcurl を使った HTTP クライアント:
+
+```ruby
+body = KonpeitoHTTP.get("https://example.com")
+```
+
+### 暗号 — KonpeitoCrypto
+
+OpenSSL を使ったハッシュ・暗号化:
+
+```ruby
+hash = KonpeitoCrypto.sha256("hello")
+```
+
+### 圧縮 — KonpeitoCompression
+
+zlib を使ったデータ圧縮:
+
+```ruby
+compressed = KonpeitoCompression.gzip("Hello, World!")
+decompressed = KonpeitoCompression.gunzip(compressed)
+```
+
+上記の stdlib モジュールはすべて**自動検出**されます。ソースコードでモジュール名を参照するだけで、コンパイラが適切な RBS と C ラッパーを自動注入します。
+
 ### クロスコンパイル
 
 `zig cc` を使って他のプラットフォーム向けにクロスコンパイルできます:

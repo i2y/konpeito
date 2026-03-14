@@ -830,6 +830,63 @@ x = AppState.s[0]          # read
 
 See `examples/kui_counter/` for counter demos and `examples/kui_dashboard/` for a multi-page dashboard with sidebar navigation.
 
+### Shell & File I/O with KonpeitoShell
+
+Execute shell commands and read/write files:
+
+```ruby
+# Auto-detected when KonpeitoShell is referenced
+output = KonpeitoShell.exec("ls -la")
+status = KonpeitoShell.exec_status   # 0 = success
+
+home = KonpeitoShell.getenv("HOME")
+KonpeitoShell.setenv("MY_VAR", "value")
+
+content = KonpeitoShell.read_file("data.txt")
+KonpeitoShell.write_file("out.txt", "hello")
+KonpeitoShell.append_file("log.txt", "new line\n")
+
+if KonpeitoShell.file_exists("config.json") == 1
+  # ...
+end
+```
+
+### JSON with KonpeitoJSON
+
+Parse and generate JSON using yyjson:
+
+```ruby
+obj = KonpeitoJSON.parse('{"name": "Alice", "age": 30}')
+json = KonpeitoJSON.generate(obj)
+```
+
+### HTTP with KonpeitoHTTP
+
+HTTP client using libcurl:
+
+```ruby
+body = KonpeitoHTTP.get("https://example.com")
+```
+
+### Cryptography with KonpeitoCrypto
+
+Hashing and encryption using OpenSSL:
+
+```ruby
+hash = KonpeitoCrypto.sha256("hello")
+```
+
+### Compression with KonpeitoCompression
+
+Data compression using zlib:
+
+```ruby
+compressed = KonpeitoCompression.gzip("Hello, World!")
+decompressed = KonpeitoCompression.gunzip(compressed)
+```
+
+All stdlib modules above are **auto-detected** — just reference the module name in your code and the compiler will inject the appropriate RBS and C wrappers.
+
 ### Cross-compilation
 
 Cross-compile for other platforms using `zig cc`:

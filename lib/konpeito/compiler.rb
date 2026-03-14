@@ -661,7 +661,11 @@ module Konpeito
       "Raylib" => "raylib",
       "Clay" => "clay",
       "ClayTUI" => "clay_tui",
-      "KonpeitoShell" => "shell"
+      "KonpeitoShell" => "shell",
+      "KonpeitoJSON" => "json",
+      "KonpeitoHTTP" => "http",
+      "KonpeitoCrypto" => "crypto",
+      "KonpeitoCompression" => "compression"
     }.freeze
 
     # Scan AST for known stdlib module references and auto-add their RBS paths

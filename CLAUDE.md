@@ -111,7 +111,10 @@ Build: `konpeito build --target mruby -o app app.rb`
 ## Documentation
 
 See `docs/` for details:
-- `docs/architecture.md` — Architecture & roadmap
-- `docs/architecture-jvm.md` — JVM backend design
+- `docs/getting-started.md` — Getting started guide
+- `docs/tutorial.md` / `docs/tutorial-ja.md` — Tutorials (EN/JA)
 - `docs/language-specification.md` — Language specification
+- `docs/api-reference.md` — API reference
+- `docs/cli-reference.md` — CLI reference
 - `docs/rbs-requirements-en.md` — When RBS files are needed
+- `docs/guides.md` — Advanced guides

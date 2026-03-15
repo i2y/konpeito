@@ -1,0 +1,6 @@
+# KUI Markdown — NativeArray state for parsed instruction buffer
+
+module KUIMDState
+  @d: NativeArray[Integer, 8192]
+  @m: NativeArray[Integer, 8]
+end

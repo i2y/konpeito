@@ -24,6 +24,7 @@ require_relative "kui_forms"
 require_relative "kui_overlay"
 require_relative "kui_layouts"
 require_relative "kui_nav"
+require_relative "kui_markdown"
 
 # @rbs module KUIGuiState
 # @rbs   @s: NativeArray[Integer, 4]
@@ -44,6 +45,7 @@ def _kui_init(title, w, h)
   rh = Raylib.get_render_height
   Clay.init(rw * 1.0, rh * 1.0)
   Clay.set_measure_text_raylib
+  Clay.register_resize_callback
   return 0
 end
 
@@ -76,9 +78,31 @@ def _kui_begin_frame
   return 0
 end
 
+# Called from C (GLFW refresh callback) during live window resize.
+# Performs a full frame: begin_layout → draw → end_layout → render.
+# Convention: the user app defines a top-level `draw` method.
+#: () -> Integer
+def _kui_resize_frame
+  kui_reset_ids
+  KUIState.ids[1] = KUIState.ids[1] + 1
+  rw = Raylib.get_render_width
+  rh = Raylib.get_render_height
+  Clay.set_dimensions(rw * 1.0, rh * 1.0)
+  KUIGuiState.s[1] = 0
+  Clay.begin_layout
+  draw
+  Clay.end_layout
+  Raylib.begin_drawing
+  Raylib.clear_background(Raylib.color_new(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2], 255))
+  Clay.render_raylib
+  Raylib.end_drawing
+  return 0
+end
+
 #: () -> Integer
 def _kui_end_frame
   Clay.end_layout
+  Clay.set_bg_color(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2])
   Raylib.begin_drawing
   Raylib.clear_background(Raylib.color_new(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2], 255))
   Clay.render_raylib

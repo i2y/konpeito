@@ -24,6 +24,7 @@ require_relative "kui_forms"
 require_relative "kui_overlay"
 require_relative "kui_layouts"
 require_relative "kui_nav"
+require_relative "kui_markdown"
 
 # @rbs module KUITuiState
 # @rbs   @s: NativeArray[Integer, 8]

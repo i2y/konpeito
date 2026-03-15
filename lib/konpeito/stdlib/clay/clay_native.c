@@ -14,6 +14,7 @@
 
 #include "../../../../vendor/clay/clay.h"
 #include <raylib.h>
+#include <rlgl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -42,6 +43,18 @@ static void activate_macos_app(void) {
 #endif
 
 /* ═══════════════════════════════════════════
+ *  GLFW forward declarations (linked via raylib)
+ * ═══════════════════════════════════════════ */
+typedef struct GLFWwindow GLFWwindow;
+typedef void (*GLFWwindowrefreshfun)(GLFWwindow*);
+typedef void (*GLFWframebuffersizefun)(GLFWwindow*, int, int);
+extern GLFWwindow* glfwGetCurrentContext(void);
+extern GLFWwindowrefreshfun glfwSetWindowRefreshCallback(GLFWwindow*, GLFWwindowrefreshfun);
+extern GLFWframebuffersizefun glfwSetFramebufferSizeCallback(GLFWwindow*, GLFWframebuffersizefun);
+extern void glfwGetFramebufferSize(GLFWwindow*, int*, int*);
+extern void glfwSwapBuffers(GLFWwindow*);
+
+/* ═══════════════════════════════════════════
  *  Global state
  * ═══════════════════════════════════════════ */
 
@@ -61,6 +74,16 @@ static int g_font_count = 0;
 #define STRING_POOL_SIZE (64 * 1024)
 static char g_string_pool[STRING_POOL_SIZE];
 static int g_string_pool_pos = 0;
+
+/* Background color for live resize re-render */
+static unsigned char g_bg_r = 30, g_bg_g = 30, g_bg_b = 46;
+
+/* Live resize state */
+static int g_in_resize_callback = 0;
+
+/* Live resize full-frame callback (calls back into mruby) */
+typedef void (*clay_frame_fn)(void);
+static clay_frame_fn g_resize_frame_fn = NULL;
 
 /* ═══════════════════════════════════════════
  *  Helpers
@@ -123,6 +146,10 @@ static void clay_error_handler(Clay_ErrorData error) {
             (int)error.errorText.length, error.errorText.chars);
 }
 
+/* Forward declarations for live resize callbacks */
+static void live_resize_framebuffer_callback(GLFWwindow *window, int w, int h);
+static void live_resize_refresh_callback(GLFWwindow *window);
+
 /* ═══════════════════════════════════════════
  *  Lifecycle
  * ═══════════════════════════════════════════ */
@@ -140,6 +167,13 @@ void konpeito_clay_init(double w, double h) {
 #ifdef __APPLE__
     activate_macos_app();
 #endif
+
+    /* Register GLFW callbacks for live resize on macOS */
+    GLFWwindow *glfw_win = glfwGetCurrentContext();
+    if (glfw_win) {
+        glfwSetFramebufferSizeCallback(glfw_win, live_resize_framebuffer_callback);
+        glfwSetWindowRefreshCallback(glfw_win, live_resize_refresh_callback);
+    }
 }
 
 void konpeito_clay_destroy(void) {
@@ -472,6 +506,57 @@ int konpeito_clay_cmd_border_width_top(int i) {
 
 void konpeito_clay_render_raylib(void) {
     Clay_Raylib_Render(g_commands, g_fonts);
+}
+
+/* Store background color for live resize re-render */
+void konpeito_clay_set_bg_color(int r, int g, int b) {
+    g_bg_r = (unsigned char)r;
+    g_bg_g = (unsigned char)g;
+    g_bg_b = (unsigned char)b;
+}
+
+int konpeito_clay_is_resizing(void) {
+    return g_in_resize_callback;
+}
+
+/* ═══════════════════════════════════════════
+ *  Live Resize (macOS GLFW callback)
+ * ═══════════════════════════════════════════ */
+
+static void live_resize_framebuffer_callback(GLFWwindow *window, int w, int h) {
+    (void)window;
+    g_in_resize_callback = 1;
+    /* Update raylib's internal viewport */
+    rlViewport(0, 0, w, h);
+    /* Update Clay dimensions for next layout */
+    Clay_SetLayoutDimensions((Clay_Dimensions){(float)w, (float)h});
+}
+
+static void live_resize_refresh_callback(GLFWwindow *window) {
+    g_in_resize_callback = 1;
+    int w, h;
+    glfwGetFramebufferSize(window, &w, &h);
+    rlViewport(0, 0, w, h);
+    Clay_SetLayoutDimensions((Clay_Dimensions){(float)w, (float)h});
+
+    if (g_resize_frame_fn) {
+        /* Full relayout: call back into mruby to run draw + render */
+        g_resize_frame_fn();
+    } else {
+        /* Fallback: re-render last frame's commands */
+        rlClearColor(g_bg_r, g_bg_g, g_bg_b, 255);
+        rlClearScreenBuffers();
+        if (g_commands.length > 0) {
+            Clay_Raylib_Render(g_commands, g_fonts);
+        }
+        rlDrawRenderBatchActive();
+        glfwSwapBuffers(window);
+    }
+    g_in_resize_callback = 0;
+}
+
+void konpeito_clay_set_resize_frame_fn(clay_frame_fn fn) {
+    g_resize_frame_fn = fn;
 }
 
 /* ═══════════════════════════════════════════

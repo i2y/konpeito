@@ -52,6 +52,9 @@ module Clay
 
   # Bulk Rendering
   def self.render_raylib() end
+  def self.set_bg_color(r, g, b) end
+  def self.is_resizing() end
+  def self.register_resize_callback() end
 
   # Scroll
   def self.update_scroll(dx, dy, dt) end

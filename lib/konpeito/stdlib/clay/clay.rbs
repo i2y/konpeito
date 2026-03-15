@@ -142,6 +142,18 @@ module Clay
   %a{cfunc: "konpeito_clay_render_raylib"}
   def self.render_raylib: () -> void
 
+  # Store background color for live resize re-render
+  %a{cfunc: "konpeito_clay_set_bg_color"}
+  def self.set_bg_color: (Integer r, Integer g, Integer b) -> void
+
+  # Check if currently in a resize callback
+  %a{cfunc: "konpeito_clay_is_resizing"}
+  def self.is_resizing: () -> Integer
+
+  # Register live resize callback bridge
+  %a{cfunc: "konpeito_register_resize_callback"}
+  def self.register_resize_callback: () -> void
+
   # ── Scroll Update ──
 
   %a{cfunc: "konpeito_clay_update_scroll"}

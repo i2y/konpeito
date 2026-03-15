@@ -219,4 +219,15 @@ module TopLevel
 
   # Image Placeholder
   def image_placeholder: (Integer texture_id, Integer w, Integer h) -> Integer
+
+  # ── Markdown ──
+
+  # Parse markdown text into instruction buffer (slot 0-1)
+  def md_parse: (Integer slot, String text) -> Integer
+
+  # Render parsed markdown from instruction buffer
+  def md_render: (Integer slot, String text, ?size: Integer) -> Integer
+
+  # Convenience: parse + render in one call (slot=0)
+  def markdown: (String text, ?size: Integer) -> Integer
 end

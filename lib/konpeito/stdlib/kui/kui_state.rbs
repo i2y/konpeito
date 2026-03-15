@@ -1,0 +1,5 @@
+# KUI Widget State — NativeArray state for complex widgets
+
+module KUIWidgetState
+  @s: NativeArray[Integer, 64]
+end

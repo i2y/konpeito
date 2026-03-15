@@ -494,7 +494,7 @@ int konpeito_clay_tui_mod_shift(void) { return TB_MOD_SHIFT; }
  * Buffer operations are GC-free — no mruby String allocation.
  */
 
-#define TEXTBUF_COUNT 8
+#define TEXTBUF_COUNT 32
 #define TEXTBUF_SIZE 256
 
 static char g_textbufs[TEXTBUF_COUNT][TEXTBUF_SIZE];
@@ -633,3 +633,21 @@ void konpeito_clay_tui_text_char(int ch, int r, int g, int b) {
     Clay_String cs = make_string(buf);
     Clay__OpenTextElement(cs, Clay__StoreTextElementConfig(cfg));
 }
+
+int konpeito_clay_tui_textbuf_get_char(int id, int pos) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return 0;
+    if (pos < 0 || pos >= g_textbuf_lens[id]) return 0;
+    return (int)(unsigned char)g_textbufs[id][pos];
+}
+
+void konpeito_clay_tui_textbuf_set_str(int id, const char *str, int len) {
+    if (id < 0 || id >= TEXTBUF_COUNT) return;
+    if (len > TEXTBUF_SIZE - 1) len = TEXTBUF_SIZE - 1;
+    for (int i = 0; i < len; i++) {
+        g_textbufs[id][i] = str[i];
+    }
+    g_textbufs[id][len] = '\0';
+    g_textbuf_lens[id] = len;
+    g_textbuf_cursors[id] = len;
+}
+

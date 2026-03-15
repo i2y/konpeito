@@ -129,6 +129,8 @@ module Konpeito
         lines << "/* Block stack for rb_yield/rb_block_given_p support */"
         lines << "extern void konpeito_push_block(mrb_value block);"
         lines << "extern void konpeito_pop_block(void);"
+        lines << "extern void konpeito_push_yield_target(void);"
+        lines << "extern void konpeito_pop_yield_target(void);"
         lines << ""
 
         # Collect NativeClasses from RBS loader

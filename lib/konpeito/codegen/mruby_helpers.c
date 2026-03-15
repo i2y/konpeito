@@ -96,6 +96,90 @@ void konpeito_pop_block(void) {
     }
 }
 
+/* Forward declarations for yield target stack and nested yield support */
+static mrb_value konpeito_get_block(void);
+static konpeito_native_cb_entry *konpeito_get_native_cb(void);
+mrb_value rb_yield(mrb_value val);
+mrb_value rb_yield_values2(int argc, const mrb_value *argv);
+
+/* ================================================================
+ * Yield target stack for nested yield
+ *
+ * When a method receives a block and its body (via nested block
+ * callbacks) calls yield, the global block stack top points to the
+ * innermost callback, not the method's block.
+ *
+ * The yield target stack captures the block at method entry so that
+ * yield inside any nested callback can find the correct target.
+ * ================================================================ */
+
+static mrb_value konpeito_yield_target_block[KONPEITO_MAX_BLOCK_STACK];
+static konpeito_native_cb_entry konpeito_yield_target_native[KONPEITO_MAX_BLOCK_STACK];
+static int konpeito_yield_target_depth = 0;
+
+void konpeito_push_yield_target(void) {
+    if (konpeito_yield_target_depth < KONPEITO_MAX_BLOCK_STACK) {
+        /* Capture the current top of block_stack as the yield target */
+        konpeito_yield_target_block[konpeito_yield_target_depth] = konpeito_get_block();
+        konpeito_native_cb_entry *native = konpeito_get_native_cb();
+        if (native) {
+            konpeito_yield_target_native[konpeito_yield_target_depth] = *native;
+        } else {
+            konpeito_yield_target_native[konpeito_yield_target_depth].func = NULL;
+        }
+        konpeito_yield_target_depth++;
+    }
+}
+
+void konpeito_pop_yield_target(void) {
+    if (konpeito_yield_target_depth > 0) {
+        konpeito_yield_target_depth--;
+    }
+}
+
+/* Yield to the enclosing method's block (not the immediate callback).
+ * Used by yield inside block callbacks to propagate correctly. */
+mrb_value konpeito_yield_to_method_block(mrb_value val) {
+    mrb_state *mrb = konpeito_mrb_state;
+
+    if (konpeito_yield_target_depth > 0) {
+        konpeito_native_cb_entry *target =
+            &konpeito_yield_target_native[konpeito_yield_target_depth - 1];
+        if (target->func) {
+            mrb_value argv[1];
+            argv[0] = val;
+            return target->func(val, target->data2, 1, argv);
+        }
+        mrb_value block = konpeito_yield_target_block[konpeito_yield_target_depth - 1];
+        if (!mrb_nil_p(block)) {
+            return mrb_funcall(mrb, block, "call", 1, val);
+        }
+    }
+
+    /* Fallback to normal yield */
+    return rb_yield(val);
+}
+
+mrb_value konpeito_yield_to_method_block_values(int argc, const mrb_value *argv) {
+    mrb_state *mrb = konpeito_mrb_state;
+
+    if (konpeito_yield_target_depth > 0) {
+        konpeito_native_cb_entry *target =
+            &konpeito_yield_target_native[konpeito_yield_target_depth - 1];
+        if (target->func) {
+            mrb_value yielded = (argc > 0) ? argv[0] : mrb_nil_value();
+            return target->func(yielded, target->data2, argc, argv);
+        }
+        mrb_value block = konpeito_yield_target_block[konpeito_yield_target_depth - 1];
+        if (!mrb_nil_p(block)) {
+            mrb_sym call_sym = mrb_intern_cstr(mrb, "call");
+            return mrb_funcall_argv(mrb, block, call_sym, argc, argv);
+        }
+    }
+
+    return rb_yield_values2(argc, argv);
+}
+
 static mrb_value konpeito_get_block(void) {
     if (konpeito_block_stack_depth > 0) {
         return konpeito_block_stack[konpeito_block_stack_depth - 1];

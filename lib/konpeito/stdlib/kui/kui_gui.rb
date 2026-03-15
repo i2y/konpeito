@@ -15,7 +15,15 @@
 
 require_relative "kui_theme"
 require_relative "kui_events"
+require_relative "kui_state"
 require_relative "kui"
+require_relative "kui_interactive"
+require_relative "kui_containers"
+require_relative "kui_data"
+require_relative "kui_forms"
+require_relative "kui_overlay"
+require_relative "kui_layouts"
+require_relative "kui_nav"
 
 # @rbs module KUIGuiState
 # @rbs   @s: NativeArray[Integer, 4]
@@ -467,10 +475,61 @@ def _kui_floating(ox, oy, z)
   return 0
 end
 
+# Float relative to root window (for toast, drawer, etc.)
+#: (Integer ox, Integer oy, Integer z) -> Integer
+def _kui_floating_root(ox, oy, z)
+  # att_parent=5 maps to CLAY_ATTACH_POINT_CENTER_CENTER for root attachment
+  Clay.floating(ox * 1.0, oy * 1.0, z, 0, 0)
+  return 0
+end
+
 #: () -> Integer
 def _kui_scroll_v
   Clay.scroll(0, 1)
   return 0
+end
+
+#: () -> Integer
+def _kui_scroll_h
+  Clay.scroll(1, 0)
+  return 0
+end
+
+# ── Mouse / Input State ──
+
+# Mouse X position (render-space scaled)
+#: () -> Integer
+def _kui_mouse_x
+  rw = Raylib.get_render_width
+  sw = Raylib.get_screen_width
+  return Raylib.get_mouse_x * rw / sw
+end
+
+# Mouse Y position (render-space scaled)
+#: () -> Integer
+def _kui_mouse_y
+  rh = Raylib.get_render_height
+  sh = Raylib.get_screen_height
+  return Raylib.get_mouse_y * rh / sh
+end
+
+# Mouse left button currently held down
+#: () -> Integer
+def _kui_mouse_down
+  return Raylib.mouse_button_down?(Raylib.mouse_left)
+end
+
+# Mouse left button released this frame
+#: () -> Integer
+def _kui_mouse_released
+  return Raylib.mouse_button_released?(Raylib.mouse_left)
+end
+
+# Elapsed time in milliseconds
+#: () -> Integer
+def _kui_get_time_ms
+  t = Raylib.get_time
+  return (t * 1000).to_i
 end
 
 # ── Font ──

@@ -823,6 +823,13 @@ module Konpeito
         # We'll use rb_yield_values2 instead: VALUE rb_yield_values2(int argc, const VALUE *argv)
         @rb_yield_values2 = @mod.functions.add("rb_yield_values2", [LLVM::Int32, LLVM::Pointer(value_type)], value_type)
 
+        # Nested yield: yield to the enclosing method's block from inside a block callback
+        @konpeito_yield_to_method_block = @mod.functions.add("konpeito_yield_to_method_block", [value_type], value_type)
+        @konpeito_yield_to_method_block_values = @mod.functions.add("konpeito_yield_to_method_block_values",
+          [LLVM::Int32, LLVM::Pointer(value_type)], value_type)
+        @konpeito_push_yield_target = @mod.functions.add("konpeito_push_yield_target", [], LLVM::Type.void)
+        @konpeito_pop_yield_target = @mod.functions.add("konpeito_pop_yield_target", [], LLVM::Type.void)
+
         # int rb_block_given_p(void) - check if block is given
         @rb_block_given_p = @mod.functions.add("rb_block_given_p", [], LLVM::Int32)
 
@@ -1767,6 +1774,15 @@ module Konpeito
           @builder.store(arena_idx, @mruby_gc_arena_alloca)
         end
 
+        # For mruby: if this function has yield inside block callbacks (nested yield),
+        # push the current method's block as the yield target so that nested callbacks
+        # can yield to the correct block instead of the innermost callback.
+        @needs_yield_target_pop = false
+        if @runtime == :mruby && function_has_nested_yield?(hir_func)
+          @builder.call(@konpeito_push_yield_target)
+          @needs_yield_target_pop = true
+        end
+
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)
 
@@ -1796,6 +1812,10 @@ module Konpeito
       # For the mruby backend, restores the arena to the saved index and
       # protects the return value from GC before returning.
       def emit_ret(value)
+        # Pop yield target before return if this function pushed one
+        if @needs_yield_target_pop
+          @builder.call(@konpeito_pop_yield_target)
+        end
         if @mruby_gc_arena_alloca
           idx = @builder.load2(LLVM::Int32, @mruby_gc_arena_alloca, "_arena_r")
           @builder.call(@konpeito_gc_arena_restore, idx)
@@ -1805,6 +1825,32 @@ module Konpeito
           end
         end
         @builder.ret(value)
+      end
+
+      # Check if a function has yield inside any block callback body (nested yield).
+      # Direct yield in the function body does NOT count (that uses rb_yield normally).
+      def function_has_nested_yield?(hir_func)
+        hir_func.body.each do |bb|
+          bb.instructions.each do |inst|
+            if inst.is_a?(HIR::Call) && inst.block
+              return true if block_body_contains_yield?(inst.block)
+            end
+          end
+        end
+        false
+      end
+
+      # Recursively check if a block body contains a Yield instruction.
+      def block_body_contains_yield?(block_def)
+        block_def.body.each do |bb|
+          bb.instructions.each do |inst|
+            return true if inst.is_a?(HIR::Yield)
+            if inst.is_a?(HIR::Call) && inst.block
+              return true if block_body_contains_yield?(inst.block)
+            end
+          end
+        end
+        false
       end
 
       # Topologically sort blocks based on phi dependencies
@@ -7982,15 +8028,20 @@ module Konpeito
       end
 
       def generate_yield(inst)
+        # When yield is inside a block callback, use the yield target stack
+        # to reach the enclosing method's block instead of the innermost callback.
+        yield_fn = @in_block_callback ? @konpeito_yield_to_method_block : @rb_yield
+        yield_values_fn = @in_block_callback ? @konpeito_yield_to_method_block_values : @rb_yield_values2
+
         result = if inst.args.empty?
           # yield with no arguments - pass Qnil
-          @builder.call(@rb_yield, qnil)
+          @builder.call(yield_fn, qnil)
         elsif inst.args.size == 1
           # yield with single argument — must be boxed VALUE for rb_yield
           arg_value = get_value_as_ruby(inst.args.first)
-          @builder.call(@rb_yield, arg_value)
+          @builder.call(yield_fn, arg_value)
         else
-          # yield with multiple arguments - use rb_yield_values2
+          # yield with multiple arguments
           argc = LLVM::Int32.from_i(inst.args.size)
 
           # Allocate array on stack
@@ -8004,7 +8055,7 @@ module Konpeito
 
           # Cast to VALUE*
           argv_ptr = @builder.bit_cast(argv, LLVM::Pointer(value_type))
-          @builder.call(@rb_yield_values2, argc, argv_ptr)
+          @builder.call(yield_values_fn, argc, argv_ptr)
         end
 
         @variables[inst.result_var] = result if inst.result_var

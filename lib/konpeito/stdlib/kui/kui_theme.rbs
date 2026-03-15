@@ -1,7 +1,7 @@
 # KUI Theme System — NativeArray color palette + auto-ID
 
 module KUITheme
-  @c: NativeArray[Integer, 32]
+  @c: NativeArray[Integer, 48]
 end
 
 module KUIState
@@ -9,6 +9,6 @@ module KUIState
 end
 
 module KUITextBuf
-  @b: NativeArray[Integer, 2048]
-  @s: NativeArray[Integer, 24]
+  @b: NativeArray[Integer, 8192]
+  @s: NativeArray[Integer, 96]
 end

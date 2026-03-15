@@ -2,7 +2,7 @@
 
 # KUI Theme System — GC-free color palette via NativeArray
 #
-# Theme color slots (KUITheme.c[0..31]):
+# Theme color slots (KUITheme.c[0..47]):
 #   [0-2]   bg        — background
 #   [3-5]   fg        — foreground (text)
 #   [6-8]   primary   — primary accent (buttons, links)
@@ -15,21 +15,26 @@
 #   [27-29] danger    — danger / negative
 #   [30]    corner_r  — default corner radius (GUI only, ignored in TUI)
 #   [31]    font_id   — default font ID (GUI only, 0 for TUI)
+#   [32-34] info      — informational (blue indicator)
+#   [35-37] warning   — warning (orange/yellow)
+#   [38-40] surface2  — secondary surface (alternative panel bg)
+#   [41-43] accent    — accent color (highlight, badge)
+#   [44-47] reserved
 #
 # rbs_inline: enabled
 
 # @rbs module KUITheme
-# @rbs   @c: NativeArray[Integer, 32]
+# @rbs   @c: NativeArray[Integer, 48]
 # @rbs end
 
 # @rbs module KUIState
 # @rbs   @ids: NativeArray[Integer, 4]
 # @rbs end
 
-# Text buffer state for text_input widgets (8 buffers x 256 chars)
+# Text buffer state for text_input widgets (32 buffers x 256 chars)
 # @rbs module KUITextBuf
-# @rbs   @b: NativeArray[Integer, 2048]
-# @rbs   @s: NativeArray[Integer, 24]
+# @rbs   @b: NativeArray[Integer, 8192]
+# @rbs   @s: NativeArray[Integer, 96]
 # @rbs end
 # KUITextBuf.s slots per buffer (id * 3 + offset):
 #   [0] = length
@@ -83,6 +88,22 @@ def kui_theme_dark
   # corner radius (pixels for GUI, ignored in TUI)
   KUITheme.c[30] = 6
   # font_id: preserve current (don't reset loaded font)
+  # info: blue
+  KUITheme.c[32] = 80
+  KUITheme.c[33] = 160
+  KUITheme.c[34] = 240
+  # warning: orange
+  KUITheme.c[35] = 230
+  KUITheme.c[36] = 160
+  KUITheme.c[37] = 50
+  # surface2: darker surface
+  KUITheme.c[38] = 36
+  KUITheme.c[39] = 36
+  KUITheme.c[40] = 52
+  # accent: purple
+  KUITheme.c[41] = 160
+  KUITheme.c[42] = 100
+  KUITheme.c[43] = 220
   return 0
 end
 
@@ -133,6 +154,22 @@ def kui_theme_light
   # corner radius
   KUITheme.c[30] = 6
   # font_id: preserve current (don't reset loaded font)
+  # info: blue
+  KUITheme.c[32] = 40
+  KUITheme.c[33] = 120
+  KUITheme.c[34] = 220
+  # warning: orange
+  KUITheme.c[35] = 200
+  KUITheme.c[36] = 140
+  KUITheme.c[37] = 30
+  # surface2: light gray
+  KUITheme.c[38] = 235
+  KUITheme.c[39] = 235
+  KUITheme.c[40] = 240
+  # accent: purple
+  KUITheme.c[41] = 130
+  KUITheme.c[42] = 70
+  KUITheme.c[43] = 200
   return 0
 end
 

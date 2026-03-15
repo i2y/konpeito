@@ -15,7 +15,15 @@
 
 require_relative "kui_theme"
 require_relative "kui_events"
+require_relative "kui_state"
 require_relative "kui"
+require_relative "kui_interactive"
+require_relative "kui_containers"
+require_relative "kui_data"
+require_relative "kui_forms"
+require_relative "kui_overlay"
+require_relative "kui_layouts"
+require_relative "kui_nav"
 
 # @rbs module KUITuiState
 # @rbs   @s: NativeArray[Integer, 8]
@@ -529,10 +537,55 @@ def _kui_floating(ox, oy, z)
   return 0
 end
 
+# Float relative to root (for toast, drawer, etc.)
+#: (Integer ox, Integer oy, Integer z) -> Integer
+def _kui_floating_root(ox, oy, z)
+  ClayTUI.floating(ox * 1.0, oy * 1.0, z, 0, 0)
+  return 0
+end
+
 #: () -> Integer
 def _kui_scroll_v
   ClayTUI.scroll(0, 1)
   return 0
+end
+
+#: () -> Integer
+def _kui_scroll_h
+  ClayTUI.scroll(1, 0)
+  return 0
+end
+
+# ── Mouse / Input State ──
+
+# Mouse X position (from cached event)
+#: () -> Integer
+def _kui_mouse_x
+  return KUITuiState.s[3]
+end
+
+# Mouse Y position (from cached event)
+#: () -> Integer
+def _kui_mouse_y
+  return KUITuiState.s[4]
+end
+
+# Mouse button held (TUI: cached from event)
+#: () -> Integer
+def _kui_mouse_down
+  return KUITuiState.s[5]
+end
+
+# Mouse button released (TUI: not trackable, always 0)
+#: () -> Integer
+def _kui_mouse_released
+  return 0
+end
+
+# Elapsed time in milliseconds (approximate: frame_count * 16ms)
+#: () -> Integer
+def _kui_get_time_ms
+  return KUIState.ids[1] * 16
 end
 
 # ── Focus Navigation ──

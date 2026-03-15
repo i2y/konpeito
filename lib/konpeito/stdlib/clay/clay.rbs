@@ -210,4 +210,10 @@ module Clay
 
   %a{cfunc: "konpeito_clay_text_char"}
   def self.text_char: (Integer ch, Integer fid, Integer fsz, Float r, Float g, Float b) -> void
+
+  %a{cfunc: "konpeito_clay_textbuf_get_char"}
+  def self.textbuf_get_char: (Integer id, Integer pos) -> Integer
+
+  %a{cfunc: "konpeito_clay_textbuf_set_str"}
+  def self.textbuf_set_str: (Integer id, String str, Integer len) -> void
 end

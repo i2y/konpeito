@@ -65,10 +65,12 @@ module TopLevel
   def text_input: (Integer buf_id, ?w: Integer, ?size: Integer) -> Integer
   def kui_textbuf_clear: (Integer buf_id) -> Integer
   def kui_textbuf_len: (Integer buf_id) -> Integer
+  def kui_textbuf_copy: (Integer dst, Integer src) -> Integer
+  def kui_textbuf_render: (Integer buf_id, ?size: Integer, ?r: Integer, ?g: Integer, ?b: Integer) -> Integer
 
   # Selectable List
   def selectable_list: (Integer selected, Integer count, ?visible: Integer) { () -> void } -> Integer
-  def list_item: (String text, Integer index, Integer selected, ?size: Integer) -> Integer
+  def list_item: (String text, Integer index, Integer selected, ?size: Integer) { () -> void } -> Integer
 
   # Table
   def table_header: (?pad: Integer) { () -> void } -> Integer
@@ -76,7 +78,7 @@ module TopLevel
   def table_cell: (Integer w, ?pad: Integer) { () -> void } -> Integer
 
   # Modal
-  def modal: (Integer w, Integer h) { () -> void } -> Integer
+  def modal: (Integer w, Integer h, ?pad: Integer, ?gap: Integer) { () -> void } -> Integer
 
   # Tabs
   def tab_bar: (Integer active) { () -> void } -> Integer
@@ -88,4 +90,133 @@ module TopLevel
   def status_left: () { () -> void } -> Integer
   def status_center: () { () -> void } -> Integer
   def status_right: () { () -> void } -> Integer
+
+  # Badge / Chip / Tag
+  def badge: (String text, ?size: Integer, ?r: Integer, ?g: Integer, ?b: Integer) -> Integer
+
+  # Avatar
+  def avatar: (String text, ?size: Integer, ?r: Integer, ?g: Integer, ?b: Integer) -> Integer
+
+  # Progress Steps
+  def progress_steps: (Integer current, Integer total, ?size: Integer) -> Integer
+
+  # Number Stepper
+  def number_stepper: (Integer value, Integer min, Integer max, ?size: Integer) { (Integer) -> void } -> Integer
+
+  # Search Bar
+  def search_bar: (Integer buf_id, ?w: Integer, ?size: Integer) -> Integer
+
+  # Segmented Control
+  def segmented_control: (Integer active) { () -> void } -> Integer
+  def segment_button: (String text, Integer index, Integer active, ?size: Integer) { () -> void } -> Integer
+
+  # Accordion
+  def accordion: (String title, Integer open, ?size: Integer) { (Symbol) -> void } -> Integer
+
+  # Alert / Confirm Dialog
+  def alert_dialog: (String title, String message, ?w: Integer, ?h: Integer) { () -> void } -> Integer
+  def confirm_dialog: (String title, String message, ?w: Integer, ?h: Integer) { (Symbol) -> void } -> Integer
+
+  # Dropdown
+  def dropdown: (String selected_text, ?size: Integer) { () -> void } -> Integer
+  def dropdown_item: (String text, ?size: Integer) { () -> void } -> Integer
+
+  # Tooltip
+  def with_tooltip: (String hint_text, ?size: Integer) { () -> void } -> Integer
+
+  # Toast
+  def kui_show_toast: (Integer slot, ?duration: Integer, ?type: Integer) -> Integer
+  def kui_toast_active: (Integer slot) -> Integer
+  def kui_dismiss_toast: (Integer slot) -> Integer
+  def toast: (Integer slot, String message, ?size: Integer) -> Integer
+  def toast_stack: () { () -> void } -> Integer
+
+  # Context Menu
+  def context_menu: (Integer visible, ?w: Integer) { () -> void } -> Integer
+
+  # Slider
+  def slider: (Integer value, Integer min, Integer max, ?w: Integer, ?size: Integer) { (Integer) -> void } -> Integer
+
+  # Textarea
+  def textarea: (Integer first_buf_id, Integer active_line, ?lines: Integer, ?w: Integer, ?size: Integer) { (Integer) -> void } -> Integer
+
+  # Switch
+  def switch: (String text, Integer on, ?size: Integer) { () -> void } -> Integer
+
+  # Rating
+  def rating: (Integer value, Integer max, ?size: Integer) { (Integer) -> void } -> Integer
+
+  # Color Picker
+  def color_picker: (Integer r, Integer g, Integer b, ?w: Integer) { (Integer, Integer) -> void } -> Integer
+
+  # Date Picker
+  def date_picker: (Integer year, Integer month, Integer day) { (Integer, Integer) -> void } -> Integer
+
+  # ── Phase 4: Layout Widgets ──
+
+  # Grid
+  def grid_row: (?gap: Integer) { () -> void } -> Integer
+  def grid_item: (Integer w, Integer cols, ?span: Integer, ?gap: Integer) { () -> void } -> Integer
+
+  # ZStack
+  def zstack: () { () -> void } -> Integer
+  def zstack_layer: (?z: Integer) { () -> void } -> Integer
+
+  # Scaffold
+  def scaffold: (?title: String, ?size: Integer) { (Symbol) -> void } -> Integer
+
+  # Aspect Ratio
+  def aspect_panel: (Integer w, Integer ratio_h) { () -> void } -> Integer
+
+  # Horizontal Scroll
+  def scroll_h_panel: (?pad: Integer, ?gap: Integer) { () -> void } -> Integer
+
+  # Wrap Panel
+  def wrap_panel: (Integer container_w, Integer item_w, ?gap: Integer) { (Integer) -> void } -> Integer
+  def wrap_row: (?gap: Integer) { () -> void } -> Integer
+
+  # ── Phase 5: Navigation ──
+
+  # Nav State
+  def kui_nav_push: (Integer page_id) -> Integer
+  def kui_nav_pop: () -> Integer
+  def kui_nav_current: () -> Integer
+  def kui_nav_depth: () -> Integer
+
+  # Nav Bar
+  def nav_bar: (String title, ?size: Integer) { () -> void } -> Integer
+
+  # Bottom Nav
+  def bottom_nav: (Integer active) { () -> void } -> Integer
+  def bottom_nav_item: (String text, Integer index, Integer active, ?size: Integer) { () -> void } -> Integer
+
+  # Drawer
+  def drawer: (Integer open, ?w: Integer, ?pad: Integer, ?gap: Integer) { () -> void } -> Integer
+
+  # Bottom Sheet
+  def bottom_sheet: (Integer open, ?h: Integer, ?pad: Integer, ?gap: Integer) { () -> void } -> Integer
+
+  # ── Phase 6: Data Display ──
+
+  # List Section
+  def list_section: (String title, ?size: Integer) -> Integer
+
+  # Sortable Header
+  def sortable_header: (String text, Integer w, Integer col, Integer sort_col, Integer dir, ?size: Integer) { () -> void } -> Integer
+
+  # Carousel
+  def carousel_dots: (Integer active, Integer count, ?size: Integer) -> Integer
+
+  # Timeline
+  def timeline_item: (String text, Integer active, ?size: Integer) -> Integer
+  def timeline_connector: () -> Integer
+
+  # Skeleton
+  def skeleton: (Integer w, Integer h) -> Integer
+
+  # Circular Progress
+  def circular_progress: (Integer value, Integer max, ?size: Integer) -> Integer
+
+  # Image Placeholder
+  def image_placeholder: (Integer texture_id, Integer w, Integer h) -> Integer
 end

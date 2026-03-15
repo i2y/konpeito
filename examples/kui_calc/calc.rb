@@ -10,14 +10,27 @@
 
 require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
 
-# ── State slot constants ──
-INT_PART  = 0   # display integer (absolute)
-FRAC_PART = 1   # display fraction (0-99)
-FRAC_MODE = 2   # 0=int, 1=dot, 2=1st frac digit, 3=2nd
-STORED    = 3   # stored value (x100, signed)
-OPERATOR  = 4   # 0=none, 1=+, 2=-, 3=*, 4=/
-NEW_INPUT = 5   # 1 = next digit starts fresh
-NEGATIVE  = 6   # 1 = display is negative
+# ── Operator constants ──
+OP_NONE = 0
+OP_ADD  = 1
+OP_SUB  = 2
+OP_MUL  = 3
+OP_DIV  = 4
+
+# ── Frac mode constants ──
+FRAC_INT   = 0  # integer input
+FRAC_DOT   = 1  # dot pressed, no digit yet
+FRAC_ONE   = 2  # 1st decimal digit entered
+FRAC_TWO   = 3  # 2nd decimal digit entered
+
+# ── Global state ──
+$int_part  = 0
+$frac_part = 0
+$frac_mode = FRAC_INT
+$stored    = 0
+$operator  = OP_NONE
+$new_input = 0
+$negative  = 0
 
 # ════════════════════════════════════════════
 # Fixed-point helpers (x100)
@@ -25,8 +38,8 @@ NEGATIVE  = 6   # 1 = display is negative
 
 #: () -> Integer
 def display_to_val
-  v = Calc.s[INT_PART] * 100 + Calc.s[FRAC_PART]
-  if Calc.s[NEGATIVE] == 1
+  v = $int_part * 100 + $frac_part
+  if $negative == 1
     v = 0 - v
   end
   return v
@@ -35,17 +48,17 @@ end
 #: (Integer v) -> Integer
 def val_to_display(v)
   if v < 0
-    Calc.s[NEGATIVE] = 1
+    $negative = 1
     v = 0 - v
   else
-    Calc.s[NEGATIVE] = 0
+    $negative = 0
   end
-  Calc.s[INT_PART] = v / 100
-  Calc.s[FRAC_PART] = v % 100
-  if Calc.s[FRAC_PART] > 0
-    Calc.s[FRAC_MODE] = 3
+  $int_part = v / 100
+  $frac_part = v % 100
+  if $frac_part > 0
+    $frac_mode = FRAC_TWO
   else
-    Calc.s[FRAC_MODE] = 0
+    $frac_mode = FRAC_INT
   end
   return 0
 end
@@ -54,66 +67,61 @@ end
 # Input handlers
 # ════════════════════════════════════════════
 
+#: () -> Integer
+def reset_if_new_input
+  if $new_input == 1
+    $int_part = 0
+    $frac_part = 0
+    $frac_mode = FRAC_INT
+    $new_input = 0
+    $negative = 0
+  end
+  return 0
+end
+
 #: (Integer n) -> Integer
 def press_number(n)
-  if Calc.s[NEW_INPUT] == 1
-    Calc.s[INT_PART] = 0
-    Calc.s[FRAC_PART] = 0
-    Calc.s[FRAC_MODE] = 0
-    Calc.s[NEW_INPUT] = 0
-    Calc.s[NEGATIVE] = 0
-  end
-  fm = Calc.s[FRAC_MODE]
-  if fm == 0
-    Calc.s[INT_PART] = Calc.s[INT_PART] * 10 + n
-  end
-  if fm == 1
-    Calc.s[FRAC_PART] = n * 10
-    Calc.s[FRAC_MODE] = 2
-  end
-  if fm == 2
-    Calc.s[FRAC_PART] = Calc.s[FRAC_PART] + n
-    Calc.s[FRAC_MODE] = 3
+  reset_if_new_input
+  case $frac_mode
+  when FRAC_INT
+    $int_part = $int_part * 10 + n
+  when FRAC_DOT
+    $frac_part = n * 10
+    $frac_mode = FRAC_ONE
+  when FRAC_ONE
+    $frac_part = $frac_part + n
+    $frac_mode = FRAC_TWO
   end
   return 0
 end
 
 #: () -> Integer
 def press_dot
-  if Calc.s[NEW_INPUT] == 1
-    Calc.s[INT_PART] = 0
-    Calc.s[FRAC_PART] = 0
-    Calc.s[NEW_INPUT] = 0
-    Calc.s[NEGATIVE] = 0
-  end
-  if Calc.s[FRAC_MODE] == 0
-    Calc.s[FRAC_MODE] = 1
+  reset_if_new_input
+  if $frac_mode == FRAC_INT
+    $frac_mode = FRAC_DOT
   end
   return 0
 end
 
 #: () -> Integer
 def calc_apply
-  op = Calc.s[OPERATOR]
-  a = Calc.s[STORED]
+  a = $stored
   b = display_to_val
-  if op == 1
+  case $operator
+  when OP_ADD
     val_to_display(a + b)
-  end
-  if op == 2
+  when OP_SUB
     val_to_display(a - b)
-  end
-  if op == 3
+  when OP_MUL
     val_to_display(a * b / 100)
-  end
-  if op == 4
+  when OP_DIV
     if b != 0
       val_to_display(a * 100 / b)
     else
       val_to_display(0)
     end
-  end
-  if op == 0
+  else
     val_to_display(b)
   end
   return 0
@@ -122,29 +130,29 @@ end
 #: (Integer op) -> Integer
 def press_operator(op)
   calc_apply
-  Calc.s[STORED] = display_to_val
-  Calc.s[OPERATOR] = op
-  Calc.s[NEW_INPUT] = 1
+  $stored = display_to_val
+  $operator = op
+  $new_input = 1
   return 0
 end
 
 #: () -> Integer
 def press_equals
   calc_apply
-  Calc.s[OPERATOR] = 0
-  Calc.s[NEW_INPUT] = 1
+  $operator = OP_NONE
+  $new_input = 1
   return 0
 end
 
 #: () -> Integer
 def all_clear
-  Calc.s[INT_PART] = 0
-  Calc.s[FRAC_PART] = 0
-  Calc.s[FRAC_MODE] = 0
-  Calc.s[STORED] = 0
-  Calc.s[OPERATOR] = 0
-  Calc.s[NEW_INPUT] = 0
-  Calc.s[NEGATIVE] = 0
+  $int_part = 0
+  $frac_part = 0
+  $frac_mode = FRAC_INT
+  $stored = 0
+  $operator = OP_NONE
+  $new_input = 0
+  $negative = 0
   return 0
 end
 
@@ -154,18 +162,17 @@ end
 
 #: () -> Integer
 def draw_display_value
-  if Calc.s[NEGATIVE] == 1
+  if $negative == 1
     label "-", size: 40, r: 255, g: 255, b: 255
   end
-  label_num Calc.s[INT_PART], size: 40, r: 255, g: 255, b: 255
-  if Calc.s[FRAC_MODE] > 0
+  label_num $int_part, size: 40, r: 255, g: 255, b: 255
+  if $frac_mode > FRAC_INT
     label ".", size: 40, r: 255, g: 255, b: 255
-    if Calc.s[FRAC_MODE] >= 2
-      frac = Calc.s[FRAC_PART]
-      if frac < 10
+    if $frac_mode >= FRAC_ONE
+      if $frac_part < 10
         label "0", size: 40, r: 255, g: 255, b: 255
       end
-      label_num frac, size: 40, r: 255, g: 255, b: 255
+      label_num $frac_part, size: 40, r: 255, g: 255, b: 255
     end
   end
   return 0
@@ -198,28 +205,28 @@ def draw
 
     row gap: 4 do
       button "AC", style: ac do all_clear end
-      button "/", style: op do press_operator(4) end
+      button "/", style: op do press_operator(OP_DIV) end
     end
 
     row gap: 4 do
       button "7", style: btn do press_number(7) end
       button "8", style: btn do press_number(8) end
       button "9", style: btn do press_number(9) end
-      button "x", style: op do press_operator(3) end
+      button "x", style: op do press_operator(OP_MUL) end
     end
 
     row gap: 4 do
       button "4", style: btn do press_number(4) end
       button "5", style: btn do press_number(5) end
       button "6", style: btn do press_number(6) end
-      button "-", style: op do press_operator(2) end
+      button "-", style: op do press_operator(OP_SUB) end
     end
 
     row gap: 4 do
       button "1", style: btn do press_number(1) end
       button "2", style: btn do press_number(2) end
       button "3", style: btn do press_number(3) end
-      button "+", style: op do press_operator(1) end
+      button "+", style: op do press_operator(OP_ADD) end
     end
 
     row gap: 4 do

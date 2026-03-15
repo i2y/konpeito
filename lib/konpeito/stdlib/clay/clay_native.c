@@ -535,6 +535,24 @@ double konpeito_clay_cmd_corner_radius(int i) {
     }
 }
 
+/* Integer versions of bounding box accessors (for chart rendering from Ruby) */
+int konpeito_clay_cmd_ix(int i) {
+    Clay_RenderCommand *cmd = get_cmd(i);
+    return cmd ? (int)cmd->boundingBox.x : 0;
+}
+int konpeito_clay_cmd_iy(int i) {
+    Clay_RenderCommand *cmd = get_cmd(i);
+    return cmd ? (int)cmd->boundingBox.y : 0;
+}
+int konpeito_clay_cmd_iw(int i) {
+    Clay_RenderCommand *cmd = get_cmd(i);
+    return cmd ? (int)cmd->boundingBox.width : 0;
+}
+int konpeito_clay_cmd_ih(int i) {
+    Clay_RenderCommand *cmd = get_cmd(i);
+    return cmd ? (int)cmd->boundingBox.height : 0;
+}
+
 int konpeito_clay_cmd_custom_data(int i) {
     Clay_RenderCommand *cmd = get_cmd(i);
     if (!cmd || cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM) return -1;

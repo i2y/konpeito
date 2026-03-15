@@ -141,6 +141,19 @@ module Clay
   %a{cfunc: "konpeito_clay_cmd_corner_radius"}
   def self.cmd_corner_radius: (Integer index) -> Float
 
+  # Integer bounding box accessors (for chart rendering)
+  %a{cfunc: "konpeito_clay_cmd_ix"}
+  def self.cmd_ix: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_iy"}
+  def self.cmd_iy: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_iw"}
+  def self.cmd_iw: (Integer index) -> Integer
+
+  %a{cfunc: "konpeito_clay_cmd_ih"}
+  def self.cmd_ih: (Integer index) -> Integer
+
   %a{cfunc: "konpeito_clay_cmd_custom_data"}
   def self.cmd_custom_data: (Integer index) -> Integer
 

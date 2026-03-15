@@ -50,6 +50,10 @@ module Clay
   def self.cmd_font_id(index) end
   def self.cmd_font_size(index) end
   def self.cmd_corner_radius(index) end
+  def self.cmd_ix(index) end
+  def self.cmd_iy(index) end
+  def self.cmd_iw(index) end
+  def self.cmd_ih(index) end
   def self.cmd_custom_data(index) end
   def self.cmd_border_width_top(index) end
 

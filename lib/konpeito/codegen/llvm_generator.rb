@@ -8954,6 +8954,10 @@ module Konpeito
           # String === arg: Use rb_str_equal
           return inline_string_case_eq(receiver, arg)
         elsif receiver_hir.is_a?(HIR::ConstantLookup)
+          if is_integer_type?(receiver_hir.type)
+            # Integer constant (e.g. OP_ADD = 1) === arg: VALUE equality check
+            return inline_value_case_eq(receiver, arg)
+          end
           # Class/Module === arg: Use rb_obj_is_kind_of
           return inline_class_case_eq(receiver, arg)
         end
@@ -8989,6 +8993,13 @@ module Konpeito
 
         # Convert i1 to VALUE (Qtrue/Qfalse)
         @builder.select(result_bool, qtrue, qfalse)
+      end
+
+      # Inline VALUE equality check for integer constants (e.g. OP_ADD = 1)
+      # Since CRuby/mruby Fixnums are immediate values, VALUE equality == numeric equality
+      def inline_value_case_eq(receiver, arg)
+        eq_bool = @builder.icmp(:eq, receiver, arg)
+        @builder.select(eq_bool, qtrue, qfalse)
       end
 
       # Inline String === arg comparison

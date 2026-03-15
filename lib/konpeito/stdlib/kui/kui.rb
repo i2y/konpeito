@@ -86,6 +86,19 @@ def fixed_panel(w, h, pad: 0)
   return 0
 end
 
+# Percentage-width panel — width as % of parent (0-100).
+# Height defaults to GROW. Use hpct for percentage height.
+# Like Castella's flex: — e.g. 75 = 75% of parent width.
+#: (Integer wpct, Integer hpct, Integer pad, Integer gap) -> Integer
+def pct_panel(wpct, hpct: 0, pad: 0, gap: 0)
+  id = kui_auto_id
+  _kui_open_i("_pp", id)
+  _kui_layout_pct(1, pad, pad, pad, pad, gap, wpct, hpct, 0, 0)
+  yield
+  _kui_close
+  return 0
+end
+
 # Centered panel — children centered both axes.
 # GROW width, FIT height.
 #: (Integer pad, Integer gap) -> Integer
@@ -93,6 +106,18 @@ def cpanel(pad: 0, gap: 0)
   id = kui_auto_id
   _kui_open_i("_cp", id)
   _kui_layout(1, pad, pad, pad, pad, gap, 1, 0, 0, 0, 2, 2)
+  yield
+  _kui_close
+  return 0
+end
+
+# Horizontal panel with GROW height — like hpanel but fills vertical space.
+# Useful for rows of flex buttons that need equal vertical distribution.
+#: (Integer gap) -> Integer
+def grow_row(gap: 0)
+  id = kui_auto_id
+  _kui_open_i("_gr", id)
+  _kui_layout(0, 0, 0, 0, 0, gap, 1, 0, 1, 0, 0, 0)
   yield
   _kui_close
   return 0
@@ -217,6 +242,29 @@ end
 def kui_border(r, g, b)
   _kui_set_border(r, g, b)
   return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Kind Helpers
+# ════════════════════════════════════════════
+
+# Map a KUI_KIND_* constant to the theme color base index.
+# Used by button, badge, etc. for semantic coloring.
+#: (Integer kind) -> Integer
+def _kui_kind_base(kind)
+  if kind == 1
+    return 32
+  end
+  if kind == 2
+    return 24
+  end
+  if kind == 3
+    return 35
+  end
+  if kind == 4
+    return 27
+  end
+  return 6
 end
 
 # ════════════════════════════════════════════

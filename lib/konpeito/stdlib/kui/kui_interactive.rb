@@ -10,27 +10,44 @@
 
 # Button with click callback.
 # Renders as a clickable box with hover highlight.
-#: (String text, Integer size) -> Integer
-def button(text, size: 16)
+#
+# kind: KUI_KIND_DEFAULT/INFO/SUCCESS/WARNING/DANGER — semantic color variant.
+# flex: 0 = FIT width (default), 1-100 = percentage of parent width + GROW height.
+#       When flex > 0, button fills the specified percentage and centers text.
+#       Works like Castella's flex: property.
+#: (String text, Integer size, Integer kind, Integer flex) -> Integer
+def button(text, size: 16, kind: 0, flex: 0)
   id = kui_auto_id
   focused = _kui_is_focused
   _kui_open_i("_btn", id)
-  _kui_layout(0, 8, 8, 4, 4, 0, 0, 0, 0, 0, 2, 2)
 
-  # Hover / focus highlight
+  if flex > 0
+    _kui_layout_pct(1, 0, 0, 0, 0, 0, flex, 0, 2, 0)
+  else
+    _kui_layout(0, 8, 8, 4, 4, 0, 0, 0, 0, 0, 2, 2)
+  end
+
+  # Color: resolve from kind
+  base = _kui_kind_base(kind)
   hover = _kui_pointer_over_i("_btn", id)
   if hover == 1
-    _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+    _kui_set_bg(KUITheme.c[base] + 25, KUITheme.c[base + 1] + 25, KUITheme.c[base + 2] + 25)
   else
     if focused == 1
-      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
+      _kui_set_bg(KUITheme.c[base] + 25, KUITheme.c[base + 1] + 25, KUITheme.c[base + 2] + 25)
     else
-      _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+      _kui_set_bg(KUITheme.c[base], KUITheme.c[base + 1], KUITheme.c[base + 2])
     end
   end
   _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])
 
+  if flex > 0
+    spacer
+  end
   _kui_text_color(text, size, 255, 255, 255)
+  if flex > 0
+    spacer
+  end
   _kui_close
 
   # Click detection (mouse click or keyboard Enter on focus)

@@ -1,0 +1,3 @@
+module Calc
+  @s: NativeArray[Integer, 16]
+end

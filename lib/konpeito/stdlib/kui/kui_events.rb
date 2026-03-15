@@ -32,3 +32,13 @@ KUI_KEY_F9        = 23
 KUI_KEY_F10       = 24
 KUI_KEY_F11       = 25
 KUI_KEY_F12       = 26
+
+# ════════════════════════════════════════════
+# Widget Kind Constants — semantic color variants
+# ════════════════════════════════════════════
+
+KUI_KIND_DEFAULT = 0
+KUI_KIND_INFO    = 1
+KUI_KIND_SUCCESS = 2
+KUI_KIND_WARNING = 3
+KUI_KIND_DANGER  = 4

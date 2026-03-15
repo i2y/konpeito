@@ -213,6 +213,29 @@ def _kui_layout(dir, pl, pr, pt, pb, gap, swt, swv, sht, shv, ax, ay)
   return 0
 end
 
+# Percentage layout — TUI fallback: treat percentage as GROW.
+#: (Integer dir, Integer pl, Integer pr, Integer pt, Integer pb, Integer gap, Integer wpct, Integer hpct, Integer ax, Integer ay) -> Integer
+def _kui_layout_pct(dir, pl, pr, pt, pb, gap, wpct, hpct, ax, ay)
+  if dir == 0
+    ClayTUI.hbox
+  else
+    ClayTUI.vbox
+  end
+  if pl > 0
+    ClayTUI.pad(pl, pr, pt, pb)
+  end
+  if gap > 0
+    ClayTUI.gap(gap)
+  end
+  ClayTUI.width_grow
+  if hpct > 0
+    ClayTUI.height_grow
+  else
+    ClayTUI.height_grow
+  end
+  return 0
+end
+
 #: () -> Integer
 def _kui_set_width_grow
   ClayTUI.width_grow
@@ -670,20 +693,17 @@ def _kui_draw_num(n, size, r, g, b)
     ClayTUI.text("-", r, g, b)
     n = 0 - n
   end
-  if n >= 100000
-    _kui_draw_d(n / 100000, size, r, g, b)
-  end
-  if n >= 10000
-    _kui_draw_d((n / 10000) % 10, size, r, g, b)
-  end
-  if n >= 1000
-    _kui_draw_d((n / 1000) % 10, size, r, g, b)
-  end
-  if n >= 100
-    _kui_draw_d((n / 100) % 10, size, r, g, b)
-  end
   if n >= 10
-    _kui_draw_d((n / 10) % 10, size, r, g, b)
+    _kui_draw_num_upper(n / 10, size, r, g, b)
+  end
+  _kui_draw_d(n % 10, size, r, g, b)
+  return 0
+end
+
+#: (Integer n, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_draw_num_upper(n, size, r, g, b)
+  if n >= 10
+    _kui_draw_num_upper(n / 10, size, r, g, b)
   end
   _kui_draw_d(n % 10, size, r, g, b)
   return 0

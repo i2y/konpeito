@@ -174,6 +174,20 @@ def _kui_layout(dir, pl, pr, pt, pb, gap, swt, swv, sht, shv, ax, ay)
   return 0
 end
 
+# Percentage layout — wpct/hpct are integer 0-100, converted to Clay's 0.0-1.0.
+#: (Integer dir, Integer pl, Integer pr, Integer pt, Integer pb, Integer gap, Integer wpct, Integer hpct, Integer ax, Integer ay) -> Integer
+def _kui_layout_pct(dir, pl, pr, pt, pb, gap, wpct, hpct, ax, ay)
+  wf = wpct * 1.0 / 100.0
+  sht = 1  # GROW by default
+  shv = 0.0
+  if hpct > 0
+    sht = 3
+    shv = hpct * 1.0 / 100.0
+  end
+  Clay.layout(dir, pl, pr, pt, pb, gap, 3, wf, sht, shv, ax, ay)
+  return 0
+end
+
 #: () -> Integer
 def _kui_set_width_grow
   # Already set via layout call — this is a no-op marker
@@ -626,20 +640,17 @@ def _kui_draw_num(n, size, r, g, b)
     Clay.text("-", fid, size, rf, gf, bf, 255.0, 0)
     n = 0 - n
   end
-  if n >= 100000
-    _kui_draw_d(n / 100000, size, r, g, b)
-  end
-  if n >= 10000
-    _kui_draw_d((n / 10000) % 10, size, r, g, b)
-  end
-  if n >= 1000
-    _kui_draw_d((n / 1000) % 10, size, r, g, b)
-  end
-  if n >= 100
-    _kui_draw_d((n / 100) % 10, size, r, g, b)
-  end
   if n >= 10
-    _kui_draw_d((n / 10) % 10, size, r, g, b)
+    _kui_draw_num_upper(n / 10, size, r, g, b)
+  end
+  _kui_draw_d(n % 10, size, r, g, b)
+  return 0
+end
+
+#: (Integer n, Integer size, Integer r, Integer g, Integer b) -> Integer
+def _kui_draw_num_upper(n, size, r, g, b)
+  if n >= 10
+    _kui_draw_num_upper(n / 10, size, r, g, b)
   end
   _kui_draw_d(n % 10, size, r, g, b)
   return 0

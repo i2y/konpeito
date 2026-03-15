@@ -1,0 +1,7 @@
+module Cafe
+  @g: NativeArray[Integer, 128]
+  @menu: NativeArray[Integer, 64]
+  @staff: NativeArray[Integer, 32]
+  @inv: NativeArray[Integer, 48]
+  @hist: NativeArray[Integer, 64]
+end

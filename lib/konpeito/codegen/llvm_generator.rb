@@ -4857,11 +4857,19 @@ module Konpeito
         if use_escape_cells
           esc_ary = @builder.call(@rb_ary_new_capa, LLVM::Int64.from_i(all_captures.size), "blk_esc_ary")
           all_captures.each do |cap|
+            cap_type = capture_types[cap.name] || :value
             val = if @variable_allocas[cap.name]
                     @builder.load2(value_type, @variable_allocas[cap.name], "blk_esc_#{cap.name}")
                   else
                     qnil
                   end
+            # Box unboxed values before pushing to the escape-cells Ruby Array.
+            # The GC scans array elements as mrb_values; a raw unboxed integer
+            # (e.g., from NativeArray) without fixnum tag bits would be
+            # misinterpreted as a heap pointer → SIGSEGV in gc_mark_children.
+            if cap_type != :value
+              val = convert_value(val, cap_type, :value)
+            end
             @builder.call(@rb_ary_push, esc_ary, val)
           end
 
@@ -4980,13 +4988,21 @@ module Konpeito
             captures.each_with_index do |capture, i|
               val = @builder.call(@rb_ary_entry, ary_val,
                                   LLVM::Int64.from_i(i), "esc_#{capture.name}")
+              # Values were boxed when pushed to the escape-cells array
+              # (to prevent GC from misinterpreting raw unboxed integers as
+              # heap pointers).  Unbox them back to their original type.
+              cap_type = capture_types[capture.name] || :value
+              if cap_type != :value
+                val = convert_value(val, :value, cap_type)
+              end
               # Store in an alloca so LoadLocal/StoreLocal can use it normally.
               # Writes to this alloca stay local (no back-write to the GC array),
               # which is correct for snapshots from a returned outer scope.
-              cap_alloca = @builder.alloca(value_type, "esc_alloca_#{capture.name}")
+              llvm_type = type_tag_to_llvm_type(cap_type)
+              cap_alloca = @builder.alloca(llvm_type, "esc_alloca_#{capture.name}")
               @builder.store(val, cap_alloca)
               @variable_allocas[capture.name] = cap_alloca
-              @variable_types[capture.name] = capture_types[capture.name] || :value
+              @variable_types[capture.name] = cap_type
             end
           else
             # data2 is a pointer to array of VALUE* (pointers to captured variables).

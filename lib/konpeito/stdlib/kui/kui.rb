@@ -111,15 +111,24 @@ def cpanel(pad: 0, gap: 0)
   return 0
 end
 
-# Horizontal panel with GROW height — like hpanel but fills vertical space.
-# Useful for rows of flex buttons that need equal vertical distribution.
+# Horizontal row with GROW height — fills vertical space equally.
+# Like Castella's row(). Use inside vpanel for flex button grids.
 #: (Integer gap) -> Integer
-def grow_row(gap: 0)
+def row(gap: 0)
   id = kui_auto_id
   _kui_open_i("_gr", id)
   _kui_layout(0, 0, 0, 0, 0, gap, 1, 0, 1, 0, 0, 0)
   yield
   _kui_close
+  return 0
+end
+
+# Alias for backward compatibility.
+#: (Integer gap) -> Integer
+def grow_row(gap: 0)
+  row gap: gap do
+    yield
+  end
   return 0
 end
 

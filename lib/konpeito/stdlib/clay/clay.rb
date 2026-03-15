@@ -26,6 +26,7 @@ module Clay
   def self.layout(dir, pl, pr, pt, pb, gap, swt, swv, sht, shv, ax, ay) end
   def self.bg(r, g, b, a, corner_radius) end
   def self.border(r, g, b, a, top, right, bottom, left, corner_radius) end
+  def self.set_custom(chart_id) end
   def self.scroll(horizontal, vertical) end
   def self.floating(ox, oy, z, att_elem, att_parent) end
 
@@ -49,6 +50,7 @@ module Clay
   def self.cmd_font_id(index) end
   def self.cmd_font_size(index) end
   def self.cmd_corner_radius(index) end
+  def self.cmd_custom_data(index) end
   def self.cmd_border_width_top(index) end
 
   # Bulk Rendering

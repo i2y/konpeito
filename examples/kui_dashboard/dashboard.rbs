@@ -1,0 +1,17 @@
+module KUIChartData
+  @v: NativeArray[Integer, 2048]
+  @m: NativeArray[Integer, 64]
+end
+
+module KUITableState
+  @s: NativeArray[Integer, 32]
+end
+
+module KUIMDState
+  @d: NativeArray[Integer, 8192]
+  @m: NativeArray[Integer, 8]
+end
+
+module Names
+  @n: NativeArray[Integer, 64]
+end

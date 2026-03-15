@@ -1777,8 +1777,11 @@ module Konpeito
         # For mruby: if this function has yield inside block callbacks (nested yield),
         # push the current method's block as the yield target so that nested callbacks
         # can yield to the correct block instead of the innermost callback.
-        # Nested yield target (temporarily disabled for debugging)
         @needs_yield_target_pop = false
+        if @runtime == :mruby && function_has_nested_yield?(hir_func)
+          @builder.call(@konpeito_push_yield_target)
+          @needs_yield_target_pop = true
+        end
 
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)

@@ -241,7 +241,7 @@ void Clay_Raylib_Render(Clay_RenderCommandArray renderCommands, Font* fonts)
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
                 Clay_CustomRenderData *config = &renderCommand->renderData.custom;
                 CustomLayoutElement *customElement = (CustomLayoutElement *)config->customData;
-                if (!customElement) continue;
+                if (!customElement || (uintptr_t)customElement < 4096) continue;
                 switch (customElement->type) {
                     case CUSTOM_LAYOUT_ELEMENT_TYPE_3D_MODEL: {
                         Clay_BoundingBox rootBox = renderCommands.internalArray[0].boundingBox;

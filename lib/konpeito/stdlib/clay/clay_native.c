@@ -305,6 +305,11 @@ void konpeito_clay_border(double r, double g, double b, double a,
     }
 }
 
+/* Custom element (chart placeholder) */
+void konpeito_clay_set_custom(int chart_id) {
+    g_decl.custom.customData = (void *)(intptr_t)(chart_id + 1);
+}
+
 /* Scroll / clip */
 void konpeito_clay_scroll(int horizontal, int vertical) {
     g_decl.clip.horizontal = horizontal != 0;
@@ -528,6 +533,12 @@ double konpeito_clay_cmd_corner_radius(int i) {
             return (double)cmd->renderData.border.cornerRadius.topLeft;
         default: return 0.0;
     }
+}
+
+int konpeito_clay_cmd_custom_data(int i) {
+    Clay_RenderCommand *cmd = get_cmd(i);
+    if (!cmd || cmd->commandType != CLAY_RENDER_COMMAND_TYPE_CUSTOM) return -1;
+    return (int)(intptr_t)cmd->renderData.custom.customData - 1;
 }
 
 int konpeito_clay_cmd_border_width_top(int i) {

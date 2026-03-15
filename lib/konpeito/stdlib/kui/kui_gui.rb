@@ -25,6 +25,7 @@ require_relative "kui_overlay"
 require_relative "kui_layouts"
 require_relative "kui_nav"
 require_relative "kui_markdown"
+require_relative "kui_charts"
 
 # @rbs module KUIGuiState
 # @rbs   @s: NativeArray[Integer, 4]
@@ -91,21 +92,23 @@ def _kui_resize_frame
   KUIGuiState.s[1] = 0
   Clay.begin_layout
   draw
-  Clay.end_layout
+  rc = Clay.end_layout
   Raylib.begin_drawing
   Raylib.clear_background(Raylib.color_new(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2], 255))
   Clay.render_raylib
+  _kui_render_charts(rc)
   Raylib.end_drawing
   return 0
 end
 
 #: () -> Integer
 def _kui_end_frame
-  Clay.end_layout
+  cmd_count = Clay.end_layout
   Clay.set_bg_color(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2])
   Raylib.begin_drawing
   Raylib.clear_background(Raylib.color_new(KUITheme.c[0], KUITheme.c[1], KUITheme.c[2], 255))
   Clay.render_raylib
+  _kui_render_charts(cmd_count)
   Raylib.end_drawing
   return 0
 end

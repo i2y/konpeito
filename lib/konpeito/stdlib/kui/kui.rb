@@ -245,8 +245,103 @@ def kui_border(r, g, b)
 end
 
 # ════════════════════════════════════════════
-# Public API — Kind Helpers
+# Public API — Style Composition
 # ════════════════════════════════════════════
+
+# Create a packed style value from named properties.
+# Packing: size + flex * 1000 + kind * 1000000
+# Similar to Castella's Style.new.font_size(32).kind(KIND_WARNING).flex(3)
+#: (Integer size, Integer kind, Integer flex) -> Integer
+def kui_style(size: 0, kind: 0, flex: 0)
+  return size + flex * 1000 + kind * 1000000
+end
+
+# Merge two styles: non-zero values in b override a.
+# Similar to Castella's style_a + style_b.
+#: (Integer a, Integer b) -> Integer
+def kui_style_merge(a, b)
+  s = b % 1000
+  if s == 0
+    s = a % 1000
+  end
+  f = (b / 1000) % 1000
+  if f == 0
+    f = (a / 1000) % 1000
+  end
+  k = b / 1000000
+  if k == 0
+    k = a / 1000000
+  end
+  return s + f * 1000 + k * 1000000
+end
+
+# ════════════════════════════════════════════
+# Public API — Semantic Background Helpers
+# ════════════════════════════════════════════
+
+# Set background to named theme color. Avoids raw KUITheme.c[n] access.
+# Usage: kui_bg_surface2  (instead of kui_bg(KUITheme.c[38], ...))
+
+#: () -> Integer
+def kui_bg_primary
+  _kui_set_bg(KUITheme.c[6], KUITheme.c[7], KUITheme.c[8])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_surface
+  _kui_set_bg(KUITheme.c[18], KUITheme.c[19], KUITheme.c[20])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_surface2
+  _kui_set_bg(KUITheme.c[38], KUITheme.c[39], KUITheme.c[40])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_success
+  _kui_set_bg(KUITheme.c[24], KUITheme.c[25], KUITheme.c[26])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_danger
+  _kui_set_bg(KUITheme.c[27], KUITheme.c[28], KUITheme.c[29])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_info
+  _kui_set_bg(KUITheme.c[32], KUITheme.c[33], KUITheme.c[34])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_warning
+  _kui_set_bg(KUITheme.c[35], KUITheme.c[36], KUITheme.c[37])
+  return 0
+end
+
+#: () -> Integer
+def kui_bg_accent
+  _kui_set_bg(KUITheme.c[41], KUITheme.c[42], KUITheme.c[43])
+  return 0
+end
+
+# ════════════════════════════════════════════
+# Public API — Kind & Color Helpers
+# ════════════════════════════════════════════
+
+# Clamp color value to 0-255 (prevents overflow in hover brightening).
+#: (Integer v) -> Integer
+def _kui_min255(v)
+  if v > 255
+    return 255
+  end
+  return v
+end
 
 # Map a KUI_KIND_* constant to the theme color base index.
 # Used by button, badge, etc. for semantic coloring.

@@ -177,10 +177,17 @@ end
 
 #: () -> Integer
 def draw
+  # Style definitions (like Castella's Style.new)
+  btn = kui_style(size: 32, flex: 25)
+  op = kui_style_merge(btn, kui_style(kind: KUI_KIND_WARNING))
+  ac = kui_style_merge(btn, kui_style(kind: KUI_KIND_DANGER, flex: 75))
+  eq = kui_style_merge(btn, kui_style(kind: KUI_KIND_SUCCESS))
+  wide = kui_style_merge(btn, kui_style(flex: 50))
+
   vpanel pad: 4, gap: 4 do
     # Display
     pct_panel 100, pad: 12 do
-      kui_bg(30, 80, 140)
+      kui_bg_surface2
       spacer
       hpanel gap: 0 do
         spacer
@@ -190,35 +197,35 @@ def draw
     end
 
     grow_row gap: 4 do
-      button "AC", size: 32, kind: KUI_KIND_DANGER, flex: 75 do all_clear end
-      button "/", size: 32, kind: KUI_KIND_WARNING, flex: 25 do press_operator(4) end
+      button "AC", style: ac do all_clear end
+      button "/", style: op do press_operator(4) end
     end
 
     grow_row gap: 4 do
-      button "7", size: 32, flex: 25 do press_number(7) end
-      button "8", size: 32, flex: 25 do press_number(8) end
-      button "9", size: 32, flex: 25 do press_number(9) end
-      button "x", size: 32, kind: KUI_KIND_WARNING, flex: 25 do press_operator(3) end
+      button "7", style: btn do press_number(7) end
+      button "8", style: btn do press_number(8) end
+      button "9", style: btn do press_number(9) end
+      button "x", style: op do press_operator(3) end
     end
 
     grow_row gap: 4 do
-      button "4", size: 32, flex: 25 do press_number(4) end
-      button "5", size: 32, flex: 25 do press_number(5) end
-      button "6", size: 32, flex: 25 do press_number(6) end
-      button "-", size: 32, kind: KUI_KIND_WARNING, flex: 25 do press_operator(2) end
+      button "4", style: btn do press_number(4) end
+      button "5", style: btn do press_number(5) end
+      button "6", style: btn do press_number(6) end
+      button "-", style: op do press_operator(2) end
     end
 
     grow_row gap: 4 do
-      button "1", size: 32, flex: 25 do press_number(1) end
-      button "2", size: 32, flex: 25 do press_number(2) end
-      button "3", size: 32, flex: 25 do press_number(3) end
-      button "+", size: 32, kind: KUI_KIND_WARNING, flex: 25 do press_operator(1) end
+      button "1", style: btn do press_number(1) end
+      button "2", style: btn do press_number(2) end
+      button "3", style: btn do press_number(3) end
+      button "+", style: op do press_operator(1) end
     end
 
     grow_row gap: 4 do
-      button "0", size: 32, flex: 50 do press_number(0) end
-      button ".", size: 32, flex: 25 do press_dot end
-      button "=", size: 32, kind: KUI_KIND_SUCCESS, flex: 25 do press_equals end
+      button "0", style: wide do press_number(0) end
+      button ".", style: btn do press_dot end
+      button "=", style: eq do press_equals end
     end
   end
   return 0

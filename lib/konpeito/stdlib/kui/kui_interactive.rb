@@ -14,9 +14,15 @@
 # kind: KUI_KIND_DEFAULT/INFO/SUCCESS/WARNING/DANGER — semantic color variant.
 # flex: 0 = FIT width (default), 1-100 = percentage of parent width + GROW height.
 #       When flex > 0, button fills the specified percentage and centers text.
-#       Works like Castella's flex: property.
-#: (String text, Integer size, Integer kind, Integer flex) -> Integer
-def button(text, size: 16, kind: 0, flex: 0)
+# style: packed style from kui_style(). Overrides size/kind/flex when > 0.
+#       Supports composition via kui_style_merge().
+#: (String text, Integer size, Integer kind, Integer flex, Integer style) -> Integer
+def button(text, size: 16, kind: 0, flex: 0, style: 0)
+  if style > 0
+    size = style % 1000
+    flex = (style / 1000) % 1000
+    kind = style / 1000000
+  end
   id = kui_auto_id
   focused = _kui_is_focused
   _kui_open_i("_btn", id)
@@ -27,16 +33,31 @@ def button(text, size: 16, kind: 0, flex: 0)
     _kui_layout(0, 8, 8, 4, 4, 0, 0, 0, 0, 0, 2, 2)
   end
 
-  # Color: resolve from kind
+  # Color: resolve from kind, with hover/focus brightening
   base = _kui_kind_base(kind)
+  br = KUITheme.c[base]
+  bg = KUITheme.c[base + 1]
+  bb = KUITheme.c[base + 2]
   hover = _kui_pointer_over_i("_btn", id)
   if hover == 1
-    _kui_set_bg(KUITheme.c[base] + 25, KUITheme.c[base + 1] + 25, KUITheme.c[base + 2] + 25)
+    hr = br + 40
+    hg = bg + 40
+    hb = bb + 40
+    if hr > 255
+      hr = 255
+    end
+    if hg > 255
+      hg = 255
+    end
+    if hb > 255
+      hb = 255
+    end
+    _kui_set_bg(hr, hg, hb)
   else
     if focused == 1
-      _kui_set_bg(KUITheme.c[base] + 25, KUITheme.c[base + 1] + 25, KUITheme.c[base + 2] + 25)
+      _kui_set_bg(KUITheme.c[15], KUITheme.c[16], KUITheme.c[17])
     else
-      _kui_set_bg(KUITheme.c[base], KUITheme.c[base + 1], KUITheme.c[base + 2])
+      _kui_set_bg(br, bg, bb)
     end
   end
   _kui_set_border(KUITheme.c[12], KUITheme.c[13], KUITheme.c[14])

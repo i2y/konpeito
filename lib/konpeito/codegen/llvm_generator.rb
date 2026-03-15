@@ -1777,11 +1777,8 @@ module Konpeito
         # For mruby: if this function has yield inside block callbacks (nested yield),
         # push the current method's block as the yield target so that nested callbacks
         # can yield to the correct block instead of the innermost callback.
+        # Nested yield target (temporarily disabled for debugging)
         @needs_yield_target_pop = false
-        if @runtime == :mruby && function_has_nested_yield?(hir_func)
-          @builder.call(@konpeito_push_yield_target)
-          @needs_yield_target_pop = true
-        end
 
         # Insert profiling entry probe after parameter setup
         insert_profile_entry_probe(hir_func)
@@ -4962,8 +4959,9 @@ module Konpeito
         # Set @in_block_callback so nested proc creation uses GC-safe escape-cells mode.
         # Reset mruby constant cache — LLVM values are scoped per function, so
         # cached %qnil/%qtrue from the parent function are invalid here.
-        # Clear GC arena alloca — callbacks don't own their own arena scope.
         @in_block_callback = true
+
+        # Clear GC arena alloca — callbacks run under the caller's arena scope.
         @mruby_gc_arena_alloca = nil
         @variables = {}
         @variable_types = {}
@@ -5195,10 +5193,7 @@ module Konpeito
               # Return the last value in the block, or Qnil
               # For while_exit blocks, the last instruction loads the break value
               if last_instr
-                result_val = last_instr
-                # Box unboxed values before returning
-                result_type = :value  # Default
-                @builder.ret(result_val)
+                @builder.ret(last_instr)
               else
                 @builder.ret(qnil)
               end

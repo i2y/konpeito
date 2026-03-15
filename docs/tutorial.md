@@ -673,9 +673,22 @@ Konpeito includes a game framework (`game_framework.rb`) with helpers for buildi
 
 See `examples/mruby_dq_rpg/` for a JRPG-style demo and `examples/game_showcase/` for a platformer demo showcasing physics, particles, tween, FSM, and parallax.
 
-### KUI — Declarative UI Framework
+### KUI — Immediate-Mode UI Framework
 
-KUI (Konpeito UI) is a pure Ruby DSL that wraps Clay + Raylib (GUI) or ClayTUI + termbox2 (TUI) behind a unified, declarative API. Write your UI once, build for either backend.
+KUI (Konpeito UI) is a pure Ruby immediate-mode UI DSL. Unlike retained-mode frameworks where you build a persistent widget tree, KUI rebuilds the entire UI every frame from function calls. State lives in your own variables — there are no framework-managed widget objects.
+
+```ruby
+# Every frame: call functions to describe the UI
+def draw
+  vpanel pad: 16, gap: 8 do
+    label "Count: ", size: 20
+    label_num $count, size: 20
+    button "Add" do $count = $count + 1 end
+  end
+end
+```
+
+KUI wraps Clay + Raylib (GUI) or ClayTUI + termbox2 (TUI) behind a unified API. Write your UI once, build for either backend.
 
 #### Counter App (GUI)
 

@@ -681,15 +681,10 @@ KUI (Konpeito UI) is a pure Ruby DSL that wraps Clay + Raylib (GUI) or ClayTUI +
 
 ```ruby
 # counter_gui.rb
-# rbs_inline: enabled
-
 require "kui_gui"
 
-# @rbs module AppState
-# @rbs   @s: NativeArray[Integer, 4]
-# @rbs end
+$count = 0
 
-#: () -> Integer
 def draw
   vpanel pad: 24, gap: 16 do
     header pad: 12 do
@@ -702,7 +697,7 @@ def draw
       label "Current Count:", size: 20
       hpanel gap: 4 do
         spacer
-        label_num AppState.s[0], size: 36, r: 100, g: 200, b: 255
+        label_num $count, size: 36, r: 100, g: 200, b: 255
         spacer
       end
     end
@@ -712,13 +707,13 @@ def draw
     hpanel gap: 12 do
       spacer
       button "  -  ", size: 20 do
-        AppState.s[0] = AppState.s[0] - 1
+        $count = $count - 1
       end
       button " Reset ", size: 20 do
-        AppState.s[0] = 0
+        $count = 0
       end
       button "  +  ", size: 20 do
-        AppState.s[0] = AppState.s[0] + 1
+        $count = $count + 1
       end
       spacer
     end
@@ -733,11 +728,9 @@ def draw
   return 0
 end
 
-#: () -> Integer
 def main
   kui_init("KUI Counter", 450, 350)
   kui_theme_dark
-  AppState.s[0] = 0
 
   while kui_running == 1
     kui_begin_frame
@@ -779,8 +772,10 @@ konpeito build --target mruby -o counter_tui counter_tui.rb
 |---|---|
 | `vpanel(pad:, gap:) { }` | Vertical container (GROW width/height) |
 | `hpanel(pad:, gap:) { }` | Horizontal container (GROW width, FIT height) |
+| `row(gap:) { }` | Horizontal container with GROW height (like Castella's `row`) |
 | `cpanel(pad:, gap:) { }` | Centered container |
 | `fixed_panel(w, h, pad:) { }` | Fixed-size container |
+| `pct_panel(wpct, hpct:, pad:, gap:) { }` | Percentage-width container (0-100) |
 | `scroll_panel(pad:, gap:) { }` | Scrollable vertical container |
 | `card(pad:, gap:) { }` | Surface panel with border |
 | `header(pad:) { }` | Top bar with primary color |
@@ -788,18 +783,61 @@ konpeito build --target mruby -o counter_tui counter_tui.rb
 | `sidebar(w, pad:, gap:) { }` | Fixed-width vertical sidebar |
 | `label(text, size:, r:, g:, b:)` | Text label |
 | `label_num(value, size:, r:, g:, b:)` | Integer display (no string allocation) |
-| `button(text, size:) { }` | Clickable button (block called on click) |
+| `button(text, size:, kind:, flex:, style:) { }` | Clickable button with color variants and flex sizing |
 | `menu_item(text, index, cursor, size:)` | Selectable menu item |
 | `spacer` | Fills available space |
 | `divider(r:, g:, b:)` | Horizontal line |
 | `progress_bar(value, max, w, h, r:, g:, b:)` | Progress bar |
 
+#### Button Kind & Flex
+
+Buttons support semantic color variants and flex-based sizing, similar to Castella's `Style` system:
+
+```ruby
+# Kind: semantic color (KUI_KIND_DEFAULT/INFO/SUCCESS/WARNING/DANGER)
+button "Save", kind: KUI_KIND_SUCCESS do save_data end
+button "Delete", kind: KUI_KIND_DANGER do delete_item end
+
+# Flex: percentage of parent width (use inside row)
+row gap: 4 do
+  button "Wide", flex: 75 do end    # 75% width
+  button "Narrow", flex: 25 do end  # 25% width
+end
+```
+
+#### Style Composition
+
+Compose reusable styles with `kui_style` and `kui_style_merge`, similar to Castella's `Style.new` and `+`:
+
+```ruby
+# Define base style
+btn = kui_style(size: 32, flex: 25)
+
+# Compose variants (non-zero values override)
+op = kui_style_merge(btn, kui_style(kind: KUI_KIND_WARNING))
+ac = kui_style_merge(btn, kui_style(kind: KUI_KIND_DANGER, flex: 75))
+eq = kui_style_merge(btn, kui_style(kind: KUI_KIND_SUCCESS))
+
+# Use with button
+row gap: 4 do
+  button "AC", style: ac do all_clear end
+  button "/",  style: op do press_operator(OP_DIV) end
+end
+```
+
 #### Lifecycle & Theming
 
 ```ruby
 kui_init("Title", width, height)   # Initialize window/terminal
-kui_theme_dark                      # Dark theme (indigo bg, light text)
-kui_theme_light                     # Light theme (white bg, dark text)
+
+# 7 theme presets available:
+kui_theme_dark                      # Dark (default)
+kui_theme_light                     # Light
+kui_theme_tokyo_night               # Tokyo Night (Castella default)
+kui_theme_nord                      # Nord (arctic blue)
+kui_theme_dracula                   # Dracula (vibrant dark)
+kui_theme_catppuccin                # Catppuccin Mocha (pastel)
+kui_theme_material                  # Material Design (light)
 
 while kui_running == 1
   kui_begin_frame
@@ -808,6 +846,23 @@ while kui_running == 1
 end
 
 kui_destroy                         # Cleanup
+```
+
+#### Semantic Background Helpers
+
+Set background color using theme-aware named functions instead of raw `KUITheme.c[n]`:
+
+```ruby
+card do
+  kui_bg_surface       # theme surface color
+  kui_bg_surface2      # secondary surface
+  kui_bg_primary       # primary accent
+  kui_bg_info          # informational blue
+  kui_bg_success       # success green
+  kui_bg_warning       # warning orange
+  kui_bg_danger        # danger red
+  kui_bg_accent        # accent color
+end
 ```
 
 #### Input
@@ -821,18 +876,29 @@ key = kui_key_pressed
 
 #### State Management
 
-KUI apps use module NativeArray for GC-free state:
+KUI apps can use Ruby global variables for state:
 
 ```ruby
-# @rbs module AppState
-# @rbs   @s: NativeArray[Integer, 4]
-# @rbs end
+$score = 0
+$player_name = "Alice"
 
-AppState.s[0] = 42         # write
-x = AppState.s[0]          # read
+button "Add Point" do
+  $score = $score + 1
+end
 ```
 
-See `examples/kui_counter/` for counter demos and `examples/kui_dashboard/` for a multi-page dashboard with sidebar navigation.
+For performance-critical apps (games with many state variables), you can use module NativeArray for GC-free state:
+
+```ruby
+# @rbs module G
+# @rbs   @s: NativeArray[Integer, 64]
+# @rbs end
+
+G.s[0] = 42         # write
+x = G.s[0]          # read
+```
+
+See `examples/kui_counter/` for counter demos, `examples/kui_dashboard/` for a multi-page dashboard, `examples/kui_calc/` for a Castella-style calculator, and `examples/kui_cafe/` for a full management simulation game using 20+ widgets.
 
 ### Shell & File I/O with KonpeitoShell
 

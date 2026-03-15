@@ -33,6 +33,7 @@ module Clay
   def self.text(text, font_id, font_size, r, g, b, a, wrap) end
   def self.set_measure_text_raylib() end
   def self.load_font(path, size) end
+  def self.load_font_cjk(path, size) end
 
   # Render Command Access
   def self.cmd_type(index) end

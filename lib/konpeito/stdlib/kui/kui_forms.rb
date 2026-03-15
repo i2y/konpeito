@@ -267,10 +267,9 @@ def textarea(first_buf_id, active_line, lines: 4, w: 40, size: 16)
     cur_buf = first_buf_id + active_line
 
     ch = _kui_char_pressed
-    if ch >= 32
-      if ch <= 126
-        _kui_textbuf_putchar(cur_buf, ch)
-      end
+    while ch >= 32
+      _kui_textbuf_putchar(cur_buf, ch)
+      ch = _kui_char_pressed
     end
 
     key = kui_key_pressed

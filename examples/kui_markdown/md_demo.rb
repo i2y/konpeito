@@ -1,4 +1,4 @@
-# KUI Markdown Demo
+# KUI Markdown Demo + IME Input Test
 #
 # Build:
 #   bundle exec ruby -Ilib bin/konpeito build --target mruby \
@@ -6,25 +6,25 @@
 #     -o examples/kui_markdown/md_demo \
 #     examples/kui_markdown/md_demo.rb
 #
-# Run:
-#   ./examples/kui_markdown/md_demo
-#
 # rbs_inline: enabled
 
 require_relative "../../lib/konpeito/stdlib/kui/kui_gui"
 
 #: () -> Integer
 def draw
-  scroll_panel(pad: 16, gap: 0) do
-    markdown("# KUI Markdown Demo\n\n## Text Formatting\n\nA paragraph with **bold**, *italic*, and ***bold italic*** text.\n\nUse `inline code` and ~~strikethrough~~ too.\n\n## Code Block\n\n```\ndef hello\n  puts 42\nend\n```\n\n## Lists\n\n- First item\n- Second item\n  - Nested item\n- Third item\n\n1. Step one\n2. Step two\n3. Step three\n\n- [x] Done task\n- [ ] Todo task\n\n## Blockquote\n\n> This is a blockquote.\n> Second line.\n\n## Table\n\n| Name | Status |\n|------|--------|\n| Alpha | Done |\n| Beta | WIP |\n\n---\n\n*End of demo*\n", size: 16)
+  vpanel pad: 16, gap: 8 do
+    label "Type below (IME supported):", size: 18
+    text_input(0, w: 60, size: 18)
+    divider
+    markdown("# Markdown Demo\n\nA paragraph with **bold**, *italic*, and `code`.\n\n- Item one\n- Item two\n\n> Blockquote\n\n---\n\n*fin*\n", size: 16)
   end
   return 0
 end
 
 #: () -> Integer
 def main
-  kui_init("Markdown Demo", 800, 700)
-  kui_load_font("/System/Library/Fonts/SFNS.ttf", 20)
+  kui_init("Markdown + IME Demo", 800, 600)
+  kui_load_font_cjk("/Library/Fonts/Arial Unicode.ttf", 20)
   kui_theme_dark
 
   while kui_running == 1

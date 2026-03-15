@@ -224,12 +224,11 @@ def text_input(buf_id, w: 40, size: 16)
 
   # Only process keyboard input if this text_input is focused
   if focused == 1
-    # Handle character input
+    # Handle character input (drain full queue for IME)
     ch = _kui_char_pressed
-    if ch >= 32
-      if ch <= 126
-        _kui_textbuf_putchar(buf_id, ch)
-      end
+    while ch >= 32
+      _kui_textbuf_putchar(buf_id, ch)
+      ch = _kui_char_pressed
     end
 
     # Handle special keys

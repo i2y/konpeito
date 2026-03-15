@@ -92,6 +92,10 @@ module Clay
   %a{cfunc: "konpeito_clay_load_font"}
   def self.load_font: (String path, Integer size) -> Integer
 
+  # Load a font file with CJK glyph ranges and return its font_id
+  %a{cfunc: "konpeito_clay_load_font_cjk"}
+  def self.load_font_cjk: (String path, Integer size) -> Integer
+
   # ── Render Command Access ──
 
   %a{cfunc: "konpeito_clay_cmd_type"}

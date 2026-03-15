@@ -565,6 +565,13 @@ def _kui_load_font(path, size)
   return fid
 end
 
+#: (String path, Integer size) -> Integer
+def _kui_load_font_cjk(path, size)
+  fid = Clay.load_font_cjk(path, size)
+  KUITheme.c[31] = fid
+  return fid
+end
+
 # ── Number Display Helpers (digit-by-digit, no string allocation) ──
 
 #: (Integer d, Integer size, Integer r, Integer g, Integer b) -> Integer

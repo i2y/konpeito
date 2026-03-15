@@ -621,6 +621,11 @@ def _kui_load_font(path, size)
   return 0
 end
 
+#: (String path, Integer size) -> Integer
+def _kui_load_font_cjk(path, size)
+  return 0
+end
+
 # ── Number Display Helpers ──
 
 #: (Integer d, Integer size, Integer r, Integer g, Integer b) -> Integer

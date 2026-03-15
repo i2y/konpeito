@@ -349,8 +349,23 @@ void konpeito_clay_text(const char *text, int font_id, int font_size,
  *  Text Measurement (raylib)
  * ═══════════════════════════════════════════ */
 
+/* UTF-8 aware text measurement using raylib's MeasureTextEx */
+static inline Clay_Dimensions Konpeito_MeasureText(Clay_StringSlice text,
+                                                     Clay_TextElementConfig *config,
+                                                     void *userData) {
+    Font *fonts = (Font *)userData;
+    Font fontToUse = fonts[config->fontId];
+    if (!fontToUse.glyphs) fontToUse = GetFontDefault();
+    char temp[4096];
+    int len = text.length < 4095 ? (int)text.length : 4095;
+    memcpy(temp, text.chars, len);
+    temp[len] = '\0';
+    Vector2 size = MeasureTextEx(fontToUse, temp, (float)config->fontSize, 0);
+    return (Clay_Dimensions){ size.x, size.y };
+}
+
 void konpeito_clay_set_measure_text_raylib(void) {
-    Clay_SetMeasureTextFunction(Raylib_MeasureText, (void *)g_fonts);
+    Clay_SetMeasureTextFunction(Konpeito_MeasureText, (void *)g_fonts);
 }
 
 /* ═══════════════════════════════════════════
@@ -364,7 +379,28 @@ int konpeito_clay_load_font(const char *path, int size) {
     SetTextureFilter(g_fonts[id].texture, TEXTURE_FILTER_BILINEAR);
     g_font_count++;
     /* Re-register measure function with updated fonts array */
-    Clay_SetMeasureTextFunction(Raylib_MeasureText, (void *)g_fonts);
+    Clay_SetMeasureTextFunction(Konpeito_MeasureText, (void *)g_fonts);
+    return id;
+}
+
+int konpeito_clay_load_font_cjk(const char *path, int size) {
+    if (g_font_count >= MAX_FONTS) return -1;
+    int id = g_font_count;
+    /* ASCII + CJK Symbols + Hiragana + Katakana + CJK Unified + Fullwidth */
+    int count = 0;
+    int *cps = (int *)malloc(22000 * sizeof(int));
+    if (!cps) return -1;
+    for (int c = 32; c <= 126; c++) cps[count++] = c;
+    for (int c = 0x3000; c <= 0x303F; c++) cps[count++] = c;
+    for (int c = 0x3040; c <= 0x309F; c++) cps[count++] = c;
+    for (int c = 0x30A0; c <= 0x30FF; c++) cps[count++] = c;
+    for (int c = 0x4E00; c <= 0x9FFF; c++) cps[count++] = c;
+    for (int c = 0xFF00; c <= 0xFFEF; c++) cps[count++] = c;
+    g_fonts[id] = LoadFontEx(path, size, cps, count);
+    free(cps);
+    SetTextureFilter(g_fonts[id].texture, TEXTURE_FILTER_BILINEAR);
+    g_font_count++;
+    Clay_SetMeasureTextFunction(Konpeito_MeasureText, (void *)g_fonts);
     return id;
 }
 
@@ -579,15 +615,59 @@ int konpeito_clay_left_to_right(void) { return 0; }
 int konpeito_clay_top_to_bottom(void) { return 1; }
 
 /* ═══════════════════════════════════════════
- *  Text Buffer System
+ *  UTF-8 Helpers
+ * ═══════════════════════════════════════════ */
+
+static int utf8_char_len(unsigned char b) {
+    if (b < 0x80) return 1;
+    if ((b & 0xE0) == 0xC0) return 2;
+    if ((b & 0xF0) == 0xE0) return 3;
+    if ((b & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+static int utf8_prev_char_len(const char *buf, int pos) {
+    if (pos <= 0) return 0;
+    int back = 1;
+    while (back < 4 && pos - back > 0 && ((unsigned char)buf[pos - back] & 0xC0) == 0x80) {
+        back++;
+    }
+    return back;
+}
+
+static int utf8_encode(int cp, char *out) {
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    } else if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    } else if (cp < 0x110000) {
+        out[0] = (char)(0xF0 | (cp >> 18));
+        out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[3] = (char)(0x80 | (cp & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+/* ═══════════════════════════════════════════
+ *  Text Buffer System (UTF-8 aware)
  * ═══════════════════════════════════════════
- * 8 independent text buffers for text_input widgets.
- * Each buffer holds up to 255 characters (256 bytes including null).
+ * 32 independent text buffers for text_input widgets.
+ * Buffers store UTF-8 encoded text. Lengths and cursors are byte offsets.
  * Buffer operations are GC-free — no mruby String allocation.
  */
 
 #define TEXTBUF_COUNT 32
-#define TEXTBUF_SIZE 256
+#define TEXTBUF_SIZE 1024
 
 static char g_textbufs[TEXTBUF_COUNT][TEXTBUF_SIZE];
 static int g_textbuf_lens[TEXTBUF_COUNT];
@@ -613,16 +693,21 @@ void konpeito_clay_textbuf_copy(int dst, int src) {
 
 void konpeito_clay_textbuf_putchar(int id, int ch) {
     if (id < 0 || id >= TEXTBUF_COUNT) return;
+    char encoded[4];
+    int enc_len = utf8_encode(ch, encoded);
+    if (enc_len == 0) return;
     int len = g_textbuf_lens[id];
     int cur = g_textbuf_cursors[id];
-    if (len >= TEXTBUF_SIZE - 1) return;
-    for (int i = len; i > cur; i--) {
-        g_textbufs[id][i] = g_textbufs[id][i - 1];
+    if (len + enc_len >= TEXTBUF_SIZE) return;
+    for (int i = len - 1; i >= cur; i--) {
+        g_textbufs[id][i + enc_len] = g_textbufs[id][i];
     }
-    g_textbufs[id][cur] = (char)ch;
-    g_textbuf_lens[id] = len + 1;
-    g_textbuf_cursors[id] = cur + 1;
-    g_textbufs[id][len + 1] = '\0';
+    for (int i = 0; i < enc_len; i++) {
+        g_textbufs[id][cur + i] = encoded[i];
+    }
+    g_textbuf_lens[id] = len + enc_len;
+    g_textbuf_cursors[id] = cur + enc_len;
+    g_textbufs[id][len + enc_len] = '\0';
 }
 
 void konpeito_clay_textbuf_backspace(int id) {
@@ -630,12 +715,13 @@ void konpeito_clay_textbuf_backspace(int id) {
     int cur = g_textbuf_cursors[id];
     int len = g_textbuf_lens[id];
     if (cur <= 0) return;
-    for (int i = cur - 1; i < len - 1; i++) {
-        g_textbufs[id][i] = g_textbufs[id][i + 1];
+    int clen = utf8_prev_char_len(g_textbufs[id], cur);
+    for (int i = cur - clen; i < len - clen; i++) {
+        g_textbufs[id][i] = g_textbufs[id][i + clen];
     }
-    g_textbuf_lens[id] = len - 1;
-    g_textbuf_cursors[id] = cur - 1;
-    g_textbufs[id][len - 1] = '\0';
+    g_textbuf_lens[id] = len - clen;
+    g_textbuf_cursors[id] = cur - clen;
+    g_textbufs[id][len - clen] = '\0';
 }
 
 void konpeito_clay_textbuf_delete(int id) {
@@ -643,21 +729,26 @@ void konpeito_clay_textbuf_delete(int id) {
     int cur = g_textbuf_cursors[id];
     int len = g_textbuf_lens[id];
     if (cur >= len) return;
-    for (int i = cur; i < len - 1; i++) {
-        g_textbufs[id][i] = g_textbufs[id][i + 1];
+    int clen = utf8_char_len((unsigned char)g_textbufs[id][cur]);
+    for (int i = cur; i < len - clen; i++) {
+        g_textbufs[id][i] = g_textbufs[id][i + clen];
     }
-    g_textbuf_lens[id] = len - 1;
-    g_textbufs[id][len - 1] = '\0';
+    g_textbuf_lens[id] = len - clen;
+    g_textbufs[id][len - clen] = '\0';
 }
 
 void konpeito_clay_textbuf_cursor_left(int id) {
     if (id < 0 || id >= TEXTBUF_COUNT) return;
-    if (g_textbuf_cursors[id] > 0) g_textbuf_cursors[id]--;
+    int cur = g_textbuf_cursors[id];
+    if (cur <= 0) return;
+    g_textbuf_cursors[id] = cur - utf8_prev_char_len(g_textbufs[id], cur);
 }
 
 void konpeito_clay_textbuf_cursor_right(int id) {
     if (id < 0 || id >= TEXTBUF_COUNT) return;
-    if (g_textbuf_cursors[id] < g_textbuf_lens[id]) g_textbuf_cursors[id]++;
+    int cur = g_textbuf_cursors[id];
+    if (cur >= g_textbuf_lens[id]) return;
+    g_textbuf_cursors[id] = cur + utf8_char_len((unsigned char)g_textbufs[id][cur]);
 }
 
 void konpeito_clay_textbuf_cursor_home(int id) {
@@ -710,10 +801,11 @@ void konpeito_clay_textbuf_render_range(int id, int start, int end, int fid, int
 }
 
 void konpeito_clay_text_char(int ch, int fid, int fsz, double r, double g, double b) {
-    if (ch < 32 || ch > 126) return;
-    char buf[2];
-    buf[0] = (char)ch;
-    buf[1] = '\0';
+    if (ch < 32) return;
+    char buf[5];
+    int len = utf8_encode(ch, buf);
+    if (len == 0) return;
+    buf[len] = '\0';
     flush_config();
     Clay_TextElementConfig cfg = {
         .textColor = {(float)r, (float)g, (float)b, 255.0f},

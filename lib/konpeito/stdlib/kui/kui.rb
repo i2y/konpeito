@@ -229,6 +229,12 @@ def kui_load_font(path, size)
   return _kui_load_font(path, size)
 end
 
+# Load a font with CJK glyph ranges (GUI: CJK font file, TUI: no-op).
+#: (String path, Integer size) -> Integer
+def kui_load_font_cjk(path, size)
+  return _kui_load_font_cjk(path, size)
+end
+
 # Get unified key code for the current frame.
 #: () -> Integer
 def kui_key_pressed

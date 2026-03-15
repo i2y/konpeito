@@ -651,3 +651,10 @@ void konpeito_clay_tui_textbuf_set_str(int id, const char *str, int len) {
     g_textbuf_cursors[id] = len;
 }
 
+/* ── Stubs for GUI-only features (linked from mruby_helpers.c) ── */
+
+typedef void (*clay_frame_fn)(void);
+void konpeito_clay_set_resize_frame_fn(clay_frame_fn fn) { (void)fn; }
+void konpeito_clay_set_bg_color(int r, int g, int b) { (void)r; (void)g; (void)b; }
+int  konpeito_clay_is_resizing(void) { return 0; }
+

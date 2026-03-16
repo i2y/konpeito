@@ -5211,11 +5211,7 @@ module Konpeito
               @builder.position_at_end(llvm_block)
               # Return the last value in the block, or Qnil
               # For while_exit blocks, the last instruction loads the break value
-              if last_instr
-                @builder.ret(last_instr)
-              else
-                @builder.ret(qnil)
-              end
+              @builder.ret(last_instr || qnil)
             end
           end
 

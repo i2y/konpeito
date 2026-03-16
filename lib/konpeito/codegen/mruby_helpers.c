@@ -1141,9 +1141,16 @@ mrb_value konpeito_mrb_top_self(mrb_state *mrb) { return mrb_top_self(mrb); }
  * Live resize bridge — calls Ruby _kui_resize_frame() from C
  * ================================================================ */
 
-/* Forward declaration from clay_native.c */
+/* Forward declaration from clay_native.c — resolved via function pointer to avoid
+   link errors when Clay is not linked */
 typedef void (*clay_frame_fn)(void);
-extern void konpeito_clay_set_resize_frame_fn(clay_frame_fn fn);
+typedef void (*set_resize_fn_t)(clay_frame_fn);
+
+static set_resize_fn_t konpeito_clay_set_resize_frame_fn_ptr = NULL;
+
+void konpeito_set_clay_resize_fn(set_resize_fn_t fn) {
+    konpeito_clay_set_resize_frame_fn_ptr = fn;
+}
 
 static void konpeito_resize_frame_bridge(void) {
     mrb_state *mrb = konpeito_mrb_state;
@@ -1157,5 +1164,7 @@ static void konpeito_resize_frame_bridge(void) {
 }
 
 void konpeito_register_resize_callback(void) {
-    konpeito_clay_set_resize_frame_fn(konpeito_resize_frame_bridge);
+    if (konpeito_clay_set_resize_frame_fn_ptr) {
+        konpeito_clay_set_resize_frame_fn_ptr(konpeito_resize_frame_bridge);
+    }
 }

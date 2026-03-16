@@ -154,6 +154,11 @@ static void live_resize_refresh_callback(GLFWwindow *window);
  *  Lifecycle
  * ═══════════════════════════════════════════ */
 
+/* mruby_helpers.c exposes this so Clay can register its resize function */
+typedef void (*set_resize_fn_t)(clay_frame_fn);
+extern void konpeito_set_clay_resize_fn(set_resize_fn_t fn);
+void konpeito_clay_set_resize_frame_fn(clay_frame_fn fn);  /* defined below */
+
 void konpeito_clay_init(double w, double h) {
     uint32_t min_mem = Clay_MinMemorySize();
     g_arena = Clay_CreateArenaWithCapacityAndMemory(min_mem, malloc(min_mem));
@@ -174,6 +179,9 @@ void konpeito_clay_init(double w, double h) {
         glfwSetFramebufferSizeCallback(glfw_win, live_resize_framebuffer_callback);
         glfwSetWindowRefreshCallback(glfw_win, live_resize_refresh_callback);
     }
+
+    /* Register resize function pointer into mruby_helpers.c */
+    konpeito_set_clay_resize_fn(konpeito_clay_set_resize_frame_fn);
 }
 
 void konpeito_clay_destroy(void) {

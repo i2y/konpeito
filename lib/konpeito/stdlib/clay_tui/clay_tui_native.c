@@ -101,6 +101,12 @@ static void clay_error_handler(Clay_ErrorData error) {
  *  Lifecycle
  * ═══════════════════════════════════════════ */
 
+/* mruby_helpers.c exposes this so ClayTUI can register its resize function */
+typedef void (*clay_frame_fn_fwd)(void);
+typedef void (*set_resize_fn_t)(clay_frame_fn_fwd);
+extern void konpeito_set_clay_resize_fn(set_resize_fn_t fn);
+static void konpeito_clay_set_resize_frame_fn(clay_frame_fn_fwd fn);
+
 void konpeito_clay_tui_init(double w, double h) {
     tb_init();
     tb_set_output_mode(TB_OUTPUT_TRUECOLOR);
@@ -110,6 +116,9 @@ void konpeito_clay_tui_init(double w, double h) {
     g_arena = Clay_CreateArenaWithCapacityAndMemory(min_mem, malloc(min_mem));
     g_ctx = Clay_Initialize(g_arena, (Clay_Dimensions){(float)w, (float)h},
                             (Clay_ErrorHandler){ .errorHandlerFunction = clay_error_handler });
+
+    /* Register resize function pointer into mruby_helpers.c */
+    konpeito_set_clay_resize_fn(konpeito_clay_set_resize_frame_fn);
 }
 
 void konpeito_clay_tui_destroy(void) {
@@ -706,10 +715,10 @@ void konpeito_clay_tui_textbuf_set_str(int id, const char *str, int len) {
     g_textbuf_cursors[id] = len;
 }
 
-/* ── Stubs for GUI-only features (linked from mruby_helpers.c) ── */
+/* ── Stubs for GUI-only features ── */
 
-typedef void (*clay_frame_fn)(void);
-void konpeito_clay_set_resize_frame_fn(clay_frame_fn fn) { (void)fn; }
 void konpeito_clay_set_bg_color(int r, int g, int b) { (void)r; (void)g; (void)b; }
 int  konpeito_clay_is_resizing(void) { return 0; }
+/* konpeito_clay_set_resize_frame_fn: no-op stub for TUI (forward-declared above) */
+static void konpeito_clay_set_resize_frame_fn(clay_frame_fn_fwd fn) { (void)fn; }
 

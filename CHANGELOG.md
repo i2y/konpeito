@@ -5,7 +5,32 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-03-16
+
+### Added
+- **KUI widget expansion** (25→66 widgets): badge, avatar, progress_steps, number_stepper,
+  segmented_control, accordion, dropdown, tooltip, toast, alert/confirm dialog, slider,
+  switch, rating, textarea, color_picker, date_picker, grid, zstack, scaffold, wrap_panel,
+  nav_bar, bottom_nav, drawer, bottom_sheet, list_section, sortable_header, timeline,
+  skeleton, carousel_dots, and nested yield fix in mruby backend
+- **KUI Markdown renderer** with live window resize support
+- **KUI chart rendering**: bar, line, and pie charts
+- **KUI Castella-style theming**: style composition and theme presets
+  (dark, light, solarized, etc.)
+- **Basic IME support**: UTF-8 text buffers and CJK font loading
+- **TUI Markdown demo** and TUI build resize stubs
+- **Pomodoro Timer** KUI utility app
+- **KUI framework extensions** and two new example apps (café menu, dashboard)
+
+### Fixed
+- **case/when with integer constants** crashed with SIGSEGV
+- **Large draw functions** caused SIGSEGV in Pomodoro Timer (resolved by function splitting)
+- **Unboxed captures in escape-cells** caused GC SIGSEGV (now boxed before capture)
+- **Nested yield+block** caused SIGSEGV (re-enabled yield target stack)
+
+### Changed
+- KUI tutorial updated with new widget features
+- KUI documentation clarified as immediate-mode UI framework
 
 ## [0.8.0] - 2026-03-14
 
@@ -379,6 +404,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.9.0]: https://github.com/i2y/konpeito/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/i2y/konpeito/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/i2y/konpeito/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/i2y/konpeito/compare/v0.6.0...v0.7.0

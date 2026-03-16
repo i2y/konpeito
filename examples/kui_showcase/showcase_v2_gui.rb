@@ -1,12 +1,12 @@
 # KUI v2 Showcase — New Widgets Demo
 #
 # Demonstrates all new KUI widgets added in the expansion:
-#   Phase 1: badge, avatar, progress_steps, number_stepper, segmented_control, accordion
-#   Phase 2: dropdown, tooltip, toast, alert/confirm dialog
-#   Phase 3: slider, switch, rating, textarea, color_picker, date_picker
-#   Phase 4: grid, zstack, scaffold, wrap_panel
-#   Phase 5: nav_bar, bottom_nav, drawer, bottom_sheet
-#   Phase 6: list_section, sortable_header, timeline, skeleton, carousel_dots
+#   Basic: badge, avatar, progress_steps, number_stepper, segmented_control, accordion
+#   Forms: dropdown, tooltip, toast, alert/confirm dialog
+#   Input: slider, switch, rating, textarea, color_picker, date_picker
+#   Layout: grid, zstack, scaffold, wrap_panel
+#   Navigation: nav_bar, bottom_nav, drawer, bottom_sheet
+#   Data: list_section, sortable_header, timeline, skeleton, carousel_dots
 #
 # Build:
 #   bundle exec ruby -Ilib bin/konpeito build --target mruby \
@@ -604,7 +604,7 @@ def draw
 
     # Main content area with optional drawer
     hpanel gap: 0 do
-      # Drawer (Phase 5)
+      # Drawer
       drawer App.s[19], w: 160, pad: 8, gap: 4 do
         label "Drawer Menu", size: 16
         divider
@@ -635,7 +635,7 @@ def draw
           draw_layout_tab
         end
 
-        # Bottom sheet (Phase 5)
+        # Bottom sheet
         bottom_sheet App.s[20], h: 120, pad: 12, gap: 4 do
           label "Bottom Sheet", size: 16
           divider

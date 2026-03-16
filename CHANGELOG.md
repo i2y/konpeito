@@ -5,6 +5,13 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-03-16
+
+### Fixed
+- **mruby standalone build without Clay** failed with linker error
+  (`_konpeito_clay_set_resize_frame_fn` undefined). Replaced extern reference
+  with function pointer registration pattern so Clay-free builds link cleanly.
+
 ## [0.9.0] - 2026-03-16
 
 ### Added
@@ -404,6 +411,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.9.1]: https://github.com/i2y/konpeito/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/i2y/konpeito/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/i2y/konpeito/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/i2y/konpeito/compare/v0.7.0...v0.7.1

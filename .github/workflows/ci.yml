@@ -92,16 +92,31 @@ jobs:
         run: bundle exec rake test:codegen
 
   test-mruby:
-    name: mruby Build Tests
+    name: mruby Build Tests (${{ matrix.mruby-version }})
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mruby-version: [homebrew, source-4.x]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install LLVM 20 and mruby
+      - name: Install LLVM 20
         run: |
-          brew install llvm@20 mruby
+          brew install llvm@20
           echo "/opt/homebrew/opt/llvm@20/bin" >> $GITHUB_PATH
           ln -sf /opt/homebrew/opt/llvm@20/lib/libLLVM-20.dylib /opt/homebrew/lib/
+
+      - name: Install mruby (Homebrew)
+        if: matrix.mruby-version == 'homebrew'
+        run: brew install mruby
+
+      - name: Install mruby 4.x (from source)
+        if: matrix.mruby-version == 'source-4.x'
+        run: |
+          git clone --depth 1 --branch 4.0.0-rc2 https://github.com/mruby/mruby.git /tmp/mruby-src
+          cd /tmp/mruby-src && rake
+          echo "MRUBY_DIR=/tmp/mruby-src/build/host" >> $GITHUB_ENV
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -111,8 +126,6 @@ jobs:
 
       - name: Check mruby environment
         run: |
-          mruby-config --cflags
-          mruby-config --ldflags --libs
           bundle exec ruby -Ilib bin/konpeito doctor --target mruby --no-color
         continue-on-error: true
 

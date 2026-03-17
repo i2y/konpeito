@@ -18,7 +18,7 @@ This tutorial walks you through installing Konpeito and running your first compi
 | Ruby | 4.0.1+ | Always (runs the compiler) |
 | LLVM | 20 | CRuby native backend, mruby backend |
 | Java | 21+ | JVM backend |
-| mruby | 3.x | mruby backend |
+| mruby | 3.x or 4.x | mruby backend |
 
 LLVM, Java, and mruby are needed depending on which backend you use. You only need one.
 

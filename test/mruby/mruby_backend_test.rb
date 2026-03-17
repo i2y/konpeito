@@ -251,6 +251,51 @@ class MRubyBackendTest < Minitest::Test
     refute_includes content, "yyjson"
   end
 
+  # Test that mruby_helpers.c has _Static_assert for mrb_value size
+  def test_mruby_helpers_has_version_compatibility
+    helpers_path = File.join(File.dirname(__FILE__), "../../lib/konpeito/codegen/mruby_helpers.c")
+    content = File.read(helpers_path)
+    assert_includes content, "_Static_assert(sizeof(mrb_value) == sizeof(uint64_t)"
+    assert_includes content, "KONPEITO_MRUBY4"
+    assert_includes content, '#include <mruby/version.h>'
+    assert_includes content, "konpeito_mruby_version"
+  end
+
+  # Test check_mruby_compatibility version check logic
+  def test_check_mruby_compatibility
+    gen = create_mruby_generator
+    output_file = File.join(@test_dir, "test_compat")
+    backend = Konpeito::Codegen::MRubyBackend.new(
+      gen,
+      output_file: output_file,
+      module_name: "test_compat"
+    )
+
+    # The method should exist and be callable
+    assert_respond_to backend, :check_mruby_compatibility
+
+    # When mruby_major_version is nil (unknown), it should not raise
+    original_method = Konpeito::Platform.method(:mruby_major_version)
+    Konpeito::Platform.define_singleton_method(:mruby_major_version) { nil }
+    begin
+      assert_nil backend.check_mruby_compatibility
+    ensure
+      Konpeito::Platform.define_singleton_method(:mruby_major_version, original_method)
+    end
+
+    # When major version is 2, it should raise
+    original_major = Konpeito::Platform.method(:mruby_major_version)
+    original_ver = Konpeito::Platform.method(:mruby_version)
+    Konpeito::Platform.define_singleton_method(:mruby_major_version) { 2 }
+    Konpeito::Platform.define_singleton_method(:mruby_version) { "2.1.0" }
+    begin
+      assert_raises(RuntimeError) { backend.check_mruby_compatibility }
+    ensure
+      Konpeito::Platform.define_singleton_method(:mruby_major_version, original_major)
+      Konpeito::Platform.define_singleton_method(:mruby_version, original_ver)
+    end
+  end
+
   private
 
   def create_mruby_generator

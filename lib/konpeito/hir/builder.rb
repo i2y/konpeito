@@ -450,6 +450,11 @@ module Konpeito
           )
           # Mark as reopened if it's a known Ruby core class
           class_def.reopened = true if RUBY_CORE_CLASSES.include?(name)
+          # Propagate type_params from RBS (e.g., class Stack[T])
+          if @rbs_loader&.respond_to?(:user_class_type_params)
+            tp = @rbs_loader.user_class_type_params[name]
+            class_def.type_params = tp if tp
+          end
         end
 
         # Visit body within class context

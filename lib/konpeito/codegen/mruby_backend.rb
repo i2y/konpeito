@@ -31,7 +31,21 @@ module Konpeito
         !!@cross_target
       end
 
+      # Check mruby version compatibility. Raises for unsupported versions, warns for future versions.
+      def check_mruby_compatibility
+        major = Platform.mruby_major_version
+        return unless major # unknown version — skip check
+
+        if major < 3
+          raise "mruby #{Platform.mruby_version} is not supported. Konpeito requires mruby 3.x or 4.x."
+        elsif major > 4
+          warn "Warning: mruby #{Platform.mruby_version} is newer than tested. Konpeito is tested with mruby 3.x and 4.x."
+        end
+      end
+
       def generate
+        check_mruby_compatibility unless cross_compiling?
+
         ir_file = "#{output_base}.ll"
         obj_file = "#{output_base}.o"
         init_c_file = "#{output_base}_mruby_init.c"

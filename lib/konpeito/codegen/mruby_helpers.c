@@ -14,6 +14,7 @@
 
 #include <mruby.h>
 #include <mruby/value.h>
+#include <mruby/version.h>
 #include <mruby/class.h>
 #include <mruby/data.h>
 #include <mruby/string.h>
@@ -30,6 +31,26 @@
 #include <stdint.h>
 
 /* ================================================================
+ * mruby version compatibility
+ * ================================================================ */
+
+/* Detect mruby 4.x */
+#if defined(MRUBY_RELEASE_MAJOR) && MRUBY_RELEASE_MAJOR >= 4
+  #define KONPEITO_MRUBY4 1
+#else
+  #define KONPEITO_MRUBY4 0
+#endif
+
+/* Reject boxing modes where mrb_value is not 64-bit.
+ * Konpeito LLVM IR treats mrb_value as i64 — this must hold. */
+#ifdef MRB_NO_BOXING
+  #error "Konpeito requires mrb_value to be 64-bit (NaN-boxing or word-boxing). MRB_NO_BOXING is not supported."
+#endif
+
+_Static_assert(sizeof(mrb_value) == sizeof(uint64_t),
+               "Konpeito requires sizeof(mrb_value) == 8 (64-bit)");
+
+/* ================================================================
  * Global mrb_state pointer (set by main() in generated init code)
  * All CRuby-compatible wrappers below use this to access mruby.
  * ================================================================ */
@@ -38,6 +59,15 @@ mrb_state *konpeito_mrb_state = NULL;
 
 mrb_state *konpeito_get_mrb_state(void) {
     return konpeito_mrb_state;
+}
+
+/* Return the mruby version description string */
+const char *konpeito_mruby_version(void) {
+#ifdef MRUBY_DESCRIPTION
+    return MRUBY_DESCRIPTION;
+#else
+    return "mruby (unknown version)";
+#endif
 }
 
 /* ================================================================

@@ -19,7 +19,7 @@ Konpeito is an ahead-of-time (AOT) compiler for Ruby. It takes ordinary Ruby sou
 | Ruby | 4.0+ | Always |
 | LLVM | 20 | CRuby native backend, mruby backend |
 | Java | 21+ | JVM backend only |
-| mruby | 3.x | mruby backend only |
+| mruby | 3.x or 4.x | mruby backend only |
 
 See the [README](https://github.com/i2y/konpeito/blob/main/README.md) for platform-specific LLVM installation instructions.
 

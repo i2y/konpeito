@@ -189,6 +189,15 @@ module Konpeito
           hint: "Install: #{Platform.mruby_install_hint}"
         }
 
+        # mruby version
+        mruby_ver = Platform.mruby_version
+        checks << {
+          name: "mruby version",
+          detail: mruby_ver || "unknown",
+          status: mruby_ver ? :ok : :warning,
+          hint: "Supported: mruby 3.x or 4.x"
+        }
+
         # mruby headers
         cflags = Platform.mruby_cflags
         inc_dir = cflags.split.find { |f| f.start_with?("-I") }&.sub(/^-I/, "")

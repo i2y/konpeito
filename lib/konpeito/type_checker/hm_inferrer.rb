@@ -9,7 +9,7 @@ module Konpeito
     # Uses Algorithm W with constraint generation and unification
     class HMInferrer
       attr_reader :errors, :unifier, :node_types, :diagnostics, :ivar_types, :inference_errors,
-                  :unresolved_type_warnings
+                  :unresolved_type_warnings, :class_type_params
 
       def initialize(rbs_loader = nil, file_path: nil, source: nil)
         @rbs_loader = rbs_loader
@@ -35,6 +35,7 @@ module Konpeito
         @keyword_param_vars = {}  # func_key => { :param_name => TypeVar }
         @unresolved_type_warnings = []  # Warnings for types that survived inference
         @polymorphic_methods = {}  # qualified_key => TypeScheme for instance methods
+        @class_type_params = {}  # class_name => { :T => TypeVar, ... } for generic classes
       end
 
       # Main entry: infer types for a program AST
@@ -903,6 +904,22 @@ module Konpeito
           if init_type
             unify_call_args(init_type, arg_types)
           end
+
+          # For generic classes (e.g., class Stack[T] in RBS), create fresh TypeVars
+          # so that Stack.new → Stack[T'] where T' is unified from usage
+          class_name_str = receiver_type.name.to_s
+          rbs_type_params = @rbs_loader&.respond_to?(:user_class_type_params) &&
+                            @rbs_loader.user_class_type_params[class_name_str]
+          if rbs_type_params && !rbs_type_params.empty?
+            fresh_vars = rbs_type_params.map { TypeVar.new }
+            # Store mapping so instance method resolution can build substitution
+            @class_type_params[class_name_str] ||= {}
+            rbs_type_params.each_with_index do |tp_name, i|
+              @class_type_params[class_name_str][tp_name] = fresh_vars[i]
+            end
+            return Types::ClassInstance.new(receiver_type.name, fresh_vars)
+          end
+
           return Types::ClassInstance.new(receiver_type.name)
         end
 

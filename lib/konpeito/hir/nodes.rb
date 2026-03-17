@@ -65,6 +65,7 @@ module Konpeito
       attr_accessor :instance_var_types # HM-inferred ivar types: { "name" => :Integer, "age" => :String, ... }
       attr_accessor :body_constants     # Array of [name, value_node] for constants defined in class body
       attr_accessor :body_class_vars    # Array of [name, value_node] for class variables initialized in class body
+      attr_accessor :type_params        # Array of type parameter names (e.g., [:T] for class Stack[T])
 
       def initialize(name:, superclass: nil, method_names: [], instance_vars: [], included_modules: [], extended_modules: [], prepended_modules: [])
         super(type: TypeChecker::Types::NIL)
@@ -83,6 +84,7 @@ module Konpeito
         @instance_var_types = {}
         @body_constants = []
         @body_class_vars = []
+        @type_params = []
       end
     end
 

@@ -145,6 +145,47 @@ module Konpeito
       File.exist?(File.join(inc_dir, "mruby.h"))
     end
 
+    # Get mruby version string (e.g., "3.4.0" or "4.0.0-rc2")
+    def self.mruby_version
+      # Try mruby-config --version first (mruby 4.x supports this)
+      config = find_mruby_config
+      if config
+        version = `#{config} --version 2>/dev/null`.strip
+        # Only accept if it looks like a version string (not help text)
+        return version if version.match?(/\A\d+\.\d+/)
+      end
+
+      # Fallback: parse mruby/version.h
+      version_h = find_mruby_version_header
+      if version_h
+        content = File.read(version_h)
+        major = content[/MRUBY_RELEASE_MAJOR\s+(\d+)/, 1]
+        minor = content[/MRUBY_RELEASE_MINOR\s+(\d+)/, 1]
+        patch = content[/MRUBY_RELEASE_TEENY\s+(\d+)/, 1]
+        return "#{major}.#{minor}.#{patch}" if major
+      end
+
+      nil
+    end
+
+    # Find mruby/version.h from include paths
+    def self.find_mruby_version_header
+      cflags = mruby_cflags
+      cflags.split.select { |f| f.start_with?("-I") }.each do |flag|
+        inc_dir = flag.sub(/^-I/, "")
+        path = File.join(inc_dir, "mruby", "version.h")
+        return path if File.exist?(path)
+      end
+      nil
+    end
+
+    # Get mruby major version number (e.g., 3 or 4)
+    def self.mruby_major_version
+      version = mruby_version
+      return nil unless version
+      version.split(".").first.to_i
+    end
+
     # Find zig compiler (used for cross-compilation)
     def self.find_zig
       find_executable("zig")

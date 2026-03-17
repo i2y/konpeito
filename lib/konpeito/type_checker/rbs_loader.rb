@@ -9,7 +9,7 @@ module Konpeito
     # Loads and manages RBS type definitions
     class RBSLoader
       attr_reader :environment, :native_classes, :native_modules, :boxed_classes, :cfunc_methods, :ffi_libraries,
-                  :extern_classes, :simd_classes, :jvm_classes
+                  :extern_classes, :simd_classes, :jvm_classes, :user_class_type_params
 
       def initialize
         @environment = nil
@@ -22,6 +22,7 @@ module Konpeito
         @extern_classes = {}  # class_name -> ExternClassType (external C struct wrappers)
         @simd_classes = {}    # class_name -> SIMDClassType (SIMD vector classes)
         @jvm_classes = {}     # "Java::Util::ArrayList" -> { jvm_internal_name:, methods:, static_methods: }
+        @user_class_type_params = {}  # "Stack" => [:T], "Pair" => [:A, :B]
         @rbs_file_contents = {}  # path -> content
         @temp_dirs = []  # Temp directories for single RBS files
         @definition_builder = nil  # Cached DefinitionBuilder
@@ -572,6 +573,11 @@ module Konpeito
         if full_name.start_with?("Java::")
           parse_jvm_class(decl, full_name)
           return
+        end
+
+        # Extract type parameters (e.g., class Stack[T] → [:T])
+        if decl.type_params && !decl.type_params.empty?
+          @user_class_type_params[class_name.to_s] = decl.type_params.map { |tp| tp.name.to_sym }
         end
 
         annotations = AnnotationParser.parse_all(decl.annotations)

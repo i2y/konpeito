@@ -14,7 +14,7 @@ module Konpeito
     #   identity("hello")  # generates identity_String
     #
     class Monomorphizer
-      attr_reader :specializations, :call_sites, :union_dispatches
+      attr_reader :specializations, :call_sites, :union_dispatches, :class_specializations
 
       def initialize(hir_program, type_info)
         @hir_program = hir_program
@@ -24,6 +24,7 @@ module Konpeito
         @union_call_sites = []  # Calls requiring runtime dispatch
         @union_dispatches = {}  # { [func_name, original_types] => dispatch_info }
         @generated_functions = {}
+        @class_specializations = {}  # { [class_name, type_args_strs] => specialized_class_name }
       end
 
       # Analyze the HIR program to find monomorphization opportunities
@@ -34,12 +35,18 @@ module Konpeito
 
         # Determine which specializations to generate
         determine_specializations
+
+        # Collect and generate class-level specializations for generic classes
+        analyze_class_specializations
       end
 
       # Apply monomorphization transformations
       def transform
         # Generate specialized function copies
         generate_specialized_functions
+
+        # Generate specialized class definitions
+        generate_specialized_classes
 
         # Rewrite call sites to use specialized functions
         rewrite_call_sites
@@ -197,7 +204,7 @@ module Konpeito
           next if types.any? { |t| t == TypeChecker::Types::UNTYPED || t.is_a?(TypeChecker::Types::Untyped) }
           next if skip_functions.include?(func_name.to_s)
           # Skip if any type is an unresolved RBS type parameter (Elem, K, V, etc.)
-          next if types.any? { |t| t.is_a?(TypeChecker::Types::ClassInstance) && RBS_TYPE_PARAMS.include?(t.name) }
+          next if types.any? { |t| t.is_a?(TypeChecker::Types::ClassInstance) && unresolved_type_param?(t.name) }
 
           type_suffix = types.map { |t| type_to_suffix(t) }.join("_")
           specialized = "#{func_name}_#{type_suffix}"
@@ -329,15 +336,27 @@ module Konpeito
       end
 
       # RBS type parameter names that should not be used as monomorphized suffixes
-      # These are unresolved generic type variables, not concrete Ruby classes
-      RBS_TYPE_PARAMS = Set.new(%w[Elem K V U T S R E A B C D N M].map(&:to_sym)).freeze
+      # These are unresolved generic type variables, not concrete Ruby classes.
+      # User-defined type params (from RBS class declarations) are also checked dynamically.
+      BUILTIN_RBS_TYPE_PARAMS = Set.new(%w[Elem K V U T S R E A B C D N M].map(&:to_sym)).freeze
+
+      def unresolved_type_param?(type_name)
+        return true if BUILTIN_RBS_TYPE_PARAMS.include?(type_name)
+        # Check user-defined class type params
+        if @type_info.respond_to?(:class_type_params)
+          @type_info.class_type_params.each_value do |param_map|
+            return true if param_map.key?(type_name)
+          end
+        end
+        false
+      end
 
       def type_to_suffix(type)
         case type
         when TypeChecker::Types::ClassInstance
           # If the type name is an unresolved RBS type parameter (Elem, K, V, etc.),
           # treat it as untyped to avoid generating rb_const_get("Elem") at runtime
-          if RBS_TYPE_PARAMS.include?(type.name)
+          if unresolved_type_param?(type.name)
             "Any"
           else
             type.name.to_s
@@ -420,6 +439,96 @@ module Konpeito
         term.dup
       rescue TypeError
         term
+      end
+
+      # Analyze generic classes and collect concrete type instantiations from .new call sites
+      def analyze_class_specializations
+        generic_classes = @hir_program.classes.select { |c| c.type_params && !c.type_params.empty? }
+        return if generic_classes.empty?
+
+        generic_names = generic_classes.map(&:name).to_set
+
+        # Scan all functions for ClassName.new calls that produce typed ClassInstance
+        @hir_program.functions.each do |func|
+          func.body.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call) && inst.method_name.to_s == "new"
+              next unless inst.type.is_a?(TypeChecker::Types::ClassInstance)
+              next unless generic_names.include?(inst.type.name.to_s)
+
+              type_args = inst.type.type_args
+              next if type_args.empty?
+
+              # Resolve type args through unifier
+              resolved_args = type_args.map { |ta| @type_info.unifier.apply(ta) }
+              # Skip if any arg is still unresolved
+              next if resolved_args.any? { |ta| ta.is_a?(TypeChecker::TypeVar) || ta == TypeChecker::Types::UNTYPED }
+
+              class_name = inst.type.name.to_s
+              arg_strs = resolved_args.map(&:to_s)
+              key = [class_name, arg_strs]
+              next if @class_specializations.key?(key)
+
+              suffix = resolved_args.map { |t| type_to_suffix(t) }.join("_")
+              @class_specializations[key] = "#{class_name}_#{suffix}"
+            end
+          end
+        end
+      end
+
+      # Generate specialized ClassDef and methods for each class instantiation
+      def generate_specialized_classes
+        @class_specializations.each do |(class_name, type_arg_strs), specialized_name|
+          original_class = @hir_program.classes.find { |c| c.name == class_name }
+          next unless original_class
+
+          # Build substitution: type_param_name → concrete type string
+          substitution = {}
+          original_class.type_params.each_with_index do |tp, i|
+            substitution[tp.to_s] = type_arg_strs[i]
+          end
+
+          # Create specialized ClassDef with concrete ivar types
+          specialized_class = HIR::ClassDef.new(
+            name: specialized_name,
+            superclass: original_class.superclass,
+            method_names: original_class.method_names.dup,
+            instance_vars: original_class.instance_vars.dup,
+            included_modules: original_class.included_modules.dup
+          )
+          specialized_class.type_params = []  # Concrete — no type params
+
+          # Substitute ivar types
+          original_class.instance_var_types.each do |ivar_name, field_tag|
+            specialized_class.instance_var_types[ivar_name] =
+              if substitution.key?(field_tag.to_s)
+                substitution[field_tag.to_s].to_sym
+              else
+                field_tag
+              end
+          end
+
+          @hir_program.classes << specialized_class
+
+          # Copy and rename methods
+          original_class.method_names.each do |method_name|
+            original_func = @hir_program.functions.find do |f|
+              f.owner_class == class_name && f.name.to_s == method_name
+            end
+            next unless original_func
+
+            specialized_body = deep_clone_blocks(original_func.body)
+            specialized_func = HIR::Function.new(
+              name: method_name,
+              params: original_func.params.dup,
+              body: specialized_body,
+              return_type: original_func.return_type,
+              is_instance_method: original_func.is_instance_method,
+              owner_class: specialized_name
+            )
+            @hir_program.functions << specialized_func
+          end
+        end
       end
 
       def rewrite_call_sites

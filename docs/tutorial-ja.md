@@ -18,7 +18,7 @@ nav_order: 1
 | Ruby | 4.0.1+ | 必須（コンパイラ本体の実行） |
 | LLVM | 20 | CRuby ネイティブバックエンド、mruby バックエンド |
 | Java | 21+ | JVM バックエンド |
-| mruby | 3.x | mruby バックエンド |
+| mruby | 3.x or 4.x | mruby バックエンド |
 
 LLVM、Java、mruby は使うバックエンドに応じて必要になります。いずれか1つだけでも動きます。
 

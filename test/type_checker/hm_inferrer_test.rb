@@ -8,9 +8,9 @@ class HMInferrerTest < Minitest::Test
     @rbs_loader = Konpeito::TypeChecker::RBSLoader.new.load
   end
 
-  def infer(code)
+  def infer(code, rbs_loader: nil)
     ast = Prism.parse(code).value
-    hm = Konpeito::TypeChecker::HMInferrer.new(@rbs_loader)
+    hm = Konpeito::TypeChecker::HMInferrer.new(rbs_loader || @rbs_loader)
     hm.analyze(ast)
     [hm, hm.instance_variable_get(:@env).first]
   end
@@ -300,5 +300,58 @@ class HMInferrerTest < Minitest::Test
     RUBY
     hm, _env = infer(code)
     assert_empty hm.errors
+  end
+
+  # --- User-defined generics tests ---
+
+  def test_generic_class_type_params_from_rbs
+    rbs_content = <<~RBS
+      class Stack[T]
+        def push: (T item) -> void
+        def pop: () -> T
+      end
+    RBS
+    loader = Konpeito::TypeChecker::RBSLoader.new.load(inline_rbs_content: rbs_content)
+    assert_equal [:T], loader.user_class_type_params["Stack"]
+  end
+
+  def test_generic_class_new_returns_class_instance_with_type_args
+    rbs_content = <<~RBS
+      class Stack[T]
+        def push: (T item) -> void
+        def pop: () -> T
+      end
+    RBS
+    loader = Konpeito::TypeChecker::RBSLoader.new.load(inline_rbs_content: rbs_content)
+
+    code = <<~RUBY
+      class Stack
+        def initialize
+          @data = []
+        end
+        def push(item)
+          @data.push(item)
+        end
+        def pop
+          @data.pop
+        end
+      end
+      s = Stack.new
+    RUBY
+    hm, env = infer(code, rbs_loader: loader)
+    s_type = hm.finalize(env[:s].type)
+    assert_equal :Stack, s_type.name
+    assert_equal 1, s_type.type_args.size, "Stack.new should produce ClassInstance with 1 type arg"
+  end
+
+  def test_generic_class_multi_type_params
+    rbs_content = <<~RBS
+      class Pair[A, B]
+        def first: () -> A
+        def second: () -> B
+      end
+    RBS
+    loader = Konpeito::TypeChecker::RBSLoader.new.load(inline_rbs_content: rbs_content)
+    assert_equal %i[A B], loader.user_class_type_params["Pair"]
   end
 end

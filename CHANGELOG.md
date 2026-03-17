@@ -5,6 +5,26 @@ All notable changes to Konpeito will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-03-18
+
+### Added
+- **mruby 4 RC2 support**: Version detection (`mruby_version`, `mruby_major_version`
+  in Platform), C-level compatibility guards (`KONPEITO_MRUBY4` macro,
+  `_Static_assert(sizeof(mrb_value)==8)`, `MRB_NO_BOXING` error), runtime version
+  check in MRubyBackend, mruby version display in `konpeito doctor`, and CI matrix
+  for mruby 3.x / 4.x
+- **User-defined generics**: RBS `class Stack[T]` type parameters extracted and
+  propagated through HIR ClassDef, HM inferrer (fresh TypeVars on `.new`), and
+  monomorphizer (class-level specialization generating `Stack_Integer` etc.)
+- **Cosmos demoscene demo** (`examples/mruby_cosmos/`): Procedural graphics showcase
+  with sine lookup table, starfield, orbital particles, glowing nebula, rotating
+  wireframes, pulse rings, aurora wave, and CRT scanlines
+
+### Changed
+- mruby version requirement updated from "3.x" to "3.x or 4.x" in docs
+- Monomorphizer `RBS_TYPE_PARAMS` check replaced with dynamic `unresolved_type_param?`
+  that includes user-defined class type parameters
+
 ## [0.9.1] - 2026-03-16
 
 ### Fixed
@@ -411,6 +431,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `%a{extern}` - external C struct wrappers
 - `%a{simd}` - SIMD vectorization
 
+[0.10.0]: https://github.com/i2y/konpeito/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/i2y/konpeito/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/i2y/konpeito/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/i2y/konpeito/compare/v0.7.1...v0.8.0

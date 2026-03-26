@@ -2,7 +2,7 @@
 
 > *Konpeito (konpeitō) — Japanese sugar crystals. Crystallizing Ruby into native code.*
 
-A gradually typed Ruby compiler with Hindley-Milner type inference, dual LLVM/JVM backends, and seamless Java interop.
+A gradually typed Ruby compiler with Hindley-Milner type inference, three backends (LLVM, JVM, mruby), and seamless interop with C and Java.
 
 Write ordinary Ruby. Konpeito infers types automatically, compiles to fast native code, and falls back to dynamic dispatch where it can't resolve statically — with a warning so you always know.
 
@@ -95,7 +95,7 @@ See [Tutorial](docs/tutorial.md) for step-by-step walkthroughs of both patterns 
 
 ### Prerequisites
 
-Ruby 4.0+ is required. Java 21+ is needed for the JVM backend. LLVM 20 is needed only for the CRuby native backend.
+Ruby 4.0+ is required. Java 21+ is needed for the JVM backend. LLVM 20 is needed for the CRuby native and mruby backends. mruby 3.x or 4.x is needed for the mruby backend.
 
 ```bash
 gem install konpeito
@@ -132,6 +132,16 @@ sudo dnf install llvm20 clang20
 
 # Windows (MSYS2 / MinGW)
 winget install LLVM.LLVM
+```
+
+**mruby backend** (standalone native executables — games, GUI/TUI apps, CLI tools):
+```bash
+# macOS
+brew install mruby
+
+# From source (any platform)
+git clone https://github.com/mruby/mruby.git
+cd mruby && rake
 ```
 
 ### Hello World
@@ -174,6 +184,7 @@ puts MyMath.sum_up_to(100)   # => 5050
 ```bash
 konpeito build src/main.rb                          # compile to CRuby extension
 konpeito build --target jvm -o app.jar src/main.rb  # compile to standalone JAR
+konpeito build --target mruby -o app src/main.rb    # compile to standalone executable
 konpeito run src/main.rb                            # build and run in one step
 konpeito check src/main.rb                          # type check only (no codegen)
 konpeito init my_project                            # scaffold a new project
@@ -194,9 +205,13 @@ For detailed options and examples, see [CLI Reference](docs/cli-reference.md).
 - **Loop Optimizations** — LICM, inlined iterators (`each`, `map`, `reduce`, `times`), and LLVM O2 passes.
 - **CRuby C Extensions** — Output plugs directly into your existing Ruby app via `require`.
 - **JVM Backend** — Generate standalone `.jar` files that run on any Java 21+ VM.
+- **mruby Backend** — Compile to standalone native executables via LLVM IR + mruby runtime. No Ruby or Java needed on the target machine.
 - **Java Interop** — Call Java libraries directly with full type safety. Java type information flows into HM inference automatically.
 - **Native Data Structures** — `NativeArray[T]`, `NativeHash[K,V]`, `StaticArray[T,N]`, `Slice[T]`, `@struct` value types for high-performance data handling.
-- **C Interop** — Call external C libraries with `%a{cfunc}` / `%a{ffi}`, plus built-in HTTP (libcurl), Crypto (OpenSSL), and Compression (zlib) modules.
+- **C Interop** — Call external C libraries with `%a{cfunc}` / `%a{ffi}`. Built-in modules: HTTP (libcurl), Crypto (OpenSSL), Compression (zlib), Shell, JSON (yyjson).
+- **KUI** — A 66-widget declarative UI framework for the mruby backend. Same Ruby DSL code works for GUI (Clay + Raylib) and TUI (ClayTUI + termbox2).
+- **Raylib Stdlib** — 233 native graphics, audio, and input bindings for game and app development (mruby backend). Auto-detected when code references `Raylib`.
+- **Game Framework** — Physics, tween/easing, particles, FSM, timers, grid/tilemap, parallax, save/load helpers for the mruby backend.
 - **SIMD Vectorization** — `%a{simd}` compiles vector types to LLVM vector instructions.
 - **Operator Overloading** — Define `+`, `-`, `*`, `==`, `<=>`, etc. on your own classes with full type inference.
 - **Pattern Matching** — Full `case/in` support with array, hash, guard, and capture patterns.
@@ -245,6 +260,35 @@ konpeito build --target jvm --run main.rb
 ```
 
 The JVM backend supports seamless Java interop — call Java libraries directly from your Ruby code without writing any glue. Java type information is introspected from the classpath and fed into HM inference, so calling Java APIs is type-safe without annotations.
+
+## mruby Backend
+
+Konpeito can compile to standalone native executables using the mruby runtime — no Ruby or Java installation needed on the target machine:
+
+```bash
+konpeito build --target mruby -o app main.rb
+./app
+```
+
+The mruby backend uses the same LLVM IR path as the CRuby backend but links against mruby instead of CRuby, producing a single self-contained binary. It supports mruby 3.x and 4.x.
+
+### Stdlib for mruby
+
+The mruby backend includes a rich standard library — modules are auto-detected when your code references them:
+
+| Module | Description |
+|--------|-------------|
+| **Raylib** | Graphics, audio, input, textures, fonts, gamepads (233 bindings) |
+| **KUI** | 66-widget declarative UI framework — GUI and TUI from the same code |
+| **Clay / ClayTUI** | Flexbox-style layout engines (KUI wraps these) |
+| **Game Framework** | Physics, tween/easing, particles, FSM, timers, grid/tilemap, parallax, save/load |
+| **KonpeitoShell** | Shell execution, environment variables, file I/O |
+| **KonpeitoJSON** | Fast JSON parsing and generation via yyjson |
+| **KonpeitoHTTP** | HTTP client via libcurl |
+| **KonpeitoCrypto** | Cryptography via OpenSSL |
+| **KonpeitoCompression** | Compression via zlib |
+
+Demo videos (raylib games, KUI apps): [YouTube playlist](https://www.youtube.com/playlist?list=PLNY4o1idpxTN2QdnyvqaX5nEMcuhymnrz)
 
 ## Castella UI
 
@@ -481,6 +525,36 @@ app = App.new(frame, Calc.new)
 app.run
 ```
 
+## KUI
+
+A declarative UI framework for the mruby backend. One DSL, two renderers — GUI (Clay + Raylib) or TUI (ClayTUI + termbox2). Switch by changing one `require`:
+
+```ruby
+require "kui_gui"   # GUI mode (Clay + Raylib)
+# require "kui_tui" # TUI mode (ClayTUI + termbox2)
+
+kui_init("My App", 800, 600)
+kui_theme_dark
+while kui_running > 0
+  kui_begin_frame
+  vpanel pad: 16, gap: 8 do
+    label "Hello from KUI!", size: 24
+    button "Click me", size: 16 do
+      puts "clicked!"
+    end
+  end
+  kui_end_frame
+end
+kui_destroy
+```
+
+```bash
+konpeito build --target mruby -o myapp main.rb
+./myapp
+```
+
+KUI includes 66 widgets: panels, buttons, text inputs, sliders, checkboxes, radio buttons, toggles, dropdowns, tabs, modals, accordions, tables, charts (bar/line/pie), markdown rendering, toast notifications, navigation bars, bottom sheets, and more.
+
 ## Performance
 
 Konpeito targets compute-heavy, typed loops where unboxed arithmetic and backend optimizations can make a meaningful difference. Actual speedups depend heavily on the workload, input data, and hardware — the numbers below are from one specific environment and should be taken as rough indicators, not guarantees.
@@ -505,6 +579,8 @@ For numeric workloads, the JVM backend typically shows **~30–60x** speedups ov
 
 ## Documentation
 
+**[i2y.github.io/konpeito](https://i2y.github.io/konpeito)** — Full documentation site
+
 ### User Guides
 
 - **[Getting Started](docs/getting-started.md)** — Installation, Hello World, first project, Castella UI tutorial
@@ -515,7 +591,7 @@ For numeric workloads, the JVM backend typically shows **~30–60x** speedups ov
 ### Architecture & Design
 
 - **[Architecture](docs/architecture.md)** — Full compiler pipeline, design philosophy, and roadmap
-- **[JVM Backend](docs/architecture-jvm.md)** — Dual-backend strategy, JVM codegen, Java interop
+- **[JVM Backend](docs/architecture-jvm.md)** — Multi-backend strategy, JVM codegen, Java interop
 - **[Castella UI](docs/castella-ui.md)** — GUI framework design and widget reference
 - **[Native Stdlib Proposal](docs/native-stdlib-proposal.md)** — NativeArray, StaticArray, Slice, and friends
 - **[Language Specification](docs/language-specification.md)** — Supported syntax, type system rules, backend behavior
@@ -527,8 +603,9 @@ For numeric workloads, the JVM backend typically shows **~30–60x** speedups ov
 |---|---|---|
 | Ruby | 4.0.1+ | Always |
 | Java | 21+ | JVM backend |
-| LLVM | 20 | CRuby native backend |
-| ruby-llvm gem | ~> 20.1 | CRuby native backend |
+| LLVM | 20 | CRuby native backend, mruby backend |
+| ruby-llvm gem | ~> 20.1 | CRuby native backend, mruby backend |
+| mruby | 3.x or 4.x | mruby backend |
 | Platform | macOS (ARM64/x64), Linux (x64/ARM64), Windows (x64, MSYS2/MinGW) | — |
 
 ## Built with AI
@@ -539,7 +616,7 @@ This project was developed collaboratively between a human director ([Yasushi It
 
 Konpeito is in an early stage. Bugs and undocumented limitations should be expected. Actively improving — bug reports and feedback are very welcome.
 
-Both LLVM and JVM backends are tested against the project's conformance test suite covering core language features (control flow, classes, blocks, exceptions, pattern matching, concurrency, etc.). The LLVM backend has been successfully used to compile and run [kumiki](https://github.com/i2y/kumiki)'s `all_widgets_demo.rb` — a non-trivial reactive GUI application with 20+ widget types — as a CRuby extension.
+All three backends (LLVM, JVM, mruby) are tested against the project's conformance test suite covering core language features (control flow, classes, blocks, exceptions, pattern matching, concurrency, etc.). The LLVM backend has been successfully used to compile and run [kumiki](https://github.com/i2y/kumiki)'s `all_widgets_demo.rb` — a non-trivial reactive GUI application with 20+ widget types — as a CRuby extension. The mruby backend has been used to build several game demos (JRPG, Space Invaders, physics platformer) and GUI/TUI applications using the KUI framework.
 
 ## Contributing
 
